@@ -35,12 +35,12 @@ Or via slash command in Claude Code:
 ### Step 2: Install a Plugin
 
 ```bash
-claude plugin install second-brain@sxhmilyoyo/sundayhao-plugins
+claude plugin install second-brain@sundayhao-plugins
 ```
 
 Or via slash command in Claude Code:
 ```
-/plugin install second-brain@sxhmilyoyo/sundayhao-plugins
+/plugin install second-brain@sundayhao-plugins
 ```
 
 ---
