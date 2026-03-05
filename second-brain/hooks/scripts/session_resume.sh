@@ -24,7 +24,22 @@ EOF
     exit 0
 fi
 
-# Find the session folder
+# Clean up ghost folder created by session_start.sh (startup matcher).
+# On resume, Claude Code fires both "startup" and "resume" SessionStart matchers
+# with different session_ids. The startup hook creates a ghost folder with a new
+# ephemeral ID. This block reads that ID and deletes the ghost.
+# TODO: Remove this cleanup (+ session_start.sh lines 10-13) if Claude Code
+# stops firing the "startup" matcher on SessionStart during resume.
+CWD_HASH=$(echo "$CWD" | md5)
+GHOST_ID_FILE="/tmp/second-brain-startup-$CWD_HASH"
+GHOST_ID=$(cat "$GHOST_ID_FILE" 2>/dev/null)
+rm -f "$GHOST_ID_FILE"
+if [ -n "$GHOST_ID" ] && [ "$GHOST_ID" != "$SESSION_ID" ]; then
+    GHOST_FOLDER=$(find "$KB_PATH/_sessions" -type d -name "$GHOST_ID" 2>/dev/null | head -1)
+    [ -d "$GHOST_FOLDER" ] && rm -rf "$GHOST_FOLDER"
+fi
+
+# Find the original session folder
 SESSION_FOLDER=$(find "$KB_PATH/_sessions" -type d -name "$SESSION_ID" 2>/dev/null | head -1)
 
 if [ -z "$SESSION_FOLDER" ]; then

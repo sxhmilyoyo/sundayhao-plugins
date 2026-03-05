@@ -7,6 +7,12 @@ INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 CWD=$(echo "$INPUT" | jq -r '.cwd')
 
+# Write ghost ID for resume cleanup coordination.
+# TODO: Remove ghost cleanup (this + session_resume.sh lines 27-35) if Claude Code
+# stops firing the "startup" matcher on SessionStart during resume.
+CWD_HASH=$(echo "$CWD" | md5)
+echo "$SESSION_ID" > "/tmp/second-brain-startup-$CWD_HASH"
+
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../skills/common/get_kb_path.sh"
