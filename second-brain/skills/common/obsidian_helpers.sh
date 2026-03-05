@@ -9,17 +9,13 @@
 # Vault name for Obsidian CLI (KB is its own vault)
 OBSIDIAN_VAULT="knowledge-bank"
 
-# Hide Obsidian app window after CLI calls (prevent it from stealing focus)
-_hide_obsidian() {
-    osascript -e 'tell application "System Events" to set visible of process "Obsidian" to false' 2>/dev/null
-}
-
 # Convert absolute KB file path to vault-relative path
 # e.g., /Volumes/.../knowledge-bank/_sessions/2026-03-04/abc/session.md
 #     → _sessions/2026-03-04/abc/session.md
 get_vault_relative_path() {
     local absolute_path="$1"
     local kb_path="$2"
+    # Strip KB path prefix (and leading slash) to get vault-relative path
     echo "${absolute_path#$kb_path/}"
 }
 
@@ -31,8 +27,7 @@ create_session_note() {
     obsidian vault="$OBSIDIAN_VAULT" create \
         path="$vault_path" \
         content="# Session: $session_id" \
-        silent >/dev/null 2>&1
-    _hide_obsidian
+        silent 2>/dev/null
 }
 
 # Set a frontmatter property on session.md
@@ -44,7 +39,7 @@ set_session_property() {
     local type="${4:-text}"
     obsidian vault="$OBSIDIAN_VAULT" property:set \
         name="$name" value="$value" type="$type" \
-        path="$vault_path" >/dev/null 2>&1
+        path="$vault_path" 2>/dev/null
 }
 
 # Append content to session.md
@@ -54,18 +49,52 @@ append_to_session_note() {
     local content="$2"
     obsidian vault="$OBSIDIAN_VAULT" append \
         path="$vault_path" \
-        content="$content" >/dev/null 2>&1
+        content="$content" 2>/dev/null
 }
 
-# Read session.md content (stdout preserved for caller to capture)
-# Filters out Obsidian CLI loading/update messages that go to stdout
+# Read session.md content
 # Args: $1=vault_relative_path
 read_session_note() {
     local vault_path="$1"
     obsidian vault="$OBSIDIAN_VAULT" read \
-        path="$vault_path" 2>/dev/null \
-        | grep -v '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} .*Loading' \
-        | grep -v '^Your Obsidian installer'
+        path="$vault_path" 2>/dev/null
+}
+
+# Read a single frontmatter property value
+# Args: $1=vault_relative_path, $2=property_name
+# Returns: property value on stdout (empty if not found or error)
+# For list properties, returns one item per line
+read_session_property() {
+    local vault_path="$1"
+    local name="$2"
+    local output
+    output=$(obsidian vault="$OBSIDIAN_VAULT" property:read \
+        name="$name" path="$vault_path" 2>/dev/null)
+    # Obsidian CLI prints "Error: ..." to stdout on failure (exit code always 0)
+    if [[ "$output" == Error:* ]]; then
+        return 0
+    fi
+    echo "$output"
+}
+
+# Read a list property as comma-separated string (for passing back to property:set)
+# Args: $1=vault_relative_path, $2=property_name
+# Returns: "item1, item2, item3" on stdout (empty if not found)
+read_session_property_list() {
+    local vault_path="$1"
+    local name="$2"
+    read_session_property "$vault_path" "$name" | paste -sd ',' - | sed 's/,/, /g'
+}
+
+# Overwrite session.md content (preserves nothing — caller must re-set properties)
+# Args: $1=vault_relative_path, $2=content
+overwrite_session_note() {
+    local vault_path="$1"
+    local content="$2"
+    obsidian vault="$OBSIDIAN_VAULT" create \
+        path="$vault_path" \
+        content="$content" \
+        overwrite silent 2>/dev/null
 }
 
 export -f get_vault_relative_path
@@ -73,4 +102,6 @@ export -f create_session_note
 export -f set_session_property
 export -f append_to_session_note
 export -f read_session_note
-export -f _hide_obsidian
+export -f read_session_property
+export -f read_session_property_list
+export -f overwrite_session_note

@@ -95,7 +95,7 @@ cat > "$SEGMENT_FOLDER/metadata.json" << EOF
 {
   "segment": $SEGMENT_COUNT,
   "type": "session-end",
-  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%S)",
+  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "files": {
     "transcript": "transcript.jsonl",
     "agents": [${AGENTS_COPIED%,}],
@@ -104,16 +104,30 @@ cat > "$SEGMENT_FOLDER/metadata.json" << EOF
 }
 EOF
 
-# ── Update session.md with end-time metadata ───────────────────────────
+# ── Rebuild session.md as hub note ─────────────────────────────────────
+# Overwrites session.md body with links to all session artifacts, then
+# re-sets all frontmatter properties. This is idempotent — running
+# session_end multiple times produces the same result.
 
 VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
 ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
-# Read session.md to get started_at for duration calculation
-SESSION_CONTENT=$(read_session_note "$VAULT_PATH")
-STARTED_AT=$(echo "$SESSION_CONTENT" | grep "^started_at:" | head -1 | sed 's/started_at:[[:space:]]*//')
+# ── 1. Read properties to preserve across overwrite ───────────────────
+# Properties set by session_start
+SCHEMA_VERSION=$(read_session_property "$VAULT_PATH" "schema_version")
+STARTED_AT=$(read_session_property "$VAULT_PATH" "started_at")
+PROJECT=$(read_session_property "$VAULT_PATH" "project")
+CWD=$(read_session_property "$VAULT_PATH" "cwd")
+GIT_BRANCH=$(read_session_property "$VAULT_PATH" "git_branch")
+DOCS_PATH_PROP=$(read_session_property "$VAULT_PATH" "docs_path")
+DATE_PROP=$(read_session_property "$VAULT_PATH" "date")
+# Properties set mid-session by user (via session-manager skill)
+TASK_TAG=$(read_session_property "$VAULT_PATH" "task_tag")
+TAGS=$(read_session_property_list "$VAULT_PATH" "tags")
+SUMMARY=$(read_session_property "$VAULT_PATH" "summary")
+SESSION_NAME=$(read_session_property "$VAULT_PATH" "session_name")
 
-# Calculate duration
+# ── 2. Compute end-time metadata ─────────────────────────────────────
 DURATION=""
 if [ -n "$STARTED_AT" ]; then
     START_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$STARTED_AT" +%s 2>/dev/null)
@@ -123,40 +137,80 @@ if [ -n "$STARTED_AT" ]; then
     fi
 fi
 
-# Read customTitle from Claude Code's sessions-index.json
-CWD=$(echo "$SESSION_CONTENT" | grep "^cwd:" | head -1 | sed 's/cwd:[[:space:]]*//')
-SESSION_NAME=""
-if [ -n "$CWD" ]; then
-    PROJECT_HASH=$(echo "$CWD" | sed 's|/|-|g')
-    SESSIONS_INDEX="$HOME/.claude/projects/${PROJECT_HASH}/sessions-index.json"
-    if [ -f "$SESSIONS_INDEX" ]; then
-        SESSION_NAME=$(jq -r --arg sid "$SESSION_ID" \
-            '.entries[] | select(.sessionId == $sid) | .customTitle // empty' \
-            "$SESSIONS_INDEX" 2>/dev/null)
-    fi
+# Read customTitle from transcript (overrides any existing session_name)
+if [ -f "$TRANSCRIPT_PATH" ]; then
+    CUSTOM_TITLE=$(grep '"type":"custom-title"' "$TRANSCRIPT_PATH" 2>/dev/null \
+        | tail -1 | jq -r '.customTitle // empty' 2>/dev/null)
+    [ -n "$CUSTOM_TITLE" ] && SESSION_NAME="$CUSTOM_TITLE"
 fi
 
-# Update session.md properties
+# ── 3. Build hub body ────────────────────────────────────────────────
+BODY="# Session: $SESSION_ID"
+
+# Generated Artifacts (docs/*.md)
+DOCS_DIR="$SESSION_FOLDER/docs"
+if [ -d "$DOCS_DIR" ]; then
+    ARTIFACTS=""
+    while IFS= read -r doc_file; do
+        doc_name=$(basename "$doc_file" .md)
+        ARTIFACTS="${ARTIFACTS}\n- [[${doc_name}]]"
+    done < <(find "$DOCS_DIR" -name "*.md" -type f 2>/dev/null | sort)
+    [ -n "$ARTIFACTS" ] && BODY="$BODY\n\n## Generated Artifacts${ARTIFACTS}"
+fi
+
+# Transcripts, Agents, Plans (from all segments)
+TRANSCRIPTS=""
+AGENTS=""
+PLANS=""
+for seg_dir in "$SESSION_FOLDER"/segment-*/; do
+    [ -d "$seg_dir" ] || continue
+    seg_name=$(basename "$seg_dir")
+
+    # Transcript
+    if [ -f "$seg_dir/transcript.jsonl" ]; then
+        TRANSCRIPTS="${TRANSCRIPTS}\n- \`${seg_name}/transcript.jsonl\`"
+    fi
+
+    # Agents
+    for agent_file in "$seg_dir"/agents/*.jsonl; do
+        [ -f "$agent_file" ] || continue
+        agent_name=$(basename "$agent_file" .jsonl)
+        AGENTS="${AGENTS}\n- \`${seg_name}/agents/${agent_name}.jsonl\`"
+    done
+
+    # Plans
+    for plan_file in "$seg_dir"/plans/*.md; do
+        [ -f "$plan_file" ] || continue
+        plan_name=$(basename "$plan_file" .md)
+        PLANS="${PLANS}\n- [[${plan_name}]]"
+    done
+done
+
+[ -n "$TRANSCRIPTS" ] && BODY="$BODY\n\n## Transcripts${TRANSCRIPTS}"
+[ -n "$AGENTS" ] && BODY="$BODY\n\n## Agents${AGENTS}"
+[ -n "$PLANS" ] && BODY="$BODY\n\n## Plans${PLANS}"
+
+# ── 4. Overwrite session.md with new body ─────────────────────────────
+overwrite_session_note "$VAULT_PATH" "$BODY"
+
+# ── 5. Re-set all frontmatter properties ──────────────────────────────
+# Lifecycle properties
+set_session_property "$VAULT_PATH" "schema_version" "${SCHEMA_VERSION:-2.0}"
+set_session_property "$VAULT_PATH" "session_id" "$SESSION_ID"
+[ -n "$DATE_PROP" ] && set_session_property "$VAULT_PATH" "date" "$DATE_PROP" "date"
+[ -n "$PROJECT" ] && set_session_property "$VAULT_PATH" "project" "$PROJECT"
+[ -n "$CWD" ] && set_session_property "$VAULT_PATH" "cwd" "$CWD"
+[ -n "$GIT_BRANCH" ] && set_session_property "$VAULT_PATH" "git_branch" "$GIT_BRANCH"
+[ -n "$STARTED_AT" ] && set_session_property "$VAULT_PATH" "started_at" "$STARTED_AT" "datetime"
+[ -n "$DOCS_PATH_PROP" ] && set_session_property "$VAULT_PATH" "docs_path" "$DOCS_PATH_PROP"
+# End-time properties
 set_session_property "$VAULT_PATH" "ended_at" "$ENDED_AT" "datetime"
 [ -n "$DURATION" ] && set_session_property "$VAULT_PATH" "duration_seconds" "$DURATION" "number"
 [ -n "$SESSION_NAME" ] && set_session_property "$VAULT_PATH" "session_name" "$SESSION_NAME"
-
-# Scan docs/ folder for generated artifacts
-DOCS_DIR="$SESSION_FOLDER/docs"
-if [ -d "$DOCS_DIR" ]; then
-    ARTIFACTS_SECTION=""
-    while IFS= read -r doc_file; do
-        doc_name=$(basename "$doc_file" .md)
-        if [ -n "$ARTIFACTS_SECTION" ]; then
-            ARTIFACTS_SECTION="$ARTIFACTS_SECTION\n"
-        fi
-        ARTIFACTS_SECTION="${ARTIFACTS_SECTION}- [[${doc_name}]]"
-    done < <(find "$DOCS_DIR" -name "*.md" -type f 2>/dev/null | sort)
-
-    if [ -n "$ARTIFACTS_SECTION" ]; then
-        append_to_session_note "$VAULT_PATH" "\n## Generated Artifacts\n${ARTIFACTS_SECTION}"
-    fi
-fi
+# Mid-session properties (preserved from before overwrite)
+[ -n "$TASK_TAG" ] && set_session_property "$VAULT_PATH" "task_tag" "$TASK_TAG"
+[ -n "$TAGS" ] && set_session_property "$VAULT_PATH" "tags" "$TAGS" "list"
+[ -n "$SUMMARY" ] && set_session_property "$VAULT_PATH" "summary" "$SUMMARY"
 
 # ── Output ──────────────────────────────────────────────────────────────
 
