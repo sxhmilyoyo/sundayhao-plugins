@@ -27,7 +27,7 @@ create_session_note() {
     obsidian vault="$OBSIDIAN_VAULT" create \
         path="$vault_path" \
         content="# Session: $session_id" \
-        silent 2>/dev/null
+        silent >/dev/null 2>&1
 }
 
 # Set a frontmatter property on session.md
@@ -39,7 +39,7 @@ set_session_property() {
     local type="${4:-text}"
     obsidian vault="$OBSIDIAN_VAULT" property:set \
         name="$name" value="$value" type="$type" \
-        path="$vault_path" 2>/dev/null
+        path="$vault_path" >/dev/null 2>&1
 }
 
 # Append content to session.md
@@ -49,7 +49,7 @@ append_to_session_note() {
     local content="$2"
     obsidian vault="$OBSIDIAN_VAULT" append \
         path="$vault_path" \
-        content="$content" 2>/dev/null
+        content="$content" >/dev/null 2>&1
 }
 
 # Read session.md content
@@ -94,7 +94,7 @@ overwrite_session_note() {
     obsidian vault="$OBSIDIAN_VAULT" create \
         path="$vault_path" \
         content="$content" \
-        overwrite silent 2>/dev/null
+        overwrite silent >/dev/null 2>&1
 }
 
 export -f get_vault_relative_path

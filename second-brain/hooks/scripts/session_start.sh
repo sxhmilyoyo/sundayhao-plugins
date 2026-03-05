@@ -26,8 +26,10 @@ if [ $? -ne 0 ] || [ -z "$KB_PATH" ]; then
     SETUP_SCRIPT="$SCRIPT_DIR/../../skills/common/setup_kb_path.sh"
     cat << EOF
 {
-  "continue": true,
-  "systemMessage": "⚠️ Second Brain Plugin: Knowledge bank not configured!\n\nRun this command to configure:\n  $SETUP_SCRIPT --configure"
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "Second Brain Plugin: Knowledge bank not configured!\n\nRun this command to configure:\n  $SETUP_SCRIPT --configure"
+  }
 }
 EOF
     exit 0
@@ -75,7 +77,9 @@ set_session_property "$VAULT_PATH" "generated_artifacts" "" "list"
 # Inject system prompt with docs path
 cat << EOF
 {
-  "continue": true,
-  "systemMessage": "Session folder created: $SESSION_FOLDER\n\nSession docs path: $DOCS_PATH\n\nWhen generating working documents (designs, plans, reviews, SOPs, issues, handoffs), write them to the session docs path above. Use subdirectories by type:\n- docs/designs/    — architecture and design documents\n- docs/plans/      — implementation plans\n- docs/reviews/    — code/design review notes\n- docs/issues/     — issue investigation and resolution\n- docs/sops/       — standard operating procedures\n- docs/            — anything else (handoffs, quick-start guides, etc.)"
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "Session folder created: $SESSION_FOLDER\n\nSession docs path: $DOCS_PATH\n\nWhen generating working documents (designs, plans, reviews, SOPs, issues, handoffs), write them to the session docs path above. Use subdirectories by type:\n- docs/designs/    — architecture and design documents\n- docs/plans/      — implementation plans\n- docs/reviews/    — code/design review notes\n- docs/issues/     — issue investigation and resolution\n- docs/sops/       — standard operating procedures\n- docs/            — anything else (handoffs, quick-start guides, etc.)"
+  }
 }
 EOF

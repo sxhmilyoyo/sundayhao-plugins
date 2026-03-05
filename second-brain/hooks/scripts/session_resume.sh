@@ -17,8 +17,10 @@ KB_PATH=$(get_kb_path 2>/dev/null)
 if [ $? -ne 0 ] || [ -z "$KB_PATH" ]; then
     cat << 'EOF'
 {
-  "continue": true,
-  "systemMessage": "Resume: Knowledge bank not configured."
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "Resume: Knowledge bank not configured."
+  }
 }
 EOF
     exit 0
@@ -80,7 +82,9 @@ fi
 DOCS_PATH="$SESSION_FOLDER/docs"
 cat << EOF
 {
-  "continue": true,
-  "systemMessage": "Session resumed: $SESSION_FOLDER\n\nSession docs path: $DOCS_PATH\n\nWhen generating working documents (designs, plans, reviews, SOPs, issues, handoffs), write them to the session docs path above. Use subdirectories by type:\n- docs/designs/    — architecture and design documents\n- docs/plans/      — implementation plans\n- docs/reviews/    — code/design review notes\n- docs/issues/     — issue investigation and resolution\n- docs/sops/       — standard operating procedures\n- docs/            — anything else (handoffs, quick-start guides, etc.)"
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "Session resumed: $SESSION_FOLDER\n\nSession docs path: $DOCS_PATH\n\nWhen generating working documents (designs, plans, reviews, SOPs, issues, handoffs), write them to the session docs path above. Use subdirectories by type:\n- docs/designs/    — architecture and design documents\n- docs/plans/      — implementation plans\n- docs/reviews/    — code/design review notes\n- docs/issues/     — issue investigation and resolution\n- docs/sops/       — standard operating procedures\n- docs/            — anything else (handoffs, quick-start guides, etc.)"
+  }
 }
 EOF
