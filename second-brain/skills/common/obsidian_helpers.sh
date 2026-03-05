@@ -9,13 +9,17 @@
 # Vault name for Obsidian CLI (KB is its own vault)
 OBSIDIAN_VAULT="knowledge-bank"
 
+# Hide Obsidian app window after CLI calls (prevent it from stealing focus)
+_hide_obsidian() {
+    osascript -e 'tell application "System Events" to set visible of process "Obsidian" to false' 2>/dev/null
+}
+
 # Convert absolute KB file path to vault-relative path
 # e.g., /Volumes/.../knowledge-bank/_sessions/2026-03-04/abc/session.md
 #     → _sessions/2026-03-04/abc/session.md
 get_vault_relative_path() {
     local absolute_path="$1"
     local kb_path="$2"
-    # Strip KB path prefix (and leading slash) to get vault-relative path
     echo "${absolute_path#$kb_path/}"
 }
 
@@ -27,7 +31,8 @@ create_session_note() {
     obsidian vault="$OBSIDIAN_VAULT" create \
         path="$vault_path" \
         content="# Session: $session_id" \
-        silent 2>/dev/null
+        silent >/dev/null 2>&1
+    _hide_obsidian
 }
 
 # Set a frontmatter property on session.md
@@ -39,7 +44,7 @@ set_session_property() {
     local type="${4:-text}"
     obsidian vault="$OBSIDIAN_VAULT" property:set \
         name="$name" value="$value" type="$type" \
-        path="$vault_path" 2>/dev/null
+        path="$vault_path" >/dev/null 2>&1
 }
 
 # Append content to session.md
@@ -49,15 +54,18 @@ append_to_session_note() {
     local content="$2"
     obsidian vault="$OBSIDIAN_VAULT" append \
         path="$vault_path" \
-        content="$content" 2>/dev/null
+        content="$content" >/dev/null 2>&1
 }
 
-# Read session.md content
+# Read session.md content (stdout preserved for caller to capture)
+# Filters out Obsidian CLI loading/update messages that go to stdout
 # Args: $1=vault_relative_path
 read_session_note() {
     local vault_path="$1"
     obsidian vault="$OBSIDIAN_VAULT" read \
-        path="$vault_path" 2>/dev/null
+        path="$vault_path" 2>/dev/null \
+        | grep -v '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} .*Loading' \
+        | grep -v '^Your Obsidian installer'
 }
 
 export -f get_vault_relative_path
@@ -65,3 +73,4 @@ export -f create_session_note
 export -f set_session_property
 export -f append_to_session_note
 export -f read_session_note
+export -f _hide_obsidian
