@@ -49,15 +49,13 @@ if [ -z "$SESSION_FOLDER" ]; then
     set_session_property "$VAULT_PATH" "project" "$PROJECT"
     set_session_property "$VAULT_PATH" "cwd" "$CWD"
     set_session_property "$VAULT_PATH" "git_branch" "$GIT_BRANCH"
-    set_session_property "$VAULT_PATH" "started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "datetime"
+    set_session_property "$VAULT_PATH" "started_at" "$(date -u +%Y-%m-%dT%H:%M:%S)" "datetime"
     set_session_property "$VAULT_PATH" "docs_path" "_sessions/$TODAY/$SESSION_ID/docs"
     set_session_property "$VAULT_PATH" "session_name" ""
     set_session_property "$VAULT_PATH" "ended_at" ""
     set_session_property "$VAULT_PATH" "duration_seconds" "" "number"
     set_session_property "$VAULT_PATH" "summary" ""
     set_session_property "$VAULT_PATH" "task_tag" ""
-    set_session_property "$VAULT_PATH" "tags" "" "list"
-    set_session_property "$VAULT_PATH" "generated_artifacts" "" "list"
 else
     # Ensure docs/ dir exists for existing sessions
     mkdir -p "$SESSION_FOLDER/docs"

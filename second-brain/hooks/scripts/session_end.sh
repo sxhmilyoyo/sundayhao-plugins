@@ -95,7 +95,7 @@ cat > "$SEGMENT_FOLDER/metadata.json" << EOF
 {
   "segment": $SEGMENT_COUNT,
   "type": "session-end",
-  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%S)",
   "files": {
     "transcript": "transcript.jsonl",
     "agents": [${AGENTS_COPIED%,}],
@@ -107,7 +107,7 @@ EOF
 # ── Update session.md with end-time metadata ───────────────────────────
 
 VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
-ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 # Read session.md to get started_at for duration calculation
 SESSION_CONTENT=$(read_session_note "$VAULT_PATH")
@@ -116,8 +116,8 @@ STARTED_AT=$(echo "$SESSION_CONTENT" | grep "^started_at:" | head -1 | sed 's/st
 # Calculate duration
 DURATION=""
 if [ -n "$STARTED_AT" ]; then
-    START_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$STARTED_AT" +%s 2>/dev/null)
-    END_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ENDED_AT" +%s 2>/dev/null)
+    START_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$STARTED_AT" +%s 2>/dev/null)
+    END_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ENDED_AT" +%s 2>/dev/null)
     if [ -n "$START_EPOCH" ] && [ -n "$END_EPOCH" ]; then
         DURATION=$(( END_EPOCH - START_EPOCH ))
     fi

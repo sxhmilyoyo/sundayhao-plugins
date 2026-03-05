@@ -40,8 +40,8 @@ if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 PROJECT=$(detect_project "$CWD")
 
-# Timestamps
-STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Timestamps (no Z suffix — Obsidian datetime format requires YYYY-MM-DDTHH:mm:ss)
+STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 # Create session.md via Obsidian CLI
 VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
@@ -57,14 +57,12 @@ set_session_property "$VAULT_PATH" "git_branch" "$GIT_BRANCH"
 set_session_property "$VAULT_PATH" "started_at" "$STARTED_AT" "datetime"
 set_session_property "$VAULT_PATH" "docs_path" "_sessions/$TODAY/$SESSION_ID/docs"
 
-# Set empty placeholders for fields populated later
+# Set empty placeholders for fields populated later (skip list types to avoid empty items)
 set_session_property "$VAULT_PATH" "session_name" ""
 set_session_property "$VAULT_PATH" "ended_at" ""
 set_session_property "$VAULT_PATH" "duration_seconds" "" "number"
 set_session_property "$VAULT_PATH" "summary" ""
 set_session_property "$VAULT_PATH" "task_tag" ""
-set_session_property "$VAULT_PATH" "tags" "" "list"
-set_session_property "$VAULT_PATH" "generated_artifacts" "" "list"
 
 # Inject system prompt with docs path
 cat << EOF
