@@ -2,5 +2,8 @@
 # Internal docs (plans, generated artifacts)
 second-brain/docs/
 
+# Local Claude config
+CLAUDE.local.md
+
 # OS files
 .DS_Store
