@@ -41,7 +41,7 @@ fi
 PROJECT=$(detect_project "$CWD")
 
 # Timestamps
-STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 # Create session.md via Obsidian CLI
 VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")

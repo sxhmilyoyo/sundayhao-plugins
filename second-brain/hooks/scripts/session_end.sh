@@ -95,7 +95,7 @@ cat > "$SEGMENT_FOLDER/metadata.json" << EOF
 {
   "segment": $SEGMENT_COUNT,
   "type": "session-end",
-  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%S)",
   "files": {
     "transcript": "transcript.jsonl",
     "agents": [${AGENTS_COPIED%,}],
