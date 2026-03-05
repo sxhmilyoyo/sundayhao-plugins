@@ -15,7 +15,7 @@
 
 | Plugin | Description | Version | Docs |
 |--------|-------------|---------|------|
-| [second-brain](second-brain/) | Agentic workflow with memory and tribal knowledge. Transforms Claude from goldfish to elephant with persistent knowledge across sessions. | 1.0.0 | [README](second-brain/README.md) |
+| [second-brain](second-brain/) | Agentic workflow with memory and tribal knowledge. Transforms Claude from goldfish to elephant with persistent knowledge across sessions. | 2.0.0 | [README](second-brain/README.md) |
 
 ---
 

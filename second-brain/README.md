@@ -3,7 +3,7 @@
 
   # Second Brain
 
-  ![Version](https://img.shields.io/badge/version-1.0.0-blue)
+  ![Version](https://img.shields.io/badge/version-2.0.0-blue)
   ![License](https://img.shields.io/badge/license-Apache--2.0-green)
   ![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-purple)
   ![Author](https://img.shields.io/badge/author-sxhmilyoyo-orange)
@@ -77,15 +77,15 @@ The plugin integrates with Claude Code's lifecycle through hooks that automatica
 </div>
 
 **Lifecycle Events:**
-- **SessionStart** - Initializes session tracking, creates `session-info.json`
-- **PreCompact** - Captures context before summarization occurs
-- **SessionEnd** - Triggers knowledge extraction and documentation
+- **SessionStart (startup)** - Creates `session.md` hub note via Obsidian CLI, sets frontmatter properties
+- **SessionStart (resume)** - Saves current segment before resuming
+- **PreCompact** - Saves segment before context summarization
+- **SessionEnd** - Saves final segment, rebuilds `session.md` as hub note with wikilinks to all artifacts
 
 **Output Files:**
-- `session-info.json` - Session metadata (ID, timestamps, workspace)
-- `transcripts/` - Conversation history by segment
-- `agents/` - Subagent execution records
-- `plans/` - Implementation plans created during session
+- `session.md` - Obsidian hub note with frontmatter metadata and wikilinks to all session artifacts
+- `docs/` - Generated documentation artifacts
+- `segment-N/` - Segment data (transcript.jsonl, agents/*.jsonl, plans/*.md, metadata.json)
 
 ---
 
@@ -117,7 +117,9 @@ Knowledge compounds. Every insight builds on the last. Your AI becomes as experi
 - **Claude Code CLI** installed and configured
 - **Bash shell** (macOS/Linux or WSL on Windows)
 - A directory for your **knowledge bank** (where session data will be stored)
-- **Obsidian** (recommended) for viewing the knowledge bank with graph visualization
+- **Obsidian** (required) for viewing the knowledge bank and session management
+- **Obsidian CLI** (required) for session note operations (create, property:set, property:read)
+  - Install from: https://help.obsidian.md/cli
 - **Obsidian skills** (recommended) for proper Obsidian Flavored Markdown generation
   - Install from: https://github.com/kepano/obsidian-skills
 
@@ -210,6 +212,7 @@ Session: /path-to-knowledge-bank/_sessions/<yyyy-mm-dd>/<session-id>
 |-------|------------------|--------|
 | `session-recap` | "recap the session", significant work completion | Concepts, components, best practices, daily logs |
 | `knowledge-bank-lookup` | Service mentions, "how should I..." | Structured insights with patterns, gotchas, recommendations |
+| `session-manager` | "tag this session", "set task tag", "summarize session" | Updated session.md frontmatter (task_tag, tags, summary) |
 
 ---
 

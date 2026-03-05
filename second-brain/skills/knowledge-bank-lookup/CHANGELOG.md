@@ -244,7 +244,7 @@ Tests failed: 0
 **Type:** Infrastructure improvement - Portable path configuration
 
 ### Changed
-- **Removed hardcoded paths**: All occurrences of `/Volumes/workplace/[user]/src/[user]DocsForLLMs/knowledge-bank` replaced with dynamic resolution
+- **Removed hardcoded paths**: All hardcoded knowledge bank paths replaced with dynamic resolution
 - **Integrated with common utilities**: All 7 shell scripts now use `~/.claude/skills/common/get_kb_path.sh`
 - **No default fallback**: System errors out if KB_PATH not configured (forces proper setup)
 - **Updated all documentation**: SKILL.md, references, and examples use `{KB_PATH}` placeholder

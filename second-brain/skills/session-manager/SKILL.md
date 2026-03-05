@@ -12,7 +12,7 @@ Manage metadata for the current active session's `session.md` file via Obsidian 
 The session docs path is injected into your system prompt by the SessionStart hook. It looks like:
 
 ```
-Session docs path: /Volumes/workplace/Xhaoxu/src/XhaoxuDocsForLLMs/knowledge-bank/_sessions/2026-03-04/abc123-def456/docs/
+Session docs path: {KB_PATH}/_sessions/2026-03-04/abc123-def456/docs/
 ```
 
 To get the `session.md` vault-relative path for Obsidian CLI:

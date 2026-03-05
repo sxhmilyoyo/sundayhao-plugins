@@ -1,0 +1,6 @@
+
+# Internal docs (plans, generated artifacts)
+second-brain/docs/
+
+# OS files
+.DS_Store
