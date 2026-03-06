@@ -216,6 +216,51 @@ Session: /path-to-knowledge-bank/_sessions/<yyyy-mm-dd>/<session-id>
 
 ---
 
+## ccfind - Session Finder
+
+A shell + fzf tool for searching and resuming Claude Code sessions by their metadata.
+
+### Commands
+
+```bash
+ccfind                  # Search all sessions (fuzzy match on all fields)
+ccfind --by-tag         # Two-step: pick a tag, then browse matching sessions
+ccfind --by-task-tag    # Two-step: pick a task_tag, then browse matching sessions
+ccfind --tags           # List all unique tags
+ccfind --task-tags      # List all unique task_tags
+```
+
+### Keybindings (in fzf)
+
+| Key       | Action                                         |
+|-----------|-------------------------------------------------|
+| `Enter`   | Resume session (`cd` to cwd + `claude -r`)      |
+| `Ctrl-O`  | Open the session's docs folder                   |
+
+### Installation
+
+Add a shell alias to your `.zshrc`:
+
+```bash
+alias ccfind="<plugin-path>/tools/ccfind/ccfind.sh"
+```
+
+Where `<plugin-path>` is the plugin installation directory (e.g., `~/.claude/plugins/cache/sundayhao-plugins/second-brain/1.0.0`).
+
+### tmux Integration
+
+```bash
+# Add to .tmux.conf
+bind-key "F" display-popup -E -w 80% -h 70% "ccfind"
+```
+
+### Dependencies
+
+- [fzf](https://github.com/junegunn/fzf)
+- Claude Code CLI (for `claude -r` resume)
+
+---
+
 ## The Knowledge Bank Philosophy
 
 > **Knowledge Bank = BRAIN, not ARCHIVE**
