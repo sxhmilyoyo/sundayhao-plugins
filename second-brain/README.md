@@ -23,7 +23,7 @@ Claude Code sessions are a black hole. Work goes in, nothing comes out.
 
 - **No organization**: Sessions pile up with no way to tag, group, or categorize related work
 - **No discoverability**: "What did I work on last Tuesday?" requires scrolling through a flat list of cryptic session IDs
-- **No continuity**: Working documents scatter across repos. Context dies when the session ends
+- **No continuity**: Design docs, implementation plans, and specs generated during sessions scatter across repos with no connection to the conversation that produced them
 - **No metadata**: No duration, no summary, no connection between sessions that tackled the same task
 
 You're generating hours of valuable engineering work every day—and losing it all to an unstructured void.
@@ -87,6 +87,26 @@ _sessions/2026-03-06/{session-id}/
 ├── memory/             # Auto-memory snapshot at session end
 └── segment-N/          # Transcript segments (jsonl, agents, plans)
 ```
+
+### Working Documents — No More Scattered Artifacts
+
+Skills that follow Prompt-Driven Development — like [superpowers](https://github.com/obra/superpowers)' `brainstorming` and `writing-plans` — generate design docs, implementation plans, and specs. Without Second Brain, these land in each repo's `docs/plans/` and scatter across your workspace:
+
+```
+repo-a/docs/plans/2026-03-06-auth-redesign-design.md
+repo-b/docs/plans/2026-03-05-caching-layer-plan.md
+repo-c/docs/plans/2026-03-04-api-migration-design.md
+```
+
+With Second Brain, the SessionStart hook injects the session docs path into Claude's context. Any skill that writes working documents automatically lands them in the session folder:
+
+```
+_sessions/2026-03-06/{session-id}/docs/
+├── 2026-03-06-auth-redesign-design.md
+└── 2026-03-06-auth-redesign-plan.md
+```
+
+Every artifact is linked from `session.md`, searchable via `ccfind`, and traceable back to the session that created it.
 
 ### `session-manager` — Tag and Organize Sessions
 
