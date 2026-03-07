@@ -132,8 +132,9 @@ Think [sesh](https://github.com/joshmedeski/sesh) for tmux sessions, but for Cla
 </div>
 
 <div align="center">
-  <video src="misc/CcfindDemo.mp4" width="700" autoplay loop muted playsinline></video>
-  <p><em>ccfind demo — search, filter, and resume sessions</em></p>
+
+![ccfind demo — search, filter, and resume sessions](misc/CcfindDemo.mp4)
+
 </div>
 
 ```bash
@@ -177,8 +178,9 @@ Just like sesh binds to a tmux key for instant session switching, ccfind integra
 </div>
 
 <div align="center">
-  <video src="misc/CcfindTmuxDemo.mp4" width="700" autoplay loop muted playsinline></video>
-  <p><em>ccfind tmux popup demo — search and resume without leaving your workflow</em></p>
+
+![ccfind tmux popup demo — search and resume without leaving your workflow](misc/CcfindTmuxDemo.mp4)
+
 </div>
 
 ```bash
