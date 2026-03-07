@@ -1,7 +1,7 @@
 #!/bin/bash
 # SessionEnd hook - saves session-end segment AND updates session.md with final metadata
 # Saves segment data (transcript, agents, plans) then enriches session.md with
-# session_name (from customTitle), ended_at, duration_seconds, and generated_artifacts.
+# session_name (from customTitle), ended_at, and duration_seconds.
 
 shopt -s nullglob
 
@@ -144,6 +144,17 @@ if [ -f "$TRANSCRIPT_PATH" ]; then
     [ -n "$CUSTOM_TITLE" ] && SESSION_NAME="$CUSTOM_TITLE"
 fi
 
+# ── 2b. Copy auto memory snapshot ─────────────────────────────────────
+if [ -n "$CWD" ]; then
+    REPO_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
+    MEMORY_ROOT="${REPO_ROOT:-$CWD}"
+    MEMORY_HASH=$(echo "$MEMORY_ROOT" | sed 's|[/.]|-|g')
+    MEMORY_SRC="$HOME/.claude/projects/$MEMORY_HASH/memory"
+    if [ -d "$MEMORY_SRC" ]; then
+        cp -r "$MEMORY_SRC" "$SESSION_FOLDER/memory"
+    fi
+fi
+
 # ── 3. Build hub body ────────────────────────────────────────────────
 BODY="# Session: $SESSION_ID"
 
@@ -189,6 +200,18 @@ done
 [ -n "$TRANSCRIPTS" ] && BODY="$BODY\n\n## Transcripts${TRANSCRIPTS}"
 [ -n "$AGENTS" ] && BODY="$BODY\n\n## Agents${AGENTS}"
 [ -n "$PLANS" ] && BODY="$BODY\n\n## Plans${PLANS}"
+
+# Memory Snapshot (memory/*.md)
+MEMORY_DIR="$SESSION_FOLDER/memory"
+if [ -d "$MEMORY_DIR" ]; then
+    MEMORY_FILES=""
+    for mem_file in "$MEMORY_DIR"/*.md; do
+        [ -f "$mem_file" ] || continue
+        mem_name=$(basename "$mem_file" .md)
+        MEMORY_FILES="${MEMORY_FILES}\n- [[${mem_name}]]"
+    done
+    [ -n "$MEMORY_FILES" ] && BODY="$BODY\n\n## Memory Snapshot${MEMORY_FILES}"
+fi
 
 # ── 4. Overwrite session.md with new body ─────────────────────────────
 overwrite_session_note "$VAULT_PATH" "$BODY"

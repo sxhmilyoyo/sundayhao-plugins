@@ -72,7 +72,6 @@ set_session_property "$VAULT_PATH" "duration_seconds" "" "number"
 set_session_property "$VAULT_PATH" "summary" ""
 set_session_property "$VAULT_PATH" "task_tag" ""
 set_session_property "$VAULT_PATH" "tags" "" "list"
-set_session_property "$VAULT_PATH" "generated_artifacts" "" "list"
 
 # Inject system prompt with docs path
 cat << EOF
