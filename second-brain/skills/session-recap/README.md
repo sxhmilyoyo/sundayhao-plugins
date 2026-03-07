@@ -1,7 +1,7 @@
 # Session-Recap Skill
 
-**Version**: 2.6.0
-**Last Updated**: 2026-01-18
+**Version**: 3.1.0
+**Last Updated**: 2026-03-06
 **Author**: sundayhao
 **License**: Internal Use
 
@@ -19,6 +19,7 @@ The session-recap skill is a comprehensive knowledge management system for Claud
 - **Cross-Reference Discovery** - Find related documentation across 8+ categories
 - **Quality Verification** - Ensure 10-15 WikiLinks per document for knowledge integration
 - **Project Detection** - Automatically identify project from file paths
+- **Session Management Integration** (v3.1.0) - Reads session.md hub for metadata and content navigation
 - **Session Manager** (v2.4.0) - Preserve full context across context compactions via hooks
 - **Transcript Parsing** (v2.4.0) - Extract structured data from transcript.jsonl files
 
@@ -78,12 +79,16 @@ This skill can be invoked manually via:
 
 **Important**: Run session-recap in a **new session** after your work session ends.
 
-1. **Note the session path** at startup (displayed when Claude Code starts)
-2. **Exit your work session** - transcript is saved automatically
-3. **Start a new session** and provide the path:
+1. **Exit your work session** - The SessionEnd hook automatically saves transcript segments and builds `session.md` as a hub note with links to all artifacts
+2. **Start a new session** and provide the session folder:
    ```
-   Recap the session at /path/to/session.jsonl
+   Recap the session at {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/
    ```
+
+**Legacy fallback**: If no session folder exists (hooks not configured), provide a raw `.jsonl` transcript path:
+```
+Recap the session at /path/to/session-id.jsonl
+```
 
 ### Visibility Settings
 
@@ -93,9 +98,9 @@ This skill can be invoked manually via:
 
 ### Invocation Options
 
-- **New session with path**: Start fresh session, provide previous session path (recommended)
-- **Slash command**: `/second-brain:session-recap /path/to/session.jsonl`
-- **Programmatic**: `Skill({ skill: "second-brain:session-recap", args: "/path/to/session.jsonl" })`
+- **Session folder** (recommended): `/second-brain:session-recap {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/`
+- **Legacy transcript path**: `/second-brain:session-recap /path/to/session-id.jsonl`
+- **Programmatic**: `Skill({ skill: "second-brain:session-recap", args: "{KB_PATH}/_sessions/..." })`
 
 ## Project Structure
 
@@ -118,10 +123,7 @@ session-recap/
 │   ├── validate_obsidian_syntax.sh  # Obsidian syntax validation
 │   ├── generate_knowledge_base.sh   # Obsidian Base index generation
 │   ├── generate_moc_canvas.sh       # MOC Canvas visualization
-│   ├── parse_transcript.sh          # Transcript.jsonl parsing (v2.4.0)
-│   ├── session_start.sh             # SessionStart hook handler (v2.4.0)
-│   ├── pre_compact.sh               # PreCompact hook handler (v2.4.0)
-│   └── session_end.sh               # SessionEnd hook handler (v2.4.0)
+│   └── parse_transcript.sh          # Transcript.jsonl parsing (v2.4.0)
 │
 ├── references/                       # Document templates
 │   ├── daily-log-template.md        # Daily session log template
@@ -129,11 +131,13 @@ session-recap/
 │   ├── component-template.md        # Component documentation template
 │   ├── best-practice-template.md    # Best practice template
 │   ├── distilled-concept-template.md # Distilled concept template
-│   └── process-reflection-template.md # Process reflection template
-│
-├── common/                           # Shared utilities (v2.3.0)
-│   ├── get_kb_path.sh               # KB path discovery
-│   └── setup_kb_path.sh             # Configuration diagnostic
+│   ├── process-reflection-template.md # Process reflection template
+│   ├── templates.md                 # Consolidated template index
+│   ├── cross-reference-guide.md     # Cross-reference methodology
+│   ├── distillation-guide.md        # Document distillation process
+│   ├── completion-checklist.md      # Verification checklist
+│   ├── quality-standards.md         # Quality requirements
+│   └── common-mistakes.md           # Common pitfalls to avoid
 │
 └── backups/                          # Timestamped backups
     └── YYYYMMDD-HHMMSS/             # Backup snapshots
@@ -197,34 +201,32 @@ knowledge-bank/
 
 ## Workflow Phases
 
-### Phase 0: Determine Project Context
-Automatically detect which project based on file paths.
+### Phase 1: ANALYZE
+Load session data and extract facts.
+- **1.1 Load Session Data** - Read `session.md` hub note for metadata and content navigation (if session folder provided), then locate latest transcript segment
+- **1.2 Detect Project** - Use session.md `project` property first, fall back to transcript parsing
+- **1.3 Extract Session Facts** - Parse transcript for user requests, files, commands, errors, subagents, insights
 
-### Phase 1: Session Analysis & Data Gathering
-Review conversation history, create technical inventory, extract code changes.
+### Phase 2: PLAN
+Determine what to document and whether reflection is required.
+- **2.1 Reflection Decision Gate** - Answer YES/NO questions to determine if reflection is MUST
+- **2.2 Search Cross-References** - Find 10-15 cross-reference targets across categories and projects
+- **2.3 External Document Distillation** - Distill verbose investigation documents (if they exist)
+- **2.4 Insight Classification** - Classify insights as Concept, Component, Best Practice, or Reflection
 
-### Phase 2: Cross-Reference Discovery (CRITICAL)
-Search for related documentation across all categories and projects:
-- Concepts (architectural patterns)
-- Components (system components)
-- Best practices (methodologies)
-- Recent sessions (daily logs)
-- MOCs (maps of content)
+### Phase 3: CREATE
+Write documentation in priority order: concepts → components → best practices → reflections → daily log.
 
-### Phase 2.5: Investigation Distillation (If Applicable)
-Distill verbose investigation documents into essential knowledge.
+### Phase 4: VERIFY
+Confirm all requirements met before declaring complete.
+- Run `verify_session_recap.sh` verification script
+- Validate Obsidian syntax
+- Complete verification checklist
 
-### Phase 3: Knowledge Extraction
-Identify reusable patterns, best practices, anti-patterns, and decision rationales.
-
-### Phase 4: Documentation Creation
-Create distilled concepts, components, best practices, and daily logs.
-
-### Phase 5: Quality Verification
-Verify cross-references (10-15 minimum), documentation quality, and standards compliance.
-
-### Phase 6: Index Maintenance
-Regenerate Obsidian Base indices and update MOC Canvas visualizations when new documents are created.
+### Phase 5: MAINTAIN
+Update knowledge bank indices and visualizations.
+- Regenerate Obsidian Base indices
+- Update MOC Canvas visualizations
 
 ## Scripts Reference
 
@@ -401,67 +403,50 @@ Create MOC Canvas visualization from WikiLinks.
 - Node positioning based on document relationships
 - Edge connections from WikiLinks
 
-## Session Manager (v2.4.0)
+## Session Manager
 
 The Session Manager preserves full context across context compactions using Claude Code hooks.
 
 ### How It Works
 
-1. **SessionStart** - Creates session folder when a new session begins
-2. **PreCompact** - Saves segment before each context compaction
-3. **SessionEnd** - Saves final segment when session ends
-
-### Configuration
-
-Add to `~/.claude/settings.json`:
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "matcher": "startup",
-      "hooks": [{
-        "type": "command",
-        "command": "~/.claude/skills/session-recap/scripts/session_start.sh"
-      }]
-    }],
-    "PreCompact": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "~/.claude/skills/session-recap/scripts/pre_compact.sh"
-      }]
-    }],
-    "SessionEnd": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "~/.claude/skills/session-recap/scripts/session_end.sh"
-      }]
-    }]
-  }
-}
-```
+1. **SessionStart (startup)** - Creates `session.md` hub note via Obsidian CLI with frontmatter metadata
+2. **SessionStart (resume)** - Saves checkpoint segment before resuming
+3. **PreCompact** - Saves segment before each context compaction
+4. **SessionEnd** - Saves final segment, snapshots auto memory, rebuilds `session.md` with links to all artifacts
 
 ### Session Folder Structure
 
 ```
 {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/
-├── session-info.json          # Session metadata
-├── segment-0/                 # First pre-compaction snapshot
+├── session.md                 # Hub note (Obsidian markdown with YAML frontmatter)
+├── docs/                      # Generated documentation artifacts
+├── memory/                    # Auto memory snapshot at session end
+├── segment-0/                 # First segment (pre-compact or resume-checkpoint)
 │   ├── transcript.jsonl
 │   ├── metadata.json
 │   ├── agents/
 │   └── plans/
-├── segment-1/                 # Second pre-compaction snapshot
-└── segment-final/             # Final session snapshot
+├── segment-1/                 # Second segment
+└── segment-N/                 # Final segment (session-end)
 ```
+
+### session.md Hub Note
+
+The `session.md` file serves as a navigation hub with two data surfaces:
+
+**Frontmatter properties**: `schema_version`, `session_id`, `date`, `project`, `cwd`, `git_branch`, `started_at`, `ended_at`, `duration_seconds`, `session_name`, `task_tag`, `tags`, `summary`, `docs_path`
+
+**Body sections**: `## Generated Artifacts`, `## Transcripts`, `## Agents`, `## Plans`, `## Memory Snapshot`
+
+Session-recap reads this hub note (read-only) for metadata and content navigation. All recap-created KB docs include a `session-folder:` back-reference, enabling bidirectional Obsidian backlink navigation.
 
 ### Key Features
 
 - **Stateless design** - Safe for concurrent sessions
 - **Agent deduplication** - Only copies new agents per segment
-- **SessionStart matcher** - Only triggers on new sessions (`"startup"`)
-- **Overlapping transcripts** - Final segment contains complete conversation
+- **Sequential segment numbering** - All segments use `segment-0`, `segment-1`, etc.
+- **Resume checkpoints** - Saves state before resumed sessions add new content
+- **Auto memory snapshot** - Copies Claude Code auto memory at session end
 
 ## Quality Standards
 
@@ -486,12 +471,15 @@ Every document includes YAML frontmatter:
 title: Document Title
 aliases: [Alternative Name]
 tags: [category, topic, type]
-type: concept|component|investigation|best-practice
+type: concept|component|best-practice|daily-log|reflection
 created: YYYY-MM-DD
 modified: YYYY-MM-DD
 project: [project-a-service]|[project-b-server]|Claude Code|[project-c]
+session-folder: _sessions/YYYY-MM-DD/{session_id}
 ---
 ```
+
+The `session-folder` field creates a reverse reference — Obsidian's backlinks panel on `session.md` shows all KB docs extracted from that session.
 
 ## Maintenance
 
@@ -555,14 +543,15 @@ DOC=$(ls -t "$KB/daily-log/"*.md | head -1)
 
 See `CHANGELOG.md` for complete version history.
 
-**Current Version**: 2.6.0 (2026-01-18)
-- Integrated 5 previously undocumented scripts into workflow phases
-- Added Phase 6 (Index Maintenance) with Obsidian Base and MOC Canvas generation
-- Added Obsidian syntax validation in Phase 4.2
-- Updated Scripts Reference documentation (12 scripts total)
-- Updated completion criteria (7 items)
+**Current Version**: 3.1.0 (2026-03-06)
+- Session management integration: reads session.md hub for metadata and content navigation
+- All recap-created KB docs include `session-folder:` back-reference for Obsidian backlink navigation
+- Daily log template: added session-name, session-folder, task-tag fields
 
 **Previous Releases**:
+- 3.0.0 - RFC 2119 rewrite, reflection decision gate, verification script
+- 2.6.1 - Session folder date fragmentation fix
+- 2.6.0 - Resume hook, sequential segment numbering
 - 2.5.0 - Obsidian skills integration for proper Obsidian Flavored Markdown
 - 2.4.0 - Session Manager hooks (SessionStart, PreCompact, SessionEnd)
 - 2.3.0 - Configurable KB path, best practices optimization

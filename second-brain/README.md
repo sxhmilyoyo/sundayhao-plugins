@@ -80,11 +80,12 @@ The plugin integrates with Claude Code's lifecycle through hooks that automatica
 - **SessionStart (startup)** - Creates `session.md` hub note via Obsidian CLI, sets frontmatter properties
 - **SessionStart (resume)** - Saves current segment before resuming
 - **PreCompact** - Saves segment before context summarization
-- **SessionEnd** - Saves final segment, rebuilds `session.md` as hub note with wikilinks to all artifacts
+- **SessionEnd** - Saves final segment, snapshots auto memory, rebuilds `session.md` as hub note with wikilinks to all artifacts
 
 **Output Files:**
 - `session.md` - Obsidian hub note with frontmatter metadata and wikilinks to all session artifacts
 - `docs/` - Generated documentation artifacts
+- `memory/` - Snapshot of Claude Code auto memory at session end
 - `segment-N/` - Segment data (transcript.jsonl, agents/*.jsonl, plans/*.md, metadata.json)
 
 ---
@@ -212,7 +213,7 @@ Session: /path-to-knowledge-bank/_sessions/<yyyy-mm-dd>/<session-id>
 |-------|------------------|--------|
 | `session-recap` | "recap the session", significant work completion | Concepts, components, best practices, daily logs |
 | `knowledge-bank-lookup` | Service mentions, "how should I..." | Structured insights with patterns, gotchas, recommendations |
-| `session-manager` | "tag this session", "set task tag", "summarize session" | Updated session.md frontmatter (task_tag, tags, summary) |
+| `session-manager` | "tag this session", "set project to", "summarize session" | Updated session.md frontmatter (project, task_tag, tags, summary) |
 
 ---
 
