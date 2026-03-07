@@ -176,6 +176,11 @@ Just like sesh binds to a tmux key for instant session switching, ccfind integra
   <p><em>ccfind as a tmux popup (<code>prefix + F</code>) — search sessions without leaving your workflow</em></p>
 </div>
 
+<div align="center">
+  <video src="misc/ccfind-in-tmux-demo.mp4" width="700" autoplay loop muted playsinline></video>
+  <p><em>ccfind tmux popup demo — search and resume without leaving your workflow</em></p>
+</div>
+
 ```bash
 # Add to .zshrc
 alias ccfind="<plugin-path>/tools/ccfind/ccfind.sh"
