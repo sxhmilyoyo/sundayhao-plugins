@@ -9,107 +9,247 @@
   ![Author](https://img.shields.io/badge/author-sxhmilyoyo-orange)
 </div>
 
-> **Agentic Workflow with Memory and Tribal Knowledge**
+> **Give your AI a memory it deserves.**
 
-Transform Claude from a brilliant goldfish into an elephant with persistent knowledge across sessions.
+Transform Claude from a brilliant goldfish into an elephant—with persistent knowledge, organized sessions, and compound learning across every conversation.
 
 ---
 
-## The Problem: The "Brilliant Goldfish" Problem
+## Two Problems, One Plugin
+
+### Problem 1: The Claude Code Session Management Problem
+
+Claude Code sessions are a black hole. Work goes in, nothing comes out.
+
+- **No organization**: Sessions pile up with no way to tag, group, or categorize related work
+- **No discoverability**: "What did I work on last Tuesday?" requires scrolling through a flat list of cryptic session IDs
+- **No continuity**: Working documents scatter across repos. Context dies when the session ends
+- **No metadata**: No duration, no summary, no connection between sessions that tackled the same task
+
+You're generating hours of valuable engineering work every day—and losing it all to an unstructured void.
+
+### Problem 2: The "Brilliant Goldfish" Problem
 
 Your AI is a genius with no long-term memory.
 
-- **The Amnesia Loop**: It forgets your architecture, decisions, and history the moment the session ends, forcing you to explain the context repeatedly
-- **The Productivity Tax**: Developers lose 5+ hours/week just hunting for syncing on information. Each interruption breaks "flow state" and costs 20 minutes of focus to recover
-- It cannot learn lessons from the session, making you show the correct approach repeatedly
+- **The Amnesia Loop**: Claude forgets your architecture, decisions, and history the moment the session ends—forcing you to re-explain context every single time
+- **The Productivity Tax**: Each new session starts from absolute zero. The pattern you discovered last week? Gone. The gotcha you debugged yesterday? Forgotten
+- **No Learning**: Claude can't learn lessons across sessions, making you demonstrate the correct approach over and over
 
-Every new AI session is like working with a brilliant goldfish—amazing capabilities, but zero memory of what you taught it yesterday.
+Every new session is like working with a brilliant goldfish—amazing capabilities, but zero memory of what you taught it yesterday.
+
+### How They Connect
+
+These problems feed each other. Without session management, there's nothing to learn from. Without memory, organized sessions sit unused. **Second Brain solves both—and connects them into a continuous learning loop.**
 
 ---
 
 ## The Solution: An Agentic Workflow
 
-This plugin provides two skills that work together to create a **Second Brain** for your AI assistant:
-
-### The Automated Loop
-
 <div align="center">
-  <img src="misc/workflow-diagram.excalidraw.png" alt="Workflow Diagram" width="700"/>
+  <img src="misc/workflow-diagram.png" alt="Workflow Diagram" width="700"/>
 </div>
 
-The diagram shows the continuous learning loop:
-1. **User Request** triggers an investigation
-2. **Investigation** consults the knowledge bank via `knowledge-bank-lookup`
-3. **Implementation** applies learned patterns and best practices
-4. **Session Transcripts** capture the work done
-5. **`session-recap`** distills insights back into the knowledge bank
-6. The cycle continues, making the AI smarter with each session
+Second Brain works in three layers, each building on the last:
 
-### 1. `session-recap` - Auto-Document Your Sessions
+| Layer | What It Does | Components |
+|-------|-------------|------------|
+| **1. Capture** | Automatically organizes every session with rich metadata | Session hooks, `session.md`, `session-manager` |
+| **2. Distill** | Transforms raw session data into actionable knowledge | `session-recap` |
+| **3. Retrieve** | Surfaces relevant knowledge at the start of every new session | `knowledge-bank-lookup` |
 
-At the end of every work session, automatically captures what matters:
-- **Not chat logs** - distilled, actionable knowledge
-- **95% size reduction** with 100% knowledge retention (139 KB → 5 KB)
+**The loop**: You work → sessions are captured → knowledge is distilled → future sessions start smarter → you work better → repeat.
+
+---
+
+## Layer 1: Session Management
+
+The foundation. Hooks into Claude Code's lifecycle to automatically capture, organize, and make sessions discoverable.
+
+### How It Works
+
+<div align="center">
+  <img src="misc/session-management.png" alt="Session Management Architecture" width="700"/>
+</div>
+
+**Lifecycle Hooks:**
+- **SessionStart** — Creates a `session.md` hub note via Obsidian CLI with frontmatter metadata. Injects the session docs path into Claude's context so working documents land in the right place
+- **SessionResume** — Re-injects context when resuming a session
+- **PreCompact** — Saves a segment checkpoint before context summarization
+- **SessionEnd** — Records duration, session name, and auto-memory snapshot. Rebuilds `session.md` as a hub note with wikilinks to all artifacts
+
+**What Gets Captured:**
+
+```
+_sessions/2026-03-06/{session-id}/
+├── session.md          # Hub note: metadata + wikilinks to everything
+├── docs/               # Working documents (designs, plans, reviews, issues)
+├── memory/             # Auto-memory snapshot at session end
+└── segment-N/          # Transcript segments (jsonl, agents, plans)
+```
+
+### `session-manager` — Tag and Organize Sessions
+
+Tag sessions while you work—no extra steps after the fact.
+
+```
+/session-manager
+```
+
+| Property | Purpose | Example |
+|----------|---------|---------|
+| `task_tag` | Group sessions working on the same task | `refactor-auth`, `debug-caching` |
+| `tags` | Freeform categorization | `brainstorming`, `debugging`, `architecture` |
+| `summary` | One-line description | "Designed new auth flow for v2" |
+
+### `ccfind` — Find and Resume Any Session
+
+Think [sesh](https://github.com/joshmedeski/sesh) for tmux sessions, but for Claude Code sessions. A shell + fzf tool that makes your AI sessions searchable, browsable, and instantly resumable.
+
+<div align="center">
+  <img src="misc/ccfind-terminal.png" alt="ccfind in terminal" width="700"/>
+  <p><em>ccfind in a standalone terminal — fuzzy search across all sessions with live preview</em></p>
+</div>
+
+```bash
+ccfind                  # Fuzzy search all sessions
+ccfind --by-tag         # Browse by tag
+ccfind --by-task-tag    # Browse by task_tag
+ccfind --tags           # List all unique tags
+ccfind --task-tags      # List all unique task_tags
+```
+
+**Two-step browsing** — pick a task_tag first, then browse only matching sessions:
+
+<div align="center">
+  <img src="misc/ccfind-by-task-tag.png" alt="ccfind task_tag picker" width="700"/>
+  <p><em>Step 1: Pick a task_tag</em></p>
+</div>
+
+<div align="center">
+  <img src="misc/ccfind-filtered.png" alt="ccfind filtered by task_tag" width="700"/>
+  <p><em>Step 2: Browse sessions filtered to <code>task_tag=session-management-v2</code></em></p>
+</div>
+
+**Keybindings (in fzf):**
+
+| Key       | Action                                    |
+|-----------|-------------------------------------------|
+| `Enter`   | Resume session in new tmux tab             |
+| `Ctrl-O`  | Open session folder in nvim                |
+| `Ctrl-Y`  | Copy session folder path to clipboard      |
+| `Ctrl-A`  | Switch to all sessions                     |
+| `Ctrl-T`  | Switch to by-tag mode                      |
+| `Ctrl-G`  | Switch to by-task-tag mode                 |
+
+**tmux Integration:**
+
+Just like sesh binds to a tmux key for instant session switching, ccfind integrates as a tmux popup:
+
+<div align="center">
+  <img src="misc/ccfind-tmux.png" alt="ccfind as tmux popup" width="700"/>
+  <p><em>ccfind as a tmux popup (<code>prefix + F</code>) — search sessions without leaving your workflow</em></p>
+</div>
+
+```bash
+# Add to .zshrc
+alias ccfind="<plugin-path>/tools/ccfind/ccfind.sh"
+
+# Add to .tmux.conf — popup with prefix + F
+bind-key "F" display-popup -E -w 80% -h 70% "<plugin-path>/tools/ccfind/ccfind.sh"
+```
+
+Where `<plugin-path>` is the plugin installation directory (e.g., `~/.claude/plugins/cache/sundayhao-plugins/second-brain/1.0.0`).
+
+**Dependencies:** [fzf](https://github.com/junegunn/fzf), Claude Code CLI
+
+---
+
+## Layer 2: Knowledge Distillation — `session-recap`
+
+Takes the raw session data that Layer 1 captured and distills it into actionable, cross-referenced knowledge.
+
+- **Not chat logs** — distilled, structured knowledge documents
+- **95% size reduction** with 100% knowledge retention (139 KB → 5 KB typical)
 - Creates concepts, components, best practices, and process reflections
 - Rich cross-referencing (10-15 WikiLinks) across knowledge categories
 
-**Triggers**: "recap the session", "summarize the work", "document this", or automatically after significant work
+**Triggers**: "recap the session", "summarize the work", or after significant work
 
-### 2. `knowledge-bank-lookup` - Instant Context Retrieval
+**Usage:**
+```bash
+# Start a NEW session, then:
+/session-recap /path/to/session-folder
 
-When you start a new session, instantly retrieves relevant context:
+# Or natural language:
+"Recap the session at /path/to/session-folder"
+```
+
+---
+
+## Layer 3: Context Retrieval — `knowledge-bank-lookup`
+
+Closes the loop. When you start a new session, instantly retrieves relevant knowledge from everything that came before.
+
 - **No manual searching** or documentation diving
-- **69-94% context reduction** per lookup (varies by lookup type: Quick/Standard/Deep)
-- **Reflections-first strategy** - learns from past mistakes before consulting documentation
+- **69-94% context reduction** per lookup (varies by depth: Quick/Standard/Deep)
+- **Reflections-first strategy** — learns from past mistakes before consulting documentation
 - **WikiLink following** with DFS traversal for comprehensive knowledge discovery
-- **Frontmatter filtering** - property-based document discovery for efficient navigation
+- **Frontmatter filtering** — property-based document discovery
 
 **Triggers**: Project mentions, investigation requests, or "how should I..."
 
----
+**Usage:**
+```bash
+/knowledge-bank-lookup
 
-## Session Management Architecture
-
-The plugin integrates with Claude Code's lifecycle through hooks that automatically capture and process session data.
-
-<div align="center">
-  <img src="misc/session-management.excalidraw.png" alt="Session Management Architecture" width="700"/>
-</div>
-
-**Lifecycle Events:**
-- **SessionStart (startup)** - Creates `session.md` hub note via Obsidian CLI, sets frontmatter properties
-- **SessionStart (resume)** - Saves current segment before resuming
-- **PreCompact** - Saves segment before context summarization
-- **SessionEnd** - Saves final segment, snapshots auto memory, rebuilds `session.md` as hub note with wikilinks to all artifacts
-
-**Output Files:**
-- `session.md` - Obsidian hub note with frontmatter metadata and wikilinks to all session artifacts
-- `docs/` - Generated documentation artifacts
-- `memory/` - Snapshot of Claude Code auto memory at session end
-- `segment-N/` - Segment data (transcript.jsonl, agents/*.jsonl, plans/*.md, metadata.json)
+# Or natural language:
+"Look up the knowledge bank and tell me how to implement X"
+"What's the pattern for Y in our codebase?"
+```
 
 ---
 
-## Benefits
+## Who Is This For?
 
-| Metric | Value |
-|--------|-------|
-| Context reduction per lookup | **69-94%** (Quick/Standard/Deep) |
-| Manual documentation time | **Zero** |
-| Knowledge retention across sessions | **100%** |
-| Session size reduction | **95%** (139 KB → 5 KB typical) |
+### For You — The Solo Developer
 
-### For You (The Engineer)
-Never explain your codebase from scratch again.
+Stop re-explaining your codebase every session. Return to a project after weeks away and Claude already knows your architecture, your patterns, your decisions. Use `ccfind` to jump back to any past session in seconds.
+
+> *"I keep telling Claude the same thing about our state management. Now I don't have to—the plugin captures it automatically. That's 2-3 hours per week back in my pocket."*
 
 ### For Your Team
-Instant access to every pattern, every lesson, every decision that came before.
 
-### For New Hires
-Onboarding in hours, not weeks. They get the collective wisdom of your entire team immediately.
+Scale your senior engineer's brain to the whole team. When a junior asks "how should I structure this?", Claude doesn't give generic advice—it references the actual patterns your team uses, the gotchas you've learned, and why you made specific trade-offs.
+
+> *"It's like having me in the room without me being in the room. New hires onboard in hours, not weeks."*
 
 ### For The Organization
-Knowledge compounds. Every insight builds on the last. Your AI becomes as experienced as your most senior architect.
+
+Knowledge compounds instead of evaporating. Every session builds on the last. Every insight, every debugging war story, every architectural decision feeds back into the system. Your AI becomes as experienced as your most senior architect.
+
+> *"We stopped working with goldfish and started building institutional intelligence."*
+
+---
+
+## The Knowledge Bank Philosophy
+
+> **Knowledge Bank = BRAIN, not ARCHIVE**
+
+Preserve what matters (workflows, edge cases, decisions), not every detail (investigation traces, all alternatives, verbose analysis).
+
+- **Compound Learning**: Your AI literally gets smarter every day
+- **Institutional Intelligence**: Stop working with goldfish, start building institutional intelligence
+
+---
+
+## Skills Reference
+
+| Skill | Trigger Examples | Output |
+|-------|------------------|--------|
+| `session-recap` | "recap the session", significant work completion | Concepts, components, best practices, daily logs |
+| `knowledge-bank-lookup` | Service mentions, "how should I..." | Structured insights with patterns, gotchas, recommendations |
+| `session-manager` | "tag this session", "set project to" | Updated session.md frontmatter (task_tag, tags, summary) |
 
 ---
 
@@ -172,107 +312,6 @@ Replace `/path/to/your/knowledge-bank` with your actual knowledge bank directory
 
 ---
 
-## Usage
-
-### Session Recap
-
-When Claude Code starts, it displays the session folder path:
-```
-Session: /path-to-knowledge-bank/_sessions/<yyyy-mm-dd>/<session-id>
-```
-
-**Workflow:**
-1. **Work on your task** - Claude Code captures everything
-2. **Note the session path** (shown at startup)
-3. **Exit the session** when done
-4. **Start a NEW session** and invoke:
-   ```bash
-   # Slash command:
-   /session-recap /path/to/session-folder
-   # /path/to/session-folder looks like "/<path-to-knowledge-bank>/_sessions/yyyy-mm-dd>/<session-id>"
-
-   # Or natural language:
-   "Recap the session at /path/to/session-folder"
-   ```
-
-### Knowledge Lookup
-```
-# Manual invocation:
-/knowledge-bank-lookup
-
-# Natural language triggers:
-"Look up the knowledge bank and tell me how to implement X"
-"What's the pattern for Y in our codebase?"
-```
-
----
-
-## Skills Reference
-
-| Skill | Trigger Examples | Output |
-|-------|------------------|--------|
-| `session-recap` | "recap the session", significant work completion | Concepts, components, best practices, daily logs |
-| `knowledge-bank-lookup` | Service mentions, "how should I..." | Structured insights with patterns, gotchas, recommendations |
-| `session-manager` | "tag this session", "set project to", "summarize session" | Updated session.md frontmatter (project, task_tag, tags, summary) |
-
----
-
-## ccfind - Session Finder
-
-A shell + fzf tool for searching and resuming Claude Code sessions by their metadata.
-
-### Commands
-
-```bash
-ccfind                  # Search all sessions (fuzzy match on all fields)
-ccfind --by-tag         # Two-step: pick a tag, then browse matching sessions
-ccfind --by-task-tag    # Two-step: pick a task_tag, then browse matching sessions
-ccfind --tags           # List all unique tags
-ccfind --task-tags      # List all unique task_tags
-```
-
-### Keybindings (in fzf)
-
-| Key       | Action                                         |
-|-----------|-------------------------------------------------|
-| `Enter`   | Resume session (`cd` to cwd + `claude -r`)      |
-| `Ctrl-O`  | Open the session's docs folder                   |
-
-### Installation
-
-Add a shell alias to your `.zshrc`:
-
-```bash
-alias ccfind="<plugin-path>/tools/ccfind/ccfind.sh"
-```
-
-Where `<plugin-path>` is the plugin installation directory (e.g., `~/.claude/plugins/cache/sundayhao-plugins/second-brain/1.0.0`).
-
-### tmux Integration
-
-```bash
-# Add to .tmux.conf
-bind-key "F" display-popup -E -w 80% -h 70% "ccfind"
-```
-
-### Dependencies
-
-- [fzf](https://github.com/junegunn/fzf)
-- Claude Code CLI (for `claude -r` resume)
-
----
-
-## The Knowledge Bank Philosophy
-
-> **Knowledge Bank = BRAIN, not ARCHIVE**
-
-Preserve what matters (workflows, edge cases, decisions), not every detail (investigation traces, all alternatives, verbose analysis).
-
-- **Compound Learning**: Your AI literally gets smarter every day
-- **Institutional Intelligence**: Stop working with goldfish, start building institutional intelligence
-
----
-
 ## Obsidian Integration
 
 ### Viewing the Knowledge Bank
@@ -284,10 +323,10 @@ The knowledge bank directory can be opened directly as an **Obsidian vault**:
 3. Choose your knowledge bank directory
 
 **Benefits:**
-- **Graph View** - Visualize connections between concepts, components, and reflections
-- **WikiLink Navigation** - Click `[[links]]` to jump between related documents
-- **Full-text Search** - Find anything across your entire knowledge base
-- **Backlinks** - See all documents that reference the current note
+- **Graph View** — Visualize connections between concepts, components, and reflections
+- **WikiLink Navigation** — Click `[[links]]` to jump between related documents
+- **Full-text Search** — Find anything across your entire knowledge base
+- **Backlinks** — See all documents that reference the current note
 
 <div align="center">
   <img src="misc/obsidian-graph.png" alt="Obsidian Graph View" width="700"/>
