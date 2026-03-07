@@ -5,6 +5,79 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-03-06
+
+### Added - Session Management Integration
+
+Integrates session-recap with the session management v2.0 architecture. Recap now reads `session.md` as a navigation hub for metadata and content discovery, while all recap-created KB docs include a `session-folder:` back-reference for Obsidian backlink navigation.
+
+**Design principle**: session.md is **read-only** for recap — recap never writes to it.
+
+#### SKILL.md Changes
+
+**Invocation updated** (Change 1):
+- Primary workflow now uses session folder path (`{KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/`)
+- Removed step about noting `.jsonl` path during work session
+- Explains that SessionEnd hook auto-saves segments and builds session.md
+- Legacy `.jsonl` transcript path still supported as fallback
+
+**Phase 1.1 — session.md hub navigation** (Change 2):
+- Reads session.md frontmatter for metadata: `project`, `session_name`, `task_tag`, `tags`, `summary`, `duration_seconds`, `started_at`, `ended_at`
+- Navigates session.md body sections (Generated Artifacts, Transcripts, Agents, Plans, Memory Snapshot) for content discovery
+- Guard: skips if no session folder provided (current conversation mode)
+
+**Phase 1.2 — project detection from session.md** (Change 3):
+- If session.md `project` property is set → use it directly
+- Otherwise → fall back to `parse_transcript.sh "$TRANSCRIPT" project`
+
+**Shared YAML frontmatter — `session-folder` field** (Change 4):
+- Added `session-folder: _sessions/YYYY-MM-DD/{session_id}` to frontmatter spec
+- Applies to ALL recap-created docs (daily log, concepts, components, best practices, reflections)
+- Creates reverse reference: Obsidian backlinks on session.md show all KB docs from that session
+
+#### Daily Log Template Changes
+
+**Frontmatter** (Change 5):
+- Added `session-name:` — from session.md `session_name`
+- Added `session-folder:` — vault-relative path
+- Added `task-tag:` — from session.md `task_tag`
+
+**Session Overview table** (Change 5):
+- Added `Session Name` row
+- Added `Task Tag` row
+
+### Impact
+
+**Navigation**:
+- Session.md → (backlinks) → all KB docs extracted from that session
+- KB docs → (session-folder property) → session.md hub
+- Bidirectional navigation without coupling
+
+**Metadata enrichment**:
+- Project detected from session.md (no transcript parsing needed)
+- Session name and task tag flow into daily logs
+- Duration, summary, and tags available from frontmatter
+
+### Compatibility
+- ✅ Fully backward compatible with 3.0.0
+- ✅ No hook changes required (recap is read-only)
+- ✅ Legacy `.jsonl` transcript path still works
+- ✅ Current conversation mode unaffected (session.md reading skipped)
+
+### Files Modified
+1. `SKILL.md` — Changes 1-4: invocation, Phase 1.1 hub, 1.2 project, frontmatter spec
+2. `references/daily-log-template.md` — Change 5: session-name, session-folder, task-tag
+3. `VERSION` — 3.0.0 → 3.1.0
+4. `CHANGELOG.md` — This entry
+
+### Files NOT Modified
+- No hook changes (session_end.sh, session_start.sh, session_resume.sh)
+- `parse_transcript.sh` — still the primary transcript data source
+- `obsidian_helpers.sh` — already has everything needed
+- Other templates (concept, component, reflection) — shared frontmatter spec covers `session-folder`
+
+---
+
 ## [3.0.0] - 2026-01-18
 
 ### Changed - MAJOR REWRITE
@@ -992,6 +1065,7 @@ Based on actual session analysis where session-recap failed twice:
 
 | Version | Date | Type | Key Changes |
 |---------|------|------|-------------|
+| **3.1.0** | 2026-03-06 | Minor | Session management integration, session.md hub navigation, session-folder back-reference |
 | **3.0.0** | 2026-01-18 | Major | RFC 2119 rewrite, reflection decision gate, verification script |
 | **2.6.1** | 2026-01-18 | Patch | Session folder date fragmentation fix |
 | **2.6.0** | 2026-01-17 | Minor | Resume hook, sequential segment numbering |
@@ -1083,6 +1157,6 @@ When updating this skill:
 
 ---
 
-**Last Updated**: 2026-01-18
-**Current Version**: 3.0.0
+**Last Updated**: 2026-03-06
+**Current Version**: 3.1.0
 **Maintainer**: sundayhao
