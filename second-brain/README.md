@@ -111,6 +111,11 @@ Think [sesh](https://github.com/joshmedeski/sesh) for tmux sessions, but for Cla
   <p><em>ccfind in a standalone terminal — fuzzy search across all sessions with live preview</em></p>
 </div>
 
+<div align="center">
+  <video src="misc/ccfind-in-terminal-demo.mp4" width="700" autoplay loop muted playsinline></video>
+  <p><em>ccfind demo — search, filter, and resume sessions</em></p>
+</div>
+
 ```bash
 ccfind                  # Fuzzy search all sessions
 ccfind --by-tag         # Browse by tag
