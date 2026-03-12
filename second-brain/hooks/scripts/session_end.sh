@@ -109,7 +109,6 @@ EOF
 # re-sets all frontmatter properties. This is idempotent — running
 # session_end multiple times produces the same result.
 
-VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
 ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 # ── 1. Read properties to preserve across overwrite ───────────────────

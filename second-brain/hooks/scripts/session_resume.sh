@@ -1,7 +1,7 @@
 #!/bin/bash
 # SessionStart:resume hook - ensures session folder exists and re-injects docs path
 # Called when a Claude Code session is resumed (--continue or --resume).
-# Creates session.md via Obsidian CLI if the session folder doesn't exist yet.
+# Creates session.md via filesystem write if the session folder doesn't exist yet.
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
