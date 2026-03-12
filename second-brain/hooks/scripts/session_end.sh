@@ -113,19 +113,20 @@ VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
 ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 # ── 1. Read properties to preserve across overwrite ───────────────────
-# Properties set by session_start
-SCHEMA_VERSION=$(read_session_property "$VAULT_PATH" "schema_version")
-STARTED_AT=$(read_session_property "$VAULT_PATH" "started_at")
-PROJECT=$(read_session_property "$VAULT_PATH" "project")
-CWD=$(read_session_property "$VAULT_PATH" "cwd")
-GIT_BRANCH=$(read_session_property "$VAULT_PATH" "git_branch")
-DOCS_PATH_PROP=$(read_session_property "$VAULT_PATH" "docs_path")
-DATE_PROP=$(read_session_property "$VAULT_PATH" "date")
+# Read directly from filesystem (no Obsidian CLI — avoids timeout)
+SESSION_MD="$SESSION_FOLDER/session.md"
+SCHEMA_VERSION=$(read_frontmatter_prop "$SESSION_MD" "schema_version")
+STARTED_AT=$(read_frontmatter_prop "$SESSION_MD" "started_at")
+PROJECT=$(read_frontmatter_prop "$SESSION_MD" "project")
+CWD=$(read_frontmatter_prop "$SESSION_MD" "cwd")
+GIT_BRANCH=$(read_frontmatter_prop "$SESSION_MD" "git_branch")
+DOCS_PATH_PROP=$(read_frontmatter_prop "$SESSION_MD" "docs_path")
+DATE_PROP=$(read_frontmatter_prop "$SESSION_MD" "date")
 # Properties set mid-session by user (via session-manager skill)
-TASK_TAG=$(read_session_property "$VAULT_PATH" "task_tag")
-TAGS=$(read_session_property_list "$VAULT_PATH" "tags")
-SUMMARY=$(read_session_property "$VAULT_PATH" "summary")
-SESSION_NAME=$(read_session_property "$VAULT_PATH" "session_name")
+TASK_TAG=$(read_frontmatter_prop "$SESSION_MD" "task_tag")
+TAGS=$(read_frontmatter_list "$SESSION_MD" "tags")
+SUMMARY=$(read_frontmatter_prop "$SESSION_MD" "summary")
+SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 
 # ── 2. Compute end-time metadata ─────────────────────────────────────
 DURATION=""
@@ -213,27 +214,36 @@ if [ -d "$MEMORY_DIR" ]; then
     [ -n "$MEMORY_FILES" ] && BODY="$BODY\n\n## Memory Snapshot${MEMORY_FILES}"
 fi
 
-# ── 4. Overwrite session.md with new body ─────────────────────────────
-overwrite_session_note "$VAULT_PATH" "$BODY"
+# ── 4. Write session.md atomically (frontmatter + body) ───────────────
+# Format tags as YAML list
+TAGS_YAML=""
+if [ -n "$TAGS" ]; then
+    TAGS_YAML=$(echo "$TAGS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | while read -r tag; do
+        [ -n "$tag" ] && echo "  - $tag"
+    done)
+fi
 
-# ── 5. Re-set all frontmatter properties ──────────────────────────────
-# Lifecycle properties
-set_session_property "$VAULT_PATH" "schema_version" "${SCHEMA_VERSION:-2.0}"
-set_session_property "$VAULT_PATH" "session_id" "$SESSION_ID"
-[ -n "$DATE_PROP" ] && set_session_property "$VAULT_PATH" "date" "$DATE_PROP" "date"
-[ -n "$PROJECT" ] && set_session_property "$VAULT_PATH" "project" "$PROJECT"
-[ -n "$CWD" ] && set_session_property "$VAULT_PATH" "cwd" "$CWD"
-[ -n "$GIT_BRANCH" ] && set_session_property "$VAULT_PATH" "git_branch" "$GIT_BRANCH"
-[ -n "$STARTED_AT" ] && set_session_property "$VAULT_PATH" "started_at" "$STARTED_AT" "datetime"
-[ -n "$DOCS_PATH_PROP" ] && set_session_property "$VAULT_PATH" "docs_path" "$DOCS_PATH_PROP"
-# End-time properties
-set_session_property "$VAULT_PATH" "ended_at" "$ENDED_AT" "datetime"
-[ -n "$DURATION" ] && set_session_property "$VAULT_PATH" "duration_seconds" "$DURATION" "number"
-[ -n "$SESSION_NAME" ] && set_session_property "$VAULT_PATH" "session_name" "$SESSION_NAME"
-# Mid-session properties (preserved from before overwrite)
-[ -n "$TASK_TAG" ] && set_session_property "$VAULT_PATH" "task_tag" "$TASK_TAG"
-[ -n "$TAGS" ] && set_session_property "$VAULT_PATH" "tags" "$TAGS" "list"
-[ -n "$SUMMARY" ] && set_session_property "$VAULT_PATH" "summary" "$SUMMARY"
+# Escape double quotes in user-provided values for YAML safety
+_yaml_escape() { echo "${1//\"/\\\"}"; }
+
+FRONTMATTER="schema_version: \"${SCHEMA_VERSION:-2.0}\"
+session_id: \"$SESSION_ID\"
+date: ${DATE_PROP:-}
+project: \"$(_yaml_escape "${PROJECT:-}")\"
+cwd: \"$(_yaml_escape "${CWD:-}")\"
+git_branch: \"$(_yaml_escape "${GIT_BRANCH:-}")\"
+started_at: ${STARTED_AT:-}
+docs_path: \"$(_yaml_escape "${DOCS_PATH_PROP:-}")\"
+session_name: \"$(_yaml_escape "${SESSION_NAME:-}")\"
+ended_at: $ENDED_AT
+duration_seconds: ${DURATION:-}
+summary: \"$(_yaml_escape "${SUMMARY:-}")\"
+task_tag: \"$(_yaml_escape "${TASK_TAG:-}")\"
+tags:
+${TAGS_YAML}"
+
+RESOLVED_BODY=$(printf '%b' "$BODY")
+write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "$RESOLVED_BODY"
 
 # ── Output ──────────────────────────────────────────────────────────────
 

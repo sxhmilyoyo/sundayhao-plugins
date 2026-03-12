@@ -57,22 +57,23 @@ if [ -z "$SESSION_FOLDER" ]; then
     fi
     PROJECT=$(detect_project "$CWD")
 
-    # Create session.md via Obsidian CLI
-    VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
-    create_session_note "$VAULT_PATH" "$SESSION_ID"
-    set_session_property "$VAULT_PATH" "schema_version" "2.0"
-    set_session_property "$VAULT_PATH" "session_id" "$SESSION_ID"
-    set_session_property "$VAULT_PATH" "date" "$TODAY" "date"
-    set_session_property "$VAULT_PATH" "project" "$PROJECT"
-    set_session_property "$VAULT_PATH" "cwd" "$CWD"
-    set_session_property "$VAULT_PATH" "git_branch" "$GIT_BRANCH"
-    set_session_property "$VAULT_PATH" "started_at" "$(date -u +%Y-%m-%dT%H:%M:%S)" "datetime"
-    set_session_property "$VAULT_PATH" "docs_path" "_sessions/$TODAY/$SESSION_ID/docs"
-    set_session_property "$VAULT_PATH" "session_name" ""
-    set_session_property "$VAULT_PATH" "ended_at" ""
-    set_session_property "$VAULT_PATH" "duration_seconds" "" "number"
-    set_session_property "$VAULT_PATH" "summary" ""
-    set_session_property "$VAULT_PATH" "task_tag" ""
+    # Create session.md with full frontmatter in one atomic filesystem write
+    FRONTMATTER="schema_version: \"2.0\"
+session_id: \"$SESSION_ID\"
+date: $TODAY
+project: \"$PROJECT\"
+cwd: \"$CWD\"
+git_branch: \"$GIT_BRANCH\"
+started_at: $(date -u +%Y-%m-%dT%H:%M:%S)
+docs_path: \"_sessions/$TODAY/$SESSION_ID/docs\"
+session_name:
+ended_at:
+duration_seconds:
+summary:
+task_tag:
+tags:"
+
+    write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "# Session: $SESSION_ID"
 else
     # Ensure docs/ dir exists for existing sessions
     mkdir -p "$SESSION_FOLDER/docs"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SessionStart hook - creates session folder with session.md and injects docs path
 # This script is called when a new Claude Code session starts.
-# Creates session.md via Obsidian CLI with rich metadata frontmatter.
+# Creates session.md with full YAML frontmatter via direct filesystem write.
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
@@ -51,27 +51,24 @@ PROJECT=$(detect_project "$CWD")
 # Timestamps
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
-# Create session.md via Obsidian CLI
-VAULT_PATH=$(get_vault_relative_path "$SESSION_FOLDER/session.md" "$KB_PATH")
-create_session_note "$VAULT_PATH" "$SESSION_ID"
+# Create session.md with full frontmatter in one atomic filesystem write.
+# Bypasses Obsidian CLI for reliability — CLI create can fail silently.
+FRONTMATTER="schema_version: \"2.0\"
+session_id: \"$SESSION_ID\"
+date: $TODAY
+project: \"$PROJECT\"
+cwd: \"$CWD\"
+git_branch: \"$GIT_BRANCH\"
+started_at: $STARTED_AT
+docs_path: \"_sessions/$TODAY/$SESSION_ID/docs\"
+session_name:
+ended_at:
+duration_seconds:
+summary:
+task_tag:
+tags:"
 
-# Set frontmatter properties (start-time fields)
-set_session_property "$VAULT_PATH" "schema_version" "2.0"
-set_session_property "$VAULT_PATH" "session_id" "$SESSION_ID"
-set_session_property "$VAULT_PATH" "date" "$TODAY" "date"
-set_session_property "$VAULT_PATH" "project" "$PROJECT"
-set_session_property "$VAULT_PATH" "cwd" "$CWD"
-set_session_property "$VAULT_PATH" "git_branch" "$GIT_BRANCH"
-set_session_property "$VAULT_PATH" "started_at" "$STARTED_AT" "datetime"
-set_session_property "$VAULT_PATH" "docs_path" "_sessions/$TODAY/$SESSION_ID/docs"
-
-# Set empty placeholders for fields populated later
-set_session_property "$VAULT_PATH" "session_name" ""
-set_session_property "$VAULT_PATH" "ended_at" ""
-set_session_property "$VAULT_PATH" "duration_seconds" "" "number"
-set_session_property "$VAULT_PATH" "summary" ""
-set_session_property "$VAULT_PATH" "task_tag" ""
-set_session_property "$VAULT_PATH" "tags" "" "list"
+write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "# Session: $SESSION_ID"
 
 # Inject system prompt with docs path
 cat << EOF
