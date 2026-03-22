@@ -61,6 +61,7 @@ cwd: \"$CWD\"
 git_branch: \"$GIT_BRANCH\"
 started_at: $STARTED_AT
 docs_path: \"_sessions/$TODAY/$SESSION_ID/docs\"
+transcript_source:
 session_name:
 ended_at:
 duration_seconds:
