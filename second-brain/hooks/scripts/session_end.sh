@@ -1,7 +1,7 @@
 #!/bin/bash
-# SessionEnd hook - saves session-end segment AND updates session.md with final metadata
-# Saves segment data (transcript, agents, plans) then enriches session.md with
-# session_name (from customTitle), ended_at, and duration_seconds.
+# SessionEnd hook - updates session.md with final metadata (reference-only architecture)
+# No segment copies — stores transcript_source path in frontmatter.
+# Reads compaction-points.txt (written by pre_compact.sh) for segment boundaries.
 
 shopt -s nullglob
 
@@ -34,85 +34,7 @@ if [ -z "$SESSION_FOLDER" ]; then
     mkdir -p "$SESSION_FOLDER"
 fi
 
-# ── Segment-saving logic (unchanged from v1.0) ─────────────────────────
-
-SEGMENT_COUNT=$(find "$SESSION_FOLDER" -maxdepth 1 -type d -name "segment-*" ! -name "segment-final" 2>/dev/null | wc -l | tr -d ' ')
-SEGMENT_FOLDER="$SESSION_FOLDER/segment-$SEGMENT_COUNT"
-
-mkdir -p "$SEGMENT_FOLDER/agents"
-mkdir -p "$SEGMENT_FOLDER/plans"
-
-cp "$TRANSCRIPT_PATH" "$SEGMENT_FOLDER/transcript.jsonl"
-
-TRANSCRIPT_DIR=$(dirname "$TRANSCRIPT_PATH")
-AGENTS_COPIED=""
-
-AGENT_IDS=$(grep -o 'agent-[a-f0-9]\{7\}' "$TRANSCRIPT_PATH" 2>/dev/null | sort -u)
-
-EXISTING_AGENTS=""
-for prev_segment in "$SESSION_FOLDER"/segment-*/agents/; do
-    if [ -d "$prev_segment" ]; then
-        for existing in "$prev_segment"*.jsonl; do
-            [ -f "$existing" ] && EXISTING_AGENTS="$EXISTING_AGENTS $(basename "$existing" .jsonl)"
-        done
-    fi
-done
-
-for agent_id in $AGENT_IDS; do
-    if ! echo "$EXISTING_AGENTS" | grep -q "$agent_id"; then
-        agent_file="$TRANSCRIPT_DIR/${agent_id}.jsonl"
-        if [ -f "$agent_file" ]; then
-            cp "$agent_file" "$SEGMENT_FOLDER/agents/"
-            AGENTS_COPIED="$AGENTS_COPIED\"agents/${agent_id}.jsonl\","
-        fi
-    fi
-done
-
-PLANS_COPIED=""
-PLAN_FILES=$(grep -o 'plans/[^"]*\.md' "$TRANSCRIPT_PATH" 2>/dev/null | sort -u)
-
-EXISTING_PLANS=""
-for prev_segment in "$SESSION_FOLDER"/segment-*/plans/; do
-    if [ -d "$prev_segment" ]; then
-        for existing in "$prev_segment"*.md; do
-            [ -f "$existing" ] && EXISTING_PLANS="$EXISTING_PLANS $(basename "$existing")"
-        done
-    fi
-done
-
-for plan_rel_path in $PLAN_FILES; do
-    plan_name=$(basename "$plan_rel_path")
-    if ! echo "$EXISTING_PLANS" | grep -q "$plan_name"; then
-        plan_full_path="$HOME/.claude/$plan_rel_path"
-        if [ -f "$plan_full_path" ]; then
-            cp "$plan_full_path" "$SEGMENT_FOLDER/plans/"
-            PLANS_COPIED="$PLANS_COPIED\"plans/$plan_name\","
-        fi
-    fi
-done
-
-cat > "$SEGMENT_FOLDER/metadata.json" << EOF
-{
-  "segment": $SEGMENT_COUNT,
-  "type": "session-end",
-  "ended_at": "$(date -u +%Y-%m-%dT%H:%M:%S)",
-  "files": {
-    "transcript": "transcript.jsonl",
-    "agents": [${AGENTS_COPIED%,}],
-    "plans": [${PLANS_COPIED%,}]
-  }
-}
-EOF
-
-# ── Rebuild session.md as hub note ─────────────────────────────────────
-# Overwrites session.md body with links to all session artifacts, then
-# re-sets all frontmatter properties. This is idempotent — running
-# session_end multiple times produces the same result.
-
-ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
-
 # ── 1. Read properties to preserve across overwrite ───────────────────
-# Read directly from filesystem (no Obsidian CLI — avoids timeout)
 SESSION_MD="$SESSION_FOLDER/session.md"
 SCHEMA_VERSION=$(read_frontmatter_prop "$SESSION_MD" "schema_version")
 STARTED_AT=$(read_frontmatter_prop "$SESSION_MD" "started_at")
@@ -128,6 +50,8 @@ SUMMARY=$(read_frontmatter_prop "$SESSION_MD" "summary")
 SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 
 # ── 2. Compute end-time metadata ─────────────────────────────────────
+ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
+
 DURATION=""
 if [ -n "$STARTED_AT" ]; then
     START_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$STARTED_AT" +%s 2>/dev/null)
@@ -137,14 +61,15 @@ if [ -n "$STARTED_AT" ]; then
     fi
 fi
 
-# Read customTitle from transcript (overrides any existing session_name)
+# Read customTitle from transcript (reverse-scan — fast on large files)
 if [ -f "$TRANSCRIPT_PATH" ]; then
-    CUSTOM_TITLE=$(grep '"type":"custom-title"' "$TRANSCRIPT_PATH" 2>/dev/null \
-        | tail -1 | jq -r '.customTitle // empty' 2>/dev/null)
+    CUSTOM_TITLE=$(tail -r "$TRANSCRIPT_PATH" 2>/dev/null \
+        | grep -m1 '"type":"custom-title"' \
+        | jq -r '.customTitle // empty' 2>/dev/null)
     [ -n "$CUSTOM_TITLE" ] && SESSION_NAME="$CUSTOM_TITLE"
 fi
 
-# ── 2b. Copy auto memory snapshot ─────────────────────────────────────
+# ── 3. Copy auto memory snapshot ─────────────────────────────────────
 if [ -n "$CWD" ]; then
     REPO_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
     MEMORY_ROOT="${REPO_ROOT:-$CWD}"
@@ -155,7 +80,7 @@ if [ -n "$CWD" ]; then
     fi
 fi
 
-# ── 3. Build hub body ────────────────────────────────────────────────
+# ── 4. Build hub body ────────────────────────────────────────────────
 BODY="# Session: $SESSION_ID"
 
 # Generated Artifacts (docs/*.md)
@@ -169,37 +94,20 @@ if [ -d "$DOCS_DIR" ]; then
     [ -n "$ARTIFACTS" ] && BODY="$BODY\n\n## Generated Artifacts${ARTIFACTS}"
 fi
 
-# Transcripts, Agents, Plans (from all segments)
-TRANSCRIPTS=""
-AGENTS=""
-PLANS=""
-for seg_dir in "$SESSION_FOLDER"/segment-*/; do
-    [ -d "$seg_dir" ] || continue
-    seg_name=$(basename "$seg_dir")
+# Transcript source reference
+BODY="$BODY\n\n## Transcript\n- Source: \`$TRANSCRIPT_PATH\`"
 
-    # Transcript
-    if [ -f "$seg_dir/transcript.jsonl" ]; then
-        TRANSCRIPTS="${TRANSCRIPTS}\n- \`${seg_name}/transcript.jsonl\`"
-    fi
-
-    # Agents
-    for agent_file in "$seg_dir"/agents/*.jsonl; do
-        [ -f "$agent_file" ] || continue
-        agent_name=$(basename "$agent_file" .jsonl)
-        AGENTS="${AGENTS}\n- \`${seg_name}/agents/${agent_name}.jsonl\`"
-    done
-
-    # Plans
-    for plan_file in "$seg_dir"/plans/*.md; do
-        [ -f "$plan_file" ] || continue
-        plan_name=$(basename "$plan_file" .md)
-        PLANS="${PLANS}\n- [[${plan_name}]]"
-    done
-done
-
-[ -n "$TRANSCRIPTS" ] && BODY="$BODY\n\n## Transcripts${TRANSCRIPTS}"
-[ -n "$AGENTS" ] && BODY="$BODY\n\n## Agents${AGENTS}"
-[ -n "$PLANS" ] && BODY="$BODY\n\n## Plans${PLANS}"
+# Compaction Points (from pre_compact.sh sidecar)
+CP_FILE="$SESSION_FOLDER/compaction-points.txt"
+if [ -f "$CP_FILE" ]; then
+    CP_LINES=""
+    SEG_NUM=0
+    while IFS=' ' read -r line_count timestamp; do
+        CP_LINES="${CP_LINES}\n- Segment $SEG_NUM: $line_count lines ($timestamp)"
+        SEG_NUM=$((SEG_NUM + 1))
+    done < "$CP_FILE"
+    [ -n "$CP_LINES" ] && BODY="$BODY\n\n## Compaction Points${CP_LINES}"
+fi
 
 # Memory Snapshot (memory/*.md)
 MEMORY_DIR="$SESSION_FOLDER/memory"
@@ -213,8 +121,7 @@ if [ -d "$MEMORY_DIR" ]; then
     [ -n "$MEMORY_FILES" ] && BODY="$BODY\n\n## Memory Snapshot${MEMORY_FILES}"
 fi
 
-# ── 4. Write session.md atomically (frontmatter + body) ───────────────
-# Format tags as YAML list
+# ── 5. Write session.md atomically (frontmatter + body) ───────────────
 TAGS_YAML=""
 if [ -n "$TAGS" ]; then
     TAGS_YAML=$(echo "$TAGS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | while read -r tag; do
@@ -222,7 +129,6 @@ if [ -n "$TAGS" ]; then
     done)
 fi
 
-# Escape double quotes in user-provided values for YAML safety
 _yaml_escape() { echo "${1//\"/\\\"}"; }
 
 FRONTMATTER="schema_version: \"${SCHEMA_VERSION:-2.0}\"
@@ -233,6 +139,7 @@ cwd: \"$(_yaml_escape "${CWD:-}")\"
 git_branch: \"$(_yaml_escape "${GIT_BRANCH:-}")\"
 started_at: ${STARTED_AT:-}
 docs_path: \"$(_yaml_escape "${DOCS_PATH_PROP:-}")\"
+transcript_source: \"$(_yaml_escape "$TRANSCRIPT_PATH")\"
 session_name: \"$(_yaml_escape "${SESSION_NAME:-}")\"
 ended_at: $ENDED_AT
 duration_seconds: ${DURATION:-}
@@ -249,6 +156,6 @@ write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "$RESOLVED_BODY"
 cat << EOF
 {
   "continue": true,
-  "systemMessage": "Segment $SEGMENT_COUNT saved (session-end). Session complete: $SESSION_FOLDER"
+  "systemMessage": "Session complete: $SESSION_FOLDER"
 }
 EOF
