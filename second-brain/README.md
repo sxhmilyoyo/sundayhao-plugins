@@ -3,7 +3,7 @@
 
   # Second Brain
 
-  ![Version](https://img.shields.io/badge/version-2.0.0-blue)
+  ![Version](https://img.shields.io/badge/version-2.2.0-blue)
   ![License](https://img.shields.io/badge/license-Apache--2.0-green)
   ![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-purple)
   ![Author](https://img.shields.io/badge/author-sxhmilyoyo-orange)
@@ -73,19 +73,19 @@ The foundation. Hooks into Claude Code's lifecycle to automatically capture, org
 </div>
 
 **Lifecycle Hooks:**
-- **SessionStart** — Creates a `session.md` hub note via Obsidian CLI with frontmatter metadata. Injects the session docs path into Claude's context so working documents land in the right place
+- **SessionStart** — Creates a `session.md` hub note with frontmatter metadata via atomic filesystem write. Injects the session docs path into Claude's context so working documents land in the right place
 - **SessionResume** — Re-injects context when resuming a session
-- **PreCompact** — Saves a segment checkpoint before context summarization
-- **SessionEnd** — Records duration, session name, and auto-memory snapshot. Rebuilds `session.md` as a hub note with wikilinks to all artifacts
+- **PreCompact** — Records compaction boundary (line count + timestamp) before context summarization
+- **SessionEnd** — Records duration, session name, transcript source path, and auto-memory snapshot. Rebuilds `session.md` as a hub note linking to all artifacts
 
 **What Gets Captured:**
 
 ```
 _sessions/2026-03-06/{session-id}/
-├── session.md          # Hub note: metadata + wikilinks to everything
-├── docs/               # Working documents (designs, plans, reviews, issues)
-├── memory/             # Auto-memory snapshot at session end
-└── segment-N/          # Transcript segments (jsonl, agents, plans)
+├── session.md              # Hub note: metadata + references to everything
+├── docs/                   # Working documents (designs, plans, reviews, issues)
+├── memory/                 # Auto-memory snapshot at session end
+└── compaction-points.txt   # Segment boundaries (line counts + timestamps)
 ```
 
 ### Working Documents — No More Scattered Artifacts
