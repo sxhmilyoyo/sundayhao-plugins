@@ -13,6 +13,26 @@
         ]
       },
       {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_start.sh",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_resume.sh",
+            "timeout": 30000
+          }
+        ]
+      },
+      {
         "matcher": "resume",
         "hooks": [
           {
