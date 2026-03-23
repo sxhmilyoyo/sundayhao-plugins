@@ -139,6 +139,7 @@ Think [sesh](https://github.com/joshmedeski/sesh) for tmux sessions, but for Cla
 
 ```bash
 ccfind                  # Fuzzy search all sessions
+ccfind --by-name        # Show only named sessions
 ccfind --by-tag         # Browse by tag
 ccfind --tags           # List all unique tags
 ```
@@ -151,6 +152,7 @@ ccfind --tags           # List all unique tags
 | `Ctrl-O`  | Open session folder in nvim                |
 | `Ctrl-Y`  | Copy session folder path to clipboard      |
 | `Ctrl-A`  | Switch to all sessions                     |
+| `Ctrl-N`  | Switch to by-name mode (named only)        |
 | `Ctrl-T`  | Switch to by-tag mode                      |
 
 **tmux Integration:**

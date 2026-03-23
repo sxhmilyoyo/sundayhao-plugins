@@ -5,7 +5,7 @@
 #   parse_sessions.sh <sessions_dir>
 #
 # Output: tab-delimited lines (one per session, newest first)
-#   display_line\tsession_id\tcwd\tsession_path\traw_tags
+#   display_line\tsession_id\tcwd\tsession_path\traw_tags\traw_session_name
 
 set -euo pipefail
 
@@ -96,8 +96,9 @@ function output_line() {
     # Raw values for filtering
     raw_tags = (tags == "") ? "-" : tags
     raw_cwd = (cwd == "") ? "-" : cwd
+    raw_name = (session_name == "") ? "-" : session_name
 
-    print display, session_id, raw_cwd, current_file, raw_tags
+    print display, session_id, raw_cwd, current_file, raw_tags, raw_name
 }
 
 END {

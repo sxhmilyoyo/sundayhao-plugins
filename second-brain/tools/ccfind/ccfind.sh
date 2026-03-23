@@ -3,6 +3,7 @@
 #
 # Usage:
 #   ccfind                  # Flat search across all sessions
+#   ccfind --by-name        # Show only named sessions
 #   ccfind --by-tag         # Two-step: pick tag first, then session
 #   ccfind --tags           # List unique tags (non-interactive)
 #   ccfind --refresh        # Force cache refresh
@@ -18,6 +19,7 @@ PREVIEW_SCRIPT="$SCRIPT_DIR/preview.sh"
 # Parse args early so --help doesn't pay KB path cost
 MODE="search"
 case "${1:-}" in
+    --by-name)     MODE="by_name" ;;
     --by-tag)      MODE="by_tag" ;;
     --tags)        MODE="list_tags" ;;
     --refresh)     MODE="refresh" ;;
@@ -29,6 +31,7 @@ Usage: ccfind [option]
 
 Options:
   (none)          Search all sessions interactively
+  --by-name       Show only named sessions (have session_name)
   --by-tag        Pick a tag, then browse matching sessions
   --tags          List all unique tags
   --refresh       Force cache refresh
@@ -39,6 +42,7 @@ Keybindings (in fzf):
   Ctrl-O          Open session folder in nvim (new tmux tab)
   Ctrl-Y          Copy session folder path to clipboard
   Ctrl-A          Switch to all sessions
+  Ctrl-N          Switch to by-name mode (named sessions only)
   Ctrl-T          Switch to by-tag mode
 EOF
         exit 0
@@ -105,7 +109,7 @@ get_sessions() {
     printf '%s\n' "$_SESSIONS_CACHE"
 }
 
-# Filter cached data using raw fields (tab field 5=tags)
+# Filter cached data using raw fields (tab field 5=tags, 6=session_name)
 get_unique_tags() {
     get_sessions | awk -F'\t' '$5 != "-" { split($5, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] != "") print a[i] } }' | sort -u
 }
@@ -115,6 +119,10 @@ filter_by_tag() {
     get_sessions | awk -F'\t' -v tag="$tag" '{
         split($5, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] == tag) { print; next } }
     }'
+}
+
+filter_named() {
+    get_sessions | awk -F'\t' '$6 != "-"'
 }
 
 # --- Actions ---
@@ -159,9 +167,10 @@ copy_session_path() {
 # --- Shared fzf navigation binds ---
 FZF_NAV_BINDS=(
     --bind "ctrl-a:become($SELF)"
+    --bind "ctrl-n:become($SELF --by-name)"
     --bind "ctrl-t:become($SELF --by-tag)"
 )
-FZF_NAV_HEADER=' ^a all  ^t by tag'
+FZF_NAV_HEADER=' ^a all  ^n named  ^t by tag'
 
 # --- Session picker via fzf ---
 
@@ -197,6 +206,9 @@ pick_session_from() {
 case "$MODE" in
     search)
         get_sessions | pick_session_from
+        ;;
+    by_name)
+        filter_named | pick_session_from " ccfind: named sessions "
         ;;
     by_tag)
         tag=$(get_unique_tags | fzf \
