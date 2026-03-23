@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **session-recap Phase 1.1**: Reads `transcript_source` from session.md frontmatter first; falls back to `segment-*/transcript.jsonl` walking for old sessions.
 - **SessionStart matchers**: Added `clear` and `compact` matchers for `/clear` and post-compaction events.
 
+### Removed
+- **`task_tag` property**: Merged into `session_name` + `tags`. In practice, `task_tag` was identical to `session_name` in most sessions (one task = one session). Use `tags` for grouping related sessions.
+- **ccfind `--by-task-tag` / `--task-tags`**: Removed task_tag browsing modes. Use `--by-tag` or fuzzy search instead.
+
 ### Fixed
 - **SessionEnd hook cancelled**: Root-caused the "Hook cancelled" error — `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (default 1.5s) silently caps per-hook `timeout` settings in hooks.json.
 

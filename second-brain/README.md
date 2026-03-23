@@ -118,8 +118,7 @@ Tag sessions while you work—no extra steps after the fact.
 
 | Property | Purpose | Example |
 |----------|---------|---------|
-| `task_tag` | Group sessions working on the same task | `refactor-auth`, `debug-caching` |
-| `tags` | Freeform categorization | `brainstorming`, `debugging`, `architecture` |
+| `tags` | Freeform categorization | `brainstorming`, `debugging`, `refactor-auth` |
 | `summary` | One-line description | "Designed new auth flow for v2" |
 
 ### `ccfind` — Find and Resume Any Session
@@ -141,22 +140,8 @@ Think [sesh](https://github.com/joshmedeski/sesh) for tmux sessions, but for Cla
 ```bash
 ccfind                  # Fuzzy search all sessions
 ccfind --by-tag         # Browse by tag
-ccfind --by-task-tag    # Browse by task_tag
 ccfind --tags           # List all unique tags
-ccfind --task-tags      # List all unique task_tags
 ```
-
-**Two-step browsing** — pick a task_tag first, then browse only matching sessions:
-
-<div align="center">
-  <img src="misc/ccfind-by-task-tag.png" alt="ccfind task_tag picker" width="700"/>
-  <p><em>Step 1: Pick a task_tag</em></p>
-</div>
-
-<div align="center">
-  <img src="misc/ccfind-filtered.png" alt="ccfind filtered by task_tag" width="700"/>
-  <p><em>Step 2: Browse sessions filtered to <code>task_tag=session-management-v2</code></em></p>
-</div>
 
 **Keybindings (in fzf):**
 
@@ -167,7 +152,6 @@ ccfind --task-tags      # List all unique task_tags
 | `Ctrl-Y`  | Copy session folder path to clipboard      |
 | `Ctrl-A`  | Switch to all sessions                     |
 | `Ctrl-T`  | Switch to by-tag mode                      |
-| `Ctrl-G`  | Switch to by-task-tag mode                 |
 
 **tmux Integration:**
 
@@ -283,7 +267,7 @@ Preserve what matters (workflows, edge cases, decisions), not every detail (inve
 |-------|------------------|--------|
 | `session-recap` | "recap the session", significant work completion | Concepts, components, best practices, daily logs |
 | `knowledge-bank-lookup` | Service mentions, "how should I..." | Structured insights with patterns, gotchas, recommendations |
-| `session-manager` | "tag this session", "set project to" | Updated session.md frontmatter (task_tag, tags, summary) |
+| `session-manager` | "tag this session", "set project to" | Updated session.md frontmatter (tags, summary) |
 
 ---
 

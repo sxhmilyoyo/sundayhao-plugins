@@ -5,7 +5,7 @@
 #   parse_sessions.sh <sessions_dir>
 #
 # Output: tab-delimited lines (one per session, newest first)
-#   display_line\tsession_id\tcwd\tsession_path\traw_task_tag\traw_tags
+#   display_line\tsession_id\tcwd\tsession_path\traw_tags
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ FNR == 1 {
     }
     in_fm = 0; fm_count = 0; in_tags = 0
     session_id = ""; date_val = ""; project = ""; cwd = ""
-    git_branch = ""; session_name = ""; task_tag = ""; summary = ""
+    git_branch = ""; session_name = ""; summary = ""
     tags = ""; current_file = FILENAME
 }
 
@@ -73,14 +73,12 @@ in_fm && !in_tags && /^[a-z_]+:/ {
     else if (key == "cwd") cwd = val
     else if (key == "git_branch") git_branch = val
     else if (key == "session_name") session_name = val
-    else if (key == "task_tag") task_tag = val
     else if (key == "summary") summary = val
 }
 
 function output_line() {
-    # Display: date | session_name (or project if no name) | task_tag | tags
+    # Display: date | session_name (or project if no name) | tags
     d_date = (date_val == "") ? "-" : date_val
-    d_task_tag = (task_tag == "") ? "-" : task_tag
     d_tags = (tags == "") ? "-" : tags
 
     # session_name first, fall back to project
@@ -88,20 +86,18 @@ function output_line() {
     if (d_label == "") d_label = "-"
 
     # Truncate for display
-    d_label = substr(d_label, 1, 30)
-    d_task_tag = substr(d_task_tag, 1, 30)
+    d_label = substr(d_label, 1, 40)
     d_tags_display = substr(d_tags, 1, 40)
 
     # Fixed-width display
-    display = sprintf("%-10s | %-30s | %-30s | %s", \
-        d_date, d_label, d_task_tag, d_tags_display)
+    display = sprintf("%-10s | %-40s | %s", \
+        d_date, d_label, d_tags_display)
 
     # Raw values for filtering
-    raw_tt = (task_tag == "") ? "-" : task_tag
     raw_tags = (tags == "") ? "-" : tags
     raw_cwd = (cwd == "") ? "-" : cwd
 
-    print display, session_id, raw_cwd, current_file, raw_tt, raw_tags
+    print display, session_id, raw_cwd, current_file, raw_tags
 }
 
 END {

@@ -7,7 +7,6 @@ status: archived
 session-id: [UUID or descriptive-id]
 session-name: [from session.md session_name]
 session-folder: _sessions/YYYY-MM-DD/{session_id}
-task-tag: [from session.md task_tag]
 duration-hours: [X]
 outcome: complete | partial | blocked
 topics-covered:
@@ -37,7 +36,6 @@ project: [ProjectName]
 | Metric | Value |
 |--------|-------|
 | **Session Name** | [from session.md] |
-| **Task Tag** | [from session.md] |
 | **Duration** | [X hours] |
 | **Status** | ✅ Complete / ⚠️ Partial / ❌ Blocked |
 | **Files Modified** | [Count] |

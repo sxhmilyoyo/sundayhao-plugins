@@ -44,7 +44,6 @@ GIT_BRANCH=$(read_frontmatter_prop "$SESSION_MD" "git_branch")
 DOCS_PATH_PROP=$(read_frontmatter_prop "$SESSION_MD" "docs_path")
 DATE_PROP=$(read_frontmatter_prop "$SESSION_MD" "date")
 # Properties set mid-session by user (via session-manager skill)
-TASK_TAG=$(read_frontmatter_prop "$SESSION_MD" "task_tag")
 TAGS=$(read_frontmatter_list "$SESSION_MD" "tags")
 SUMMARY=$(read_frontmatter_prop "$SESSION_MD" "summary")
 SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
@@ -144,7 +143,6 @@ session_name: \"$(_yaml_escape "${SESSION_NAME:-}")\"
 ended_at: $ENDED_AT
 duration_seconds: ${DURATION:-}
 summary: \"$(_yaml_escape "${SUMMARY:-}")\"
-task_tag: \"$(_yaml_escape "${TASK_TAG:-}")\"
 tags:
 ${TAGS_YAML}"
 

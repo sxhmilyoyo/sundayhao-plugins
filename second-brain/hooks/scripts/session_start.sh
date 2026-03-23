@@ -66,7 +66,6 @@ session_name:
 ended_at:
 duration_seconds:
 summary:
-task_tag:
 tags:"
 
 write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "# Session: $SESSION_ID"

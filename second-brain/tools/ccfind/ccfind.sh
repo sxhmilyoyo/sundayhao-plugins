@@ -4,9 +4,7 @@
 # Usage:
 #   ccfind                  # Flat search across all sessions
 #   ccfind --by-tag         # Two-step: pick tag first, then session
-#   ccfind --by-task-tag    # Two-step: pick task_tag first, then session
 #   ccfind --tags           # List unique tags (non-interactive)
-#   ccfind --task-tags      # List unique task_tags (non-interactive)
 #   ccfind --refresh        # Force cache refresh
 
 set -euo pipefail
@@ -21,9 +19,7 @@ PREVIEW_SCRIPT="$SCRIPT_DIR/preview.sh"
 MODE="search"
 case "${1:-}" in
     --by-tag)      MODE="by_tag" ;;
-    --by-task-tag) MODE="by_task_tag" ;;
     --tags)        MODE="list_tags" ;;
-    --task-tags)   MODE="list_task_tags" ;;
     --refresh)     MODE="refresh" ;;
     -h|--help)
         cat <<'EOF'
@@ -34,9 +30,7 @@ Usage: ccfind [option]
 Options:
   (none)          Search all sessions interactively
   --by-tag        Pick a tag, then browse matching sessions
-  --by-task-tag   Pick a task_tag, then browse matching sessions
   --tags          List all unique tags
-  --task-tags     List all unique task_tags
   --refresh       Force cache refresh
   -h, --help      Show this help
 
@@ -46,7 +40,6 @@ Keybindings (in fzf):
   Ctrl-Y          Copy session folder path to clipboard
   Ctrl-A          Switch to all sessions
   Ctrl-T          Switch to by-tag mode
-  Ctrl-G          Switch to by-task-tag mode
 EOF
         exit 0
         ;;
@@ -112,25 +105,16 @@ get_sessions() {
     printf '%s\n' "$_SESSIONS_CACHE"
 }
 
-# Filter cached data using raw fields (tab field 5=task_tag, 6=tags)
+# Filter cached data using raw fields (tab field 5=tags)
 get_unique_tags() {
-    get_sessions | awk -F'\t' '$6 != "-" { split($6, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] != "") print a[i] } }' | sort -u
-}
-
-get_unique_task_tags() {
-    get_sessions | awk -F'\t' '$5 != "-" { print $5 }' | sort -u
+    get_sessions | awk -F'\t' '$5 != "-" { split($5, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] != "") print a[i] } }' | sort -u
 }
 
 filter_by_tag() {
     local tag="$1"
     get_sessions | awk -F'\t' -v tag="$tag" '{
-        split($6, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] == tag) { print; next } }
+        split($5, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] == tag) { print; next } }
     }'
-}
-
-filter_by_task_tag() {
-    local task_tag="$1"
-    get_sessions | awk -F'\t' -v tt="$task_tag" '$5 == tt'
 }
 
 # --- Actions ---
@@ -176,9 +160,8 @@ copy_session_path() {
 FZF_NAV_BINDS=(
     --bind "ctrl-a:become($SELF)"
     --bind "ctrl-t:become($SELF --by-tag)"
-    --bind "ctrl-g:become($SELF --by-task-tag)"
 )
-FZF_NAV_HEADER=' ^a all  ^t by tag  ^g by task_tag'
+FZF_NAV_HEADER=' ^a all  ^t by tag'
 
 # --- Session picker via fzf ---
 
@@ -224,20 +207,8 @@ case "$MODE" in
         [ -z "$tag" ] && exit 0
         filter_by_tag "$tag" | pick_session_from " ccfind: tag=$tag "
         ;;
-    by_task_tag)
-        task_tag=$(get_unique_task_tags | fzf \
-            --border-label=' ccfind: select task_tag ' \
-            --prompt='task_tag> ' \
-            --header="$FZF_NAV_HEADER" \
-            "${FZF_NAV_BINDS[@]}") || exit 0
-        [ -z "$task_tag" ] && exit 0
-        filter_by_task_tag "$task_tag" | pick_session_from " ccfind: task_tag=$task_tag "
-        ;;
     list_tags)
         get_unique_tags
-        ;;
-    list_task_tags)
-        get_unique_task_tags
         ;;
     refresh)
         refresh_cache
