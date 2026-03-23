@@ -279,7 +279,7 @@ Preserve what matters (workflows, edge cases, decisions), not every detail (inve
 - **Bash shell** (macOS/Linux or WSL on Windows)
 - A directory for your **knowledge bank** (where session data will be stored)
 - **Obsidian** (required) for viewing the knowledge bank and session management
-- **Obsidian CLI** (required) for session note operations (create, property:set, property:read)
+- **Obsidian CLI** (required) for `session-manager` skill (property:set, property:read)
   - Install from: https://help.obsidian.md/cli
 - **Obsidian skills** (recommended) for proper Obsidian Flavored Markdown generation
   - Install from: https://github.com/kepano/obsidian-skills
