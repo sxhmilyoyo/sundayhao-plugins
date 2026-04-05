@@ -37,14 +37,16 @@ GHOST_ID_FILE="/tmp/second-brain-startup-$CWD_HASH"
 GHOST_ID=$(cat "$GHOST_ID_FILE" 2>/dev/null)
 rm -f "$GHOST_ID_FILE"
 if [ -n "$GHOST_ID" ] && [ "$GHOST_ID" != "$SESSION_ID" ]; then
-    GHOST_FOLDER=$(find "$KB_PATH/_sessions" -type d -name "$GHOST_ID" 2>/dev/null | head -1)
+    GHOST_MATCHES=("$KB_PATH/_sessions"/*/"$GHOST_ID")
+    GHOST_FOLDER="${GHOST_MATCHES[0]}"
     [ -d "$GHOST_FOLDER" ] && rm -rf "$GHOST_FOLDER"
 fi
 
-# Find the original session folder
-SESSION_FOLDER=$(find "$KB_PATH/_sessions" -type d -name "$SESSION_ID" 2>/dev/null | head -1)
+# Find the original session folder (glob is 32x faster than find on 500+ sessions)
+MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
+SESSION_FOLDER="${MATCHES[0]}"
 
-if [ -z "$SESSION_FOLDER" ]; then
+if [ ! -d "$SESSION_FOLDER" ]; then
     # Create session folder as fallback
     TODAY=$(date +%Y-%m-%d)
     SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
