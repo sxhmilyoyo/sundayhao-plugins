@@ -41,6 +41,9 @@ SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
 DOCS_PATH="$SESSION_FOLDER/docs"
 mkdir -p "$DOCS_PATH"
 
+# Cache folder path so SessionEnd/PreCompact can skip folder search
+echo "$SESSION_FOLDER" > "/tmp/second-brain-folder-$SESSION_ID"
+
 # Detect git branch and project
 GIT_BRANCH=""
 if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then

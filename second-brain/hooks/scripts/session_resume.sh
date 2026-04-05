@@ -42,15 +42,19 @@ if [ -n "$GHOST_ID" ] && [ "$GHOST_ID" != "$SESSION_ID" ]; then
     [ -d "$GHOST_FOLDER" ] && rm -rf "$GHOST_FOLDER"
 fi
 
-# Find the original session folder (glob is 32x faster than find on 500+ sessions)
-MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
-SESSION_FOLDER="${MATCHES[0]}"
+# Read cached folder path from SessionStart, fall back to glob
+SESSION_FOLDER=$(cat "/tmp/second-brain-folder-$SESSION_ID" 2>/dev/null)
+if [ ! -d "$SESSION_FOLDER" ]; then
+    MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
+    SESSION_FOLDER="${MATCHES[0]}"
+fi
 
 if [ ! -d "$SESSION_FOLDER" ]; then
     # Create session folder as fallback
     TODAY=$(date +%Y-%m-%d)
     SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
     mkdir -p "$SESSION_FOLDER/docs"
+    echo "$SESSION_FOLDER" > "/tmp/second-brain-folder-$SESSION_ID"
 
     # Detect git branch and project
     GIT_BRANCH=""

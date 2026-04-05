@@ -25,9 +25,12 @@ EOF
     exit 0
 fi
 
-# Find existing session folder (glob is 32x faster than find on 500+ sessions)
-MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
-SESSION_FOLDER="${MATCHES[0]}"
+# Read cached folder path from SessionStart (O(1)), fall back to glob
+SESSION_FOLDER=$(cat "/tmp/second-brain-folder-$SESSION_ID" 2>/dev/null)
+if [ ! -d "$SESSION_FOLDER" ]; then
+    MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
+    SESSION_FOLDER="${MATCHES[0]}"
+fi
 if [ ! -d "$SESSION_FOLDER" ]; then
     TODAY=$(date +%Y-%m-%d)
     SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
