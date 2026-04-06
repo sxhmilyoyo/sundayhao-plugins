@@ -5,6 +5,49 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-04-05
+
+### Added - Source Detection & Ingest Integration
+
+Session-recap now detects and ingests knowledge from session artifacts and external references, not just the transcript. Adds index regeneration and operation logging to the maintain phase.
+
+#### New: Phase 1.4 — Detect Session Sources
+- `detect_session_sources.sh`: Scans all session.md body sections (`## Generated Artifacts`, `## Plans`, `## Memory Snapshot`) and parses transcript for external references (non-code files read, URLs fetched via WebFetch)
+- Classifies each source as `artifact` (output produced) or `reference` (input consumed)
+- Single jq pass over transcript for both Read and WebFetch extraction
+
+#### New: Phase 2.4 — Source Ingestion Plan
+- Decision framework for each detected source: ingest as KB doc, distill and ingest, or skip
+- Artifacts in `docs/` are high-value by default; references need judgment
+- Guidelines for plans (decision rationale) and memory snapshots (skip unless unique insights)
+
+#### Changed: Phase 3 — Expanded Priority Order
+- 7 priorities (was 5): artifact-derived docs (priority 4, 5-8 WikiLinks) and reference-derived docs (priority 5, 5-8 WikiLinks)
+- New frontmatter fields: `source-type` (session|artifact|reference) and `ingested-from` (provenance path/URL)
+
+#### Changed: Phase 5 — Index & Log Maintenance
+- 5.2: Regenerate `_meta/index.md` via `generate_index.sh` (new docs appear in unified catalog)
+- 5.3: Append operation log entry to `_meta/log.md` via `append_kb_log()`
+- Phase numbering shifted: MOC canvas is now 5.4
+
+#### Changed: Verification Checklist
+- Added: Knowledge Bank index regenerated, operation log entry appended
+
+#### Changed: count_wikilinks.sh
+- Optional second parameter `[min-links]` (default: 10) for tiered thresholds
+- Ingested/artifact docs use `count_wikilinks.sh doc.md 5`
+
+#### Changed: quality-standards.md
+- Tiered WikiLink minimum table expanded with artifact-derived, reference-derived, standalone ingested, and query synthesis rows
+
+#### Skill Writing Improvements
+- Moved "Decision Reference" and "Common Mistakes" sections to references (SKILL.md 537→487 lines, under 500-line ideal)
+- Added "why" reasoning to Phase 5.2-5.3 MUSTs instead of bare mandates
+
+### Backward Compatibility
+- Fully compatible with v3.1.0 — new phases are SHOULD (not MUST) and activate only when session sources are detected
+- Existing session recaps without sources continue to work identically
+
 ## [3.1.0] - 2026-03-06
 
 ### Added - Session Management Integration

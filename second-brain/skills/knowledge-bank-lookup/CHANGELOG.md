@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2026-04-05] - v2.5.0 - Index Navigation, Query Write-Back & Operation Logging
+
+### Added
+- **Query Write-Back**: After high-value lookups, offer to file the synthesis as a KB document using kb-ingest workflow. Frontmatter: `source-type: synthesis`, `query`, `synthesized-from`.
+- **Operation Logging**: SHOULD log queries to `_meta/log.md` via `append_kb_log()` for audit trail and usage tracking.
+- **KB Schema reference**: Added `_meta/schema.md` to Reference Documentation section.
+
+### Changed
+- **Navigation Strategy**: Renamed from "MOC-First" to "Index or MOC-First". Added `_meta/index.md` as always-available entry point alongside service MOCs. Particularly useful for CC and supply-opt which lack MOCs.
+
+---
+
 ## [2026-01-18] - v2.4.0 - Structure Refactoring & Terminology Standardization
 
 **Type:** Documentation Refactoring - Improved Clarity and Progressive Disclosure

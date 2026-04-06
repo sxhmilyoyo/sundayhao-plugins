@@ -7,6 +7,28 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-04-05
+
+### Added
+- **`_meta/index.md`**: Auto-generated content catalog covering all 188 KB documents, organized by project and type. Regenerated after every write operation via `generate_index.sh`.
+- **`_meta/log.md`**: Chronological operation log tracking ingests, queries, lint passes, and index rebuilds via `append_kb_log()` in `obsidian_helpers.sh`.
+- **`_meta/schema.md`**: Unified KB conventions file consolidating document types, frontmatter requirements, WikiLink standards, naming conventions, and operations reference.
+- **kb-ingest skill**: Standalone source ingestion for articles, gists, docs, and URLs outside of Claude Code sessions. Interactive READ → DISCUSS → CREATE → INTEGRATE workflow following the LLM Wiki pattern.
+- **kb-lint skill**: Knowledge bank health-check with 5 checks — broken WikiLinks, missing frontmatter, orphan documents, index drift, and stale content. Severity-graded reports at `_meta/lint-report-*.md`.
+- **session-recap source detection**: Phase 1.4 scans session.md body sections (`## Generated Artifacts`, `## Plans`, `## Memory Snapshot`) and transcript for ingestible artifacts and references. Phase 2.4 plans which sources to ingest as KB docs.
+- **ccfind `Ctrl-R`**: Refresh keybinding reloads session list without reopening fzf popup.
+
+### Changed
+- **knowledge-bank-lookup navigation**: "Index or MOC-First" strategy — `_meta/index.md` as fallback for projects without MOCs (CC, supply-opt).
+- **knowledge-bank-lookup query write-back**: After high-value lookups, offer to file the synthesis as a KB document via kb-ingest workflow.
+- **session-recap Phase 3 priority order**: Expanded from 5 to 7 levels — artifact-derived docs (5-8 WikiLinks) and reference-derived docs (5-8 WikiLinks) inserted at priorities 4-5.
+- **session-recap Phase 5**: Added steps 5.2 (regenerate `_meta/index.md`) and 5.3 (append operation log).
+- **Tiered WikiLink minimums**: Session-derived docs keep 10-15; ingested/artifact/reference docs require 5-8. `count_wikilinks.sh` accepts optional `min-links` parameter.
+
+### Notes
+- Inspired by [Karpathy's LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+- All changes are backward-compatible with existing KB documents
+
 ## [2.2.0] - 2026-03-22
 
 ### Changed
