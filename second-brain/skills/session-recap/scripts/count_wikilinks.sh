@@ -2,12 +2,14 @@
 # Count WikiLinks in a document to verify minimum cross-reference requirements
 
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 <markdown-file>"
+    echo "Usage: $0 <markdown-file> [min-links]"
     echo "Counts WikiLinks ([[Link Name]]) in the specified markdown file"
+    echo "  min-links: minimum required (default: 10, use 5 for ingested/reference docs)"
     exit 1
 fi
 
 FILE="$1"
+MIN_LINKS="${2:-10}"
 
 if [ ! -f "$FILE" ]; then
     echo "Error: File '$FILE' not found"
@@ -44,13 +46,9 @@ echo "  MOCs: $mocs"
 echo ""
 
 # Verify minimum requirements
-if [ "$count" -lt 10 ]; then
-    echo "⚠️  WARNING: Only $count cross-references found (minimum 10 required)"
-    echo "   Target: 10-15 WikiLinks for proper knowledge integration"
+if [ "$count" -lt "$MIN_LINKS" ]; then
+    echo "WARNING: Only $count cross-references found (minimum $MIN_LINKS required)"
     exit 1
 else
-    echo "✅ SUCCESS: $count cross-references found (minimum 10 met)"
-    if [ "$count" -ge 15 ]; then
-        echo "🌟 EXCELLENT: Exceeds target of 15 cross-references"
-    fi
+    echo "SUCCESS: $count cross-references found (minimum $MIN_LINKS met)"
 fi

@@ -40,6 +40,39 @@ write_session_md() {
     printf '%s\n' "---" "$frontmatter" "---" "" "$body" > "$file_path"
 }
 
+# Append an entry to the KB operation log (_meta/log.md).
+# Creates the file with a table header if it does not exist.
+# Args: $1=kb_path, $2=operation_type (ingest|query|lint|index-rebuild),
+#       $3=operator (session-recap|kb-ingest|kb-lookup|kb-lint), $4=details
+append_kb_log() {
+    local kb_path="$1"
+    local op_type="$2"
+    local operator="$3"
+    local details="$4"
+    local log_file="$kb_path/_meta/log.md"
+    local timestamp
+    timestamp=$(date -u '+%Y-%m-%d %H:%M')
+
+    mkdir -p "$kb_path/_meta"
+
+    if [ ! -f "$log_file" ]; then
+        cat > "$log_file" << 'HEADER'
+---
+title: Knowledge Bank Operation Log
+type: log
+---
+
+# Operation Log
+
+| Timestamp | Operation | Operator | Details |
+|-----------|-----------|----------|---------|
+HEADER
+    fi
+
+    echo "| ${timestamp} | ${op_type} | ${operator} | ${details} |" >> "$log_file"
+}
+
 export -f read_frontmatter_prop
 export -f read_frontmatter_list
 export -f write_session_md
+export -f append_kb_log

@@ -34,19 +34,26 @@ project: [project-a-service]|[project-b-server]|Claude Code|[project-c]
 
 ### Minimum Requirements
 
-| Document Type | Minimum | Target |
-|---------------|---------|--------|
-| Daily Session Log | 10 | 15 |
-| Concept Document | 10 | 15 |
-| Component Document | 10 | 15 |
-| Best Practice | 10 | 15 |
-| Process Reflection | 5 | 8 |
+| Document Type | Minimum | Target | When |
+|---------------|---------|--------|------|
+| Daily Session Log | 10 | 15 | Session recap |
+| Concept Document | 10 | 15 | Session recap |
+| Component Document | 10 | 15 | Session recap |
+| Best Practice | 10 | 15 | Session recap |
+| Process Reflection | 5 | 8 | Session recap |
+| Artifact-derived doc | 5 | 8 | Session recap (from `docs/` artifacts) |
+| Reference-derived doc | 5 | 8 | Session recap (from external references) |
+| Standalone ingested doc | 5 | 8 | kb-ingest skill |
+| Query synthesis doc | 5 | 8 | kb-lookup write-back |
 
 ### Verification
 
 ```bash
-# Count WikiLinks
+# Count WikiLinks (default min: 10)
 ./scripts/count_wikilinks.sh document.md
+
+# Count WikiLinks with custom min (for ingested/reference docs)
+./scripts/count_wikilinks.sh document.md 5
 
 # Validate all links resolve
 ./scripts/validate_cross_references.sh document.md
