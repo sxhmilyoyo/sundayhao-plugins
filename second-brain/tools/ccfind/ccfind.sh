@@ -23,6 +23,7 @@ case "${1:-}" in
     --by-tag)      MODE="by_tag" ;;
     --tags)        MODE="list_tags" ;;
     --refresh)     MODE="refresh" ;;
+    --refresh-and-search) MODE="refresh_and_search" ;;
     -h|--help)
         cat <<'EOF'
 ccfind - Claude Code Session Finder
@@ -169,8 +170,9 @@ FZF_NAV_BINDS=(
     --bind "ctrl-a:become($SELF)"
     --bind "ctrl-n:become($SELF --by-name)"
     --bind "ctrl-t:become($SELF --by-tag)"
+    --bind "ctrl-r:become($SELF --refresh-and-search)"
 )
-FZF_NAV_HEADER=' ^a all  ^n named  ^t by tag'
+FZF_NAV_HEADER=' ^a all  ^n named  ^t by tag  ^r refresh'
 
 # --- Session picker via fzf ---
 
@@ -225,5 +227,10 @@ case "$MODE" in
     refresh)
         refresh_cache
         echo "Cache refreshed."
+        ;;
+    refresh_and_search)
+        refresh_cache
+        _SESSIONS_CACHE=""
+        get_sessions | pick_session_from
         ;;
 esac
