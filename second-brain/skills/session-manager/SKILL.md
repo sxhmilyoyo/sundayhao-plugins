@@ -31,6 +31,7 @@ If the session docs path is not in your system prompt, ask the user for the sess
 
 | Property | Type | Purpose |
 |----------|------|---------|
+| `session_name` | text | Session name (auto-synced from `/rename` customTitle on invocation) |
 | `project` | text | Project name (auto-set from cwd at session start, customizable) |
 | `tags` | list | Freeform categorization (e.g., brainstorming, debugging, architecture) |
 | `summary` | text | One-line description of what the session accomplished |
@@ -116,22 +117,33 @@ Then extract and report the `tags` and `summary` from the frontmatter.
 
 ## On Invocation
 
-Every time this skill is invoked, **always start by reading the current session.md** and displaying a status summary before taking any action:
+Every time this skill is invoked, **always start by reading the current session.md AND checking for a customTitle**, then display a status summary before taking any action:
 
 1. Read the session note using the "Read current metadata" command
-2. Display current values in this format:
+2. Check if the session has been renamed via `/rename` by reading the customTitle from the transcript:
+   ```bash
+   source skills/common/obsidian_helpers.sh
+   read_custom_title "<cwd>" "<session_id>"
+   ```
+   Where `<cwd>` is from session.md's `cwd` property and `<session_id>` is from `session_id` property.
+3. Display current values in this format:
    ```
    **Current Session**
+   - session_name: <value or empty>
    - project: <value or empty>
    - tags: <value or empty>
    - summary: <value or empty>
    ```
-3. Then proceed with the user's request (set properties, or ask what they'd like to update)
+4. If customTitle exists but `session_name` in session.md is empty or different, **automatically set it**:
+   ```bash
+   obsidian vault="knowledge-bank" property:set name="session_name" value="<customTitle>" path="<vault-relative-path>"
+   ```
+5. Then proceed with the user's request (set properties, or ask what they'd like to update)
 
 If the user invoked the skill without a specific request, show the status and list what can be set.
 
 ## Constraints
 
 - ONLY operates on the **current active session** — do NOT modify other sessions
-- ONLY updates `project`, `tags`, and `summary`
+- ONLY updates `session_name`, `project`, `tags`, and `summary`
 - Always confirm the update to the user after running the command

@@ -72,7 +72,24 @@ HEADER
     echo "| ${timestamp} | ${op_type} | ${operator} | ${details} |" >> "$log_file"
 }
 
+# Read customTitle from a Claude Code session transcript.
+# Args: $1=cwd (working directory of the session)
+#       $2=session_id
+# Returns: customTitle on stdout (empty if not found or no /rename was used)
+# Note: Claude Code uses cwd (not git repo root) for the project hash.
+read_custom_title() {
+    local cwd="$1"
+    local session_id="$2"
+    local hash=$(echo "$cwd" | sed 's|[/.]|-|g')
+    local transcript="$HOME/.claude/projects/$hash/${session_id}.jsonl"
+    [ -f "$transcript" ] || return 0
+    tail -r "$transcript" 2>/dev/null \
+        | grep -m1 '"type":"custom-title"' \
+        | jq -r '.customTitle // empty' 2>/dev/null
+}
+
 export -f read_frontmatter_prop
 export -f read_frontmatter_list
 export -f write_session_md
 export -f append_kb_log
+export -f read_custom_title
