@@ -137,8 +137,10 @@ Every time this skill is invoked, **always start by reading the current session.
 4. If customTitle exists but `session_name` in session.md is empty or different, **automatically set it** and rename the tmux window:
    ```bash
    obsidian vault="knowledge-bank" property:set name="session_name" value="<customTitle>" path="<vault-relative-path>"
-   [ -n "$TMUX_PANE" ] && tmux rename-window -t "$TMUX_PANE" "<customTitle>" 2>/dev/null
+   tmux set-window-option -t "$TMUX_PANE" automatic-rename off 2>/dev/null
+   tmux rename-window -t "$TMUX_PANE" "<customTitle>" 2>/dev/null
    ```
+   Run these as actual Bash tool calls (not just instructions). `$TMUX_PANE` is available in Claude's shell environment when launched from tmux.
 5. Then proceed with the user's request (set properties, or ask what they'd like to update)
 
 If the user invoked the skill without a specific request, show the status and list what can be set.
