@@ -49,6 +49,43 @@ obsidian vault="knowledge-bank" property:set name="<property>" value="<value>" [
 obsidian vault="knowledge-bank" read path="<vault-relative-path>"
 ```
 
+## Tag Suggestion Workflow
+
+When the user wants to set tags, **do NOT set them directly**. Instead, suggest existing tags to promote consistency.
+
+### Step 1: Load existing tags
+
+Read from ccfind's cache (field 5, comma-separated):
+```bash
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ccfind/sessions.tsv"
+cut -f5 "$CACHE" 2>/dev/null | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^-$' | grep -v '^$' | sort -u
+```
+
+If the cache doesn't exist, fall back to listing tags from the current session's tags property.
+
+### Step 2: Match user-provided tags against existing ones
+
+For each tag the user provides, check for:
+- **Exact match** — existing tag matches exactly → use it
+- **Similar match** — differs only by hyphenation (`rule-forge` vs `ruleforge`), casing (`A2X` vs `a2x`), or minor spelling → suggest the existing one
+- **No match** — genuinely new tag → mark as new
+
+### Step 3: Present suggestion table
+
+```
+| Your Tag       | Suggestion          | Reason              |
+|----------------|---------------------|---------------------|
+| rule-forge     | → ruleforge (6×)    | existing, no hyphen |
+| debugging      | ✓ debugging (6×)    | exact match         |
+| new-feature    | new                 | no similar existing |
+```
+
+The `(N×)` shows how many sessions already use that tag — higher = more reason to reuse.
+
+### Step 4: Confirm before setting
+
+Ask the user to confirm or adjust. Only set tags after confirmation.
+
 ## Examples
 
 User: "set project to sundayhao-plugins"
@@ -57,6 +94,11 @@ obsidian vault="knowledge-bank" property:set name="project" value="sundayhao-plu
 ```
 
 User: "add tags brainstorming and architecture"
+
+**Do NOT run the command directly.** Instead:
+1. Load existing tags (Step 1)
+2. Both `brainstorming` and `architecture` exist — show confirmation table
+3. After user confirms, then set:
 ```bash
 obsidian vault="knowledge-bank" property:set name="tags" value="brainstorming, architecture" type="list" path="_sessions/2026-03-04/abc123/session.md"
 ```
