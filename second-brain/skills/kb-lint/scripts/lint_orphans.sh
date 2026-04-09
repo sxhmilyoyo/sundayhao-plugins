@@ -21,10 +21,11 @@ ORPHANS=0
 
 # First pass: collect all WikiLinks and record what they point to
 while IFS= read -r -d '' file; do
-    links=$(extract_wikilinks "$file" 2>/dev/null) || continue
+    links=$(extract_wikilinks "$file" 2>/dev/null || true)
+    [ -z "$links" ] && continue
     while IFS= read -r link; do
         [ -z "$link" ] && continue
-        resolved=$(resolve_wikilink "$link" "$KB_PATH" 2>/dev/null)
+        resolved=$(resolve_wikilink "$link" "$KB_PATH" 2>/dev/null || true)
         if [ -n "$resolved" ] && [ -f "$resolved" ]; then
             INCOMING_REFS["$resolved"]=$(( ${INCOMING_REFS["$resolved"]:-0} + 1 ))
         fi

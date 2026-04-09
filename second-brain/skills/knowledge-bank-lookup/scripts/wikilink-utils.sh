@@ -39,10 +39,12 @@ extract_wikilinks() {
     fi
 
     # Extract WikiLinks, remove [[]], handle aliases and sections
+    # `|| true` ensures zero exit when file has no WikiLinks
+    # (grep returns 1 on no match, which breaks callers using set -e)
     grep -o '\[\[[^]]*\]\]' "$file" 2>/dev/null | \
         sed 's/\[\[\([^]|#]*\).*/\1/' | \
         grep -v '^[[:space:]]*$' | \
-        sort -u
+        sort -u || true
 }
 
 # Resolve a WikiLink name to its actual file path in the knowledge bank

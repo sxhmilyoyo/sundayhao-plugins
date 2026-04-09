@@ -18,10 +18,11 @@ source "$WIKILINK_UTILS"
 BROKEN=0
 
 while IFS= read -r -d '' file; do
-    links=$(extract_wikilinks "$file" 2>/dev/null) || continue
+    links=$(extract_wikilinks "$file" 2>/dev/null || true)
+    [ -z "$links" ] && continue
     while IFS= read -r link; do
         [ -z "$link" ] && continue
-        resolved=$(resolve_wikilink "$link" "$KB_PATH" 2>/dev/null)
+        resolved=$(resolve_wikilink "$link" "$KB_PATH" 2>/dev/null || true)
         if [ -z "$resolved" ] || [ ! -f "$resolved" ]; then
             rel_path="${file#"$KB_PATH"/}"
             echo "${rel_path}|${link}"
