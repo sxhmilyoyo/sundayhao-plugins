@@ -7,6 +7,15 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-04-09
+
+### Added
+- **session-recap: Full Recap enforcement**: New "No Shortcuts" section — every recap executes all 5 phases completely. A daily log alone is not a recap.
+- **session-recap: Batch Recap**: Guidance for processing multiple sessions chronologically — discover, triage, process per-session with full phases, parallelize independent projects, integrate once at end.
+- **kb-lint: Fix step (Step 4)**: After reporting, offer resolution via AskUserQuestion — batch stub creation, alias resolution, template placeholder removal, index drift fix, or skip.
+- **kb-lint: `references/fix-guide.md`**: Stub creation templates, classification heuristics, alias resolution, template cleanup details.
+- **KB schema: Stub Documents section**: Explains lifecycle (stub → active/deleted), type inference, `> [!stub]` callout convention.
+
 ## [2.6.1] - 2026-04-09
 
 ### Fixed
