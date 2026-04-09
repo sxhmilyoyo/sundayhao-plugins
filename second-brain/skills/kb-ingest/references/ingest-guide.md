@@ -18,6 +18,9 @@
 | Tool, library, system description | Component | `projects/{project}/components/` |
 | Methodology, workflow, technique | Best Practice | `projects/{project}/best-practices/` |
 | Cross-cutting pattern (applies to multiple projects) | Concept | `projects/cc/concepts/` or project-agnostic location |
+| Original article (Study mode) | Source | `projects/{project}/sources/` |
+| Numbered principles digest (Study mode) | Study | `projects/{project}/study/` |
+| Per-theme learning notes (Study mode) | Study | `projects/{project}/study/` |
 
 ## Quality Standards for Ingested Docs
 

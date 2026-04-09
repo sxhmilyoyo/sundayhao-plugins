@@ -7,6 +7,11 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-04-08
+
+### Changed
+- **kb-ingest v1.1.0**: Refactored from single-mode to dual-mode skill (Quick + Study) based on real-world usage. Study mode adds theme-by-theme walkthrough with online research, three-layer KB output (source/digest/learning notes), and optional blog/slack synthesis. All decision points use AskUserQuestion tool. New `study` and `source` document types added to KB schema.
+
 ## [2.4.0] - 2026-04-08
 
 ### Added
