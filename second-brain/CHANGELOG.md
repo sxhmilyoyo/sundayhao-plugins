@@ -7,6 +7,11 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-04-09
+
+### Fixed
+- **kb-lint `set -e` incompatibility**: `extract_wikilinks()` uses `grep` which returns exit 1 on files with no WikiLinks, and `resolve_wikilink()` returns 1 for unresolvable links — both expected behaviors for lint but caused silent script exit under `set -e`. Added `|| true` guards in the pipeline and lint script calls.
+
 ## [2.6.0] - 2026-04-09
 
 ### Added
