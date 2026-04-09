@@ -7,6 +7,14 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-04-09
+
+### Added
+- **Session-manager AskUserQuestion**: All confirmations and prompts (tag suggestions, ambiguous requests, no-request invocations) use the `AskUserQuestion` tool for proper user input.
+
+### Changed
+- **Tmux window rename**: Now runs on every session-manager invocation regardless of user request (tags, summary, etc.), not just when customTitle changes. Disables tmux `automatic-rename` to prevent overwrite.
+
 ## [2.5.0] - 2026-04-08
 
 ### Changed
