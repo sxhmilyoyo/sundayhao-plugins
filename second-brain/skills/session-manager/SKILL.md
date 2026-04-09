@@ -134,9 +134,10 @@ Every time this skill is invoked, **always start by reading the current session.
    - tags: <value or empty>
    - summary: <value or empty>
    ```
-4. If customTitle exists but `session_name` in session.md is empty or different, **automatically set it**:
+4. If customTitle exists but `session_name` in session.md is empty or different, **automatically set it** and rename the tmux window:
    ```bash
    obsidian vault="knowledge-bank" property:set name="session_name" value="<customTitle>" path="<vault-relative-path>"
+   tmux rename-window "<customTitle>" 2>/dev/null
    ```
 5. Then proceed with the user's request (set properties, or ask what they'd like to update)
 
