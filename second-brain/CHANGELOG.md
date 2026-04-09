@@ -29,24 +29,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inspired by [Karpathy's LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 - All changes are backward-compatible with existing KB documents
 
-## [2.2.0] - 2026-03-22
+## [2.2.0] - 2026-04-08
 
 ### Changed
 - **Reference-only session architecture**: Hooks no longer copy transcripts, agents, or plans into `segment-*` directories. `session.md` stores a `transcript_source` frontmatter property pointing to the original transcript at `~/.claude/projects/`. Eliminates ~99.8% of `_sessions/` storage overhead.
 - **SessionEnd performance fix**: Removed 3 full-file grep operations (agents, plans, customTitle) that exceeded the 1.5s `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` cap. CustomTitle extraction now uses `tail -r` reverse-scan (14ms vs 322ms on 42MB transcripts).
+- **Session folder lookup**: Replaced `find` (330ms on 500+ sessions) with temp file caching across hook lifecycle (<1ms). SessionStart writes folder path to `/tmp/`, SessionEnd/PreCompact read it back. Falls back to glob then mkdir.
 - **PreCompact hook**: Replaced segment copying with a `compaction-points.txt` sidecar file that records line count + timestamp per compaction boundary.
 - **session-recap Phase 1.1**: Reads `transcript_source` from session.md frontmatter first; falls back to `segment-*/transcript.jsonl` walking for old sessions.
 - **SessionStart matchers**: Added `clear` and `compact` matchers for `/clear` and post-compaction events.
+- **session-manager tag workflow**: No longer sets tags directly — reads existing tags from ccfind cache, matches user input against existing tags (exact, hyphenation, casing), presents suggestion table with usage counts, and confirms before setting. Promotes tag consistency.
 
 ### Added
 - **ccfind `--by-name` / `Ctrl-N`**: Browse only named sessions (sessions with `session_name` set via `/rename`). Replaces the old `--by-task-tag` mode.
+- **ccfind `Ctrl-R`**: Force cache refresh from within the fzf popup.
+- **session-manager `session_name` auto-sync**: Reads `/rename` customTitle from transcript via `read_custom_title()` helper and sets `session_name` in session.md on every invocation.
+- **tmux window rename**: session_resume.sh and session-manager skill rename the tmux window to `session_name` using `$TMUX_PANE` targeting. Reflects session name in tmux tab bar.
+- **`read_custom_title()` helper**: New function in `obsidian_helpers.sh` — reads customTitle from session transcript via reverse-scan. Uses cwd hash (not git repo root) matching Claude Code's project directory structure.
 
 ### Removed
 - **`task_tag` property**: Merged into `session_name` + `tags`. In practice, `task_tag` was identical to `session_name` in most sessions (one task = one session). Use `tags` for grouping related sessions.
 - **ccfind `--by-task-tag` / `--task-tags`**: Replaced by `--by-name` / `Ctrl-N`.
 
 ### Fixed
-- **SessionEnd hook cancelled**: Root-caused the "Hook cancelled" error — `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (default 1.5s) silently caps per-hook `timeout` settings in hooks.json.
+- **SessionEnd hook cancelled**: Root-caused the "Hook cancelled" error — `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (default 1.5s) silently caps per-hook `timeout` settings in hooks.json. Total execution reduced from ~2.16s to ~325ms (78% headroom).
 
 ## [2.1.0] - 2026-03-06
 
