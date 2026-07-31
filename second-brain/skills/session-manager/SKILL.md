@@ -133,12 +133,12 @@ Every time this skill is invoked, **always** perform steps 1-4 before handling t
    ```bash
    obsidian vault="knowledge-bank" property:set name="session_name" value="<customTitle>" path="<vault-relative-path>"
    ```
-4. **Always rename the tmux window** to the current session_name (whether from customTitle or already in session.md). This MUST run on every invocation:
+4. **Always rename the terminal container** (tmux window or Herdr pane) to the current session_name (whether from customTitle or already in session.md). This MUST run on every invocation:
    ```bash
-   tmux set-window-option -t "$TMUX_PANE" automatic-rename off 2>/dev/null
-   tmux rename-window -t "$TMUX_PANE" "<session_name>" 2>/dev/null
+   source skills/common/obsidian_helpers.sh
+   rename_terminal_window "<session_name>"
    ```
-   Run these as actual Bash tool calls. `$TMUX_PANE` is available in Claude's shell environment when launched from tmux. Skip only if session_name is empty.
+   Run this as an actual Bash tool call. The helper detects the environment itself: `$TMUX_PANE` (tmux) and/or `$HERDR_PANE_ID` (Herdr) are available in Claude's shell environment. Skip only if session_name is empty.
 5. Display current values in this format:
    ```
    **Current Session**

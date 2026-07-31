@@ -85,12 +85,9 @@ else
     mkdir -p "$SESSION_FOLDER/docs"
 fi
 
-# Rename tmux window if session has a name (-t $TMUX_PANE targets correct window)
+# Rename terminal container (tmux window / Herdr pane) if session has a name
 SESSION_NAME=$(read_frontmatter_prop "$SESSION_FOLDER/session.md" "session_name")
-if [ -n "$SESSION_NAME" ] && [ -n "$TMUX_PANE" ]; then
-    tmux set-window-option -t "$TMUX_PANE" automatic-rename off 2>/dev/null
-    tmux rename-window -t "$TMUX_PANE" "$SESSION_NAME" 2>/dev/null
-fi
+rename_terminal_window "$SESSION_NAME"
 
 # Re-inject docs path into system prompt
 DOCS_PATH="$SESSION_FOLDER/docs"

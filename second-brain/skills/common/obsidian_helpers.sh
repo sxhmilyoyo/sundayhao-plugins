@@ -88,8 +88,35 @@ read_custom_title() {
         | jq -r '.customTitle // empty' 2>/dev/null
 }
 
+# Rename the enclosing terminal container to the session name.
+# Supports tmux (window) and Herdr (pane); no-op outside both.
+# Args: $1=session_name (empty → no-op)
+# Never returns non-zero (callers may run under set -e); output suppressed
+# (hook stdout is reserved for the hook protocol JSON).
+rename_terminal_window() {
+    local name="$1"
+    [ -n "$name" ] || return 0
+
+    if [ -n "$TMUX_PANE" ]; then
+        tmux set-window-option -t "$TMUX_PANE" automatic-rename off 2>/dev/null
+        tmux rename-window -t "$TMUX_PANE" "$name" 2>/dev/null
+    fi
+
+    if [ -n "$HERDR_PANE_ID" ]; then
+        # Hooks may run with a minimal PATH; herdr installs to ~/.local/bin
+        local herdr_bin
+        herdr_bin=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
+        if [ -x "$herdr_bin" ]; then
+            "$herdr_bin" pane rename "$HERDR_PANE_ID" "$name" >/dev/null 2>&1
+        fi
+    fi
+
+    return 0
+}
+
 export -f read_frontmatter_prop
 export -f read_frontmatter_list
 export -f write_session_md
 export -f append_kb_log
 export -f read_custom_title
+export -f rename_terminal_window

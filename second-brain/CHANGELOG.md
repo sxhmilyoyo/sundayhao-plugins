@@ -7,6 +7,14 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-07-31
+
+### Added
+- **Herdr pane rename**: Session names now propagate to Herdr pane labels, not just tmux windows. New `rename_terminal_window()` helper in `skills/common/obsidian_helpers.sh` detects the environment (`$TMUX_PANE` / `$HERDR_PANE_ID`) and renames whichever container encloses the session — both when nested. Uses `herdr pane rename` over the socket API; resolves the binary via `command -v` with `~/.local/bin` fallback for minimal hook PATHs.
+
+### Changed
+- **session-manager step 4 + session_resume.sh**: Both now call the shared `rename_terminal_window()` helper instead of duplicating inline tmux commands.
+
 ## [2.7.0] - 2026-04-09
 
 ### Added
