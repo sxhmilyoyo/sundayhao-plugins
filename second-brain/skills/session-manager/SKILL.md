@@ -133,7 +133,7 @@ Every time this skill is invoked, **always** perform steps 1-4 before handling t
    ```bash
    obsidian vault="knowledge-bank" property:set name="session_name" value="<customTitle>" path="<vault-relative-path>"
    ```
-4. **Always rename the terminal container** (tmux window or Herdr pane) to the current session_name (whether from customTitle or already in session.md). This MUST run on every invocation:
+4. **Always rename the terminal container** (tmux window or Herdr pane) to the current session_name (whether from customTitle or already in session.md). Under Herdr this also names the agent in the pane after the session_name (sanitized to Herdr's `[a-z][a-z0-9_-]{0,31}` rule), so other agents can target it via `herdr agent <cmd> <name>`. This MUST run on every invocation:
    ```bash
    source skills/common/obsidian_helpers.sh
    rename_terminal_window "<session_name>"

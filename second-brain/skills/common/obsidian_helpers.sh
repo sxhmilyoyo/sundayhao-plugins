@@ -108,8 +108,37 @@ rename_terminal_window() {
         herdr_bin=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
         if [ -x "$herdr_bin" ]; then
             "$herdr_bin" pane rename "$HERDR_PANE_ID" "$name" >/dev/null 2>&1
+            rename_herdr_agent "$name" "$herdr_bin"
         fi
     fi
+
+    return 0
+}
+
+# Name the Herdr agent in the current pane after the session name, so other
+# agents can target it by name (herdr agent prompt|wait|get <name>).
+# Herdr requires ^[a-z][a-z0-9_-]{0,31}$ and uniqueness across live agents;
+# on collision, retry with the pane id as a suffix (e.g. "...-w2p5").
+# Re-applying the current name to the same agent is a no-op (exit 0).
+# Args: $1=session_name, $2=path_to_herdr_binary
+# Returns: always 0 (best-effort; callers may run under set -e)
+rename_herdr_agent() {
+    local name="$1"
+    local herdr_bin="$2"
+    local agent_name suffix err
+
+    agent_name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9_-]+/-/g; s/^[^a-z]+//' | cut -c1-32 | sed -E 's/-+$//')
+    [ -n "$agent_name" ] || return 0
+
+    err=$("$herdr_bin" agent rename "$HERDR_PANE_ID" "$agent_name" 2>&1 >/dev/null) && return 0
+    case "$err" in
+        *agent_name_taken*)
+            suffix=$(printf '%s' "$HERDR_PANE_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+            agent_name=$(printf '%s' "$agent_name" | cut -c1-$((31 - ${#suffix})) | sed -E 's/-+$//')
+            "$herdr_bin" agent rename "$HERDR_PANE_ID" "${agent_name}-${suffix}" >/dev/null 2>&1 || true
+            ;;
+    esac
 
     return 0
 }
@@ -120,3 +149,4 @@ export -f write_session_md
 export -f append_kb_log
 export -f read_custom_title
 export -f rename_terminal_window
+export -f rename_herdr_agent

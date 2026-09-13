@@ -7,6 +7,11 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-09-12
+
+### Added
+- **Herdr agent name**: Session names now also propagate to the Herdr *agent name* (`herdr agent rename`), not just the pane label. New `rename_herdr_agent()` helper in `skills/common/obsidian_helpers.sh`, called from `rename_terminal_window()`, so both session-manager step 4 and `session_resume.sh` pick it up. The name is sanitized to Herdr's `^[a-z][a-z0-9_-]{0,31}$` rule (lowercased, invalid runs collapsed to `-`, truncated to 32 chars); on `agent_name_taken` it retries once with a pane-id suffix (e.g. `-w2p5`). Best-effort: never fails the caller. Once named, other agents can address the session with `herdr agent prompt|wait|get <name>`.
+
 ## [2.8.0] - 2026-07-31
 
 ### Added
