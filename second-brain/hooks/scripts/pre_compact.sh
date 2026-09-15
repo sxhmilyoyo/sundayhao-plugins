@@ -9,9 +9,10 @@ TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
 # Derive session_id from transcript path
 SESSION_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
 
-# Source common utilities for KB path discovery
+# Source common utilities for KB path discovery and session folder resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../skills/common/get_kb_path.sh"
+source "$SCRIPT_DIR/../../skills/common/obsidian_helpers.sh"
 
 # Get KB path (exit silently if not configured)
 KB_PATH=$(get_kb_path 2>/dev/null)
@@ -25,16 +26,11 @@ EOF
     exit 0
 fi
 
-# Read cached folder path from SessionStart (O(1)), fall back to glob
-SESSION_FOLDER=$(cat "/tmp/second-brain-folder-$SESSION_ID" 2>/dev/null)
-if [ ! -d "$SESSION_FOLDER" ]; then
-    MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
-    SESSION_FOLDER="${MATCHES[0]}"
-fi
-if [ ! -d "$SESSION_FOLDER" ]; then
-    TODAY=$(date +%Y-%m-%d)
-    SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
-    mkdir -p "$SESSION_FOLDER"
+# Resolve the folder, reconstructing the note when there is none, so a compaction
+# boundary is never recorded into a blank folder stamped with today's date.
+SESSION_FOLDER=$(resolve_session_folder "$KB_PATH" "$SESSION_ID")
+if [ -z "$SESSION_FOLDER" ] || [ ! -f "$SESSION_FOLDER/session.md" ]; then
+    SESSION_FOLDER=$(rebuild_session_md "$KB_PATH" "$SESSION_ID" "$TRANSCRIPT_PATH" "")
 fi
 
 # Record compaction boundary: line count + timestamp

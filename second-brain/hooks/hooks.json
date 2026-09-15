@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_start.sh",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       },
@@ -18,7 +18,17 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_start.sh",
-            "timeout": 5000
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_start.sh",
+            "timeout": 5
           }
         ]
       },
@@ -28,7 +38,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_resume.sh",
-            "timeout": 30000
+            "timeout": 10
           }
         ]
       },
@@ -38,7 +48,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_resume.sh",
-            "timeout": 30000
+            "timeout": 10
           }
         ]
       }
@@ -50,7 +60,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre_compact.sh",
-            "timeout": 30000
+            "timeout": 10
           }
         ]
       }
@@ -61,8 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_end.sh",
-            "timeout": 30000
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session_end.sh"
           }
         ]
       }

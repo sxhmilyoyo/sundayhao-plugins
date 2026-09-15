@@ -76,6 +76,20 @@ Find documents not modified in 90+ days:
 
 Uses file modification timestamps. Excludes `_sessions/` and `daily-log/` (inherently historical).
 
+#### Check 6: Ghost Session Folders (severity: warning)
+
+Find session folders registered for a session id that never became a conversation:
+
+```bash
+./scripts/lint_ghost_folders.sh "$KB_PATH" [min_age_hours]
+```
+
+Hooks never delete a session folder (see `docs/adr/0001-hooks-never-delete-session-folders.md`), so
+collecting ghosts is this check's job. The signature is one no live session can match: a note nobody
+updated, no documents, no end time, older than a day by default, and a transcript that is absent or
+never grew. A folder with an end time but no start metadata is an **end stub**, not a ghost — that
+means a note was lost or registration was missed, so it is repaired rather than swept.
+
 ### Step 2: REPORT
 
 Generate a lint report at `_meta/lint-report-YYYY-MM-DD.md`:
@@ -111,6 +125,9 @@ generated: YYYY-MM-DDTHH:MM:SSZ
 ### Index Drift
 - /path/to/doc.md — exists on disk but missing from index
 
+### Ghost Session Folders
+- _sessions/YYYY-MM-DD/<session-id> — no transcript, N hours old
+
 ## Info
 
 ### Stale Documents
@@ -138,6 +155,7 @@ After presenting the report, use **AskUserQuestion tool** to offer resolution:
   - **Bad reference** — the WikiLink itself is wrong (typo, template placeholder). Fix or remove it from the source file.
   - **Template placeholder** — generic WikiLinks like `[[Related Concept 1]]`. Remove from source files.
 - **Fix index drift** — Run `generate_index.sh` to rebuild `_meta/index.md`
+- **Quarantine ghost folders** — Move each flagged folder to `_meta/trash/<timestamp>-<session-id>` and record it with `append_kb_log`. Never delete outright: the check is deliberately conservative, but a move is reversible and a delete is not.
 - **Fix missing frontmatter** — Add required YAML fields to flagged documents
 - **Skip** — Just the report, no fixes needed
 

@@ -143,6 +143,102 @@ rename_herdr_agent() {
     return 0
 }
 
+# Resolve an existing session folder. Never creates anything, never guesses a
+# date: returns empty when the session has no folder yet, so callers decide.
+# Args: $1=kb_path, $2=session_id
+# Returns: absolute folder path on stdout (empty if none exists)
+resolve_session_folder() {
+    local kb_path="$1" session_id="$2" cached matches
+    cached=$(cat "/tmp/second-brain-folder-$session_id" 2>/dev/null)
+    if [ -n "$cached" ] && [ -d "$cached" ]; then
+        echo "$cached"
+        return 0
+    fi
+    matches=("$kb_path/_sessions"/*/"$session_id")
+    [ -d "${matches[0]}" ] && echo "${matches[0]}"
+    return 0
+}
+
+# Nearest ancestor session id for a forked session, read from the folder markers
+# the fork replays from its parent's history. Empty for a session that is not a
+# fork. The last marker is the nearest ancestor; the first is the lineage root.
+# Args: $1=transcript_path, $2=own_session_id
+# Returns: session id on stdout (empty if none)
+transcript_forked_from() {
+    local transcript="$1" self="$2"
+    [ -f "$transcript" ] || return 0
+    # Only a hook-injected marker counts. Matching a bare session path anywhere
+    # would treat any conversation that merely mentions a folder as a parent.
+    head -200 "$transcript" 2>/dev/null \
+        | grep 'Session folder created' \
+        | grep -o '_sessions/[0-9][0-9-]*/[0-9a-f-]\{36\}' \
+        | sed 's|.*/||' \
+        | grep -v "^${self}$" \
+        | tail -1
+    return 0
+}
+
+# Rebuild a missing session note from what the transcript still knows.
+# Never overwrites an existing note, and never refiles a session under today
+# when its folder already says which day it belongs to. Timing comes from the
+# transcript's birth time, which is the session's own start even for a fork,
+# whose first records are its parent's replayed history.
+# tags and summary are deliberately left empty: nothing outside the note holds them.
+# Args: $1=kb_path, $2=session_id, $3=transcript_path, $4=cwd (optional hint)
+# Returns: the session folder path on stdout
+rebuild_session_md() {
+    local kb_path="$1" session_id="$2" transcript="$3" cwd="$4"
+    local folder date_dir started project branch forked title birth
+
+    folder=$(resolve_session_folder "$kb_path" "$session_id")
+    [ -n "$cwd" ] || cwd=$(head -200 "$transcript" 2>/dev/null \
+        | grep -o '"cwd":"[^"]*"' | head -1 | sed 's/"cwd":"//; s/"$//')
+
+    birth=$(stat -f '%B' "$transcript" 2>/dev/null)
+    if [ -n "$birth" ]; then
+        started=$(date -u -r "$birth" +%Y-%m-%dT%H:%M:%S)
+        date_dir=$(date -r "$birth" +%Y-%m-%d)
+    fi
+
+    # An existing folder is authoritative about the date; only fall back to the
+    # transcript's birth day, and to today only when even that is unavailable.
+    if [ -n "$folder" ]; then
+        date_dir=$(basename "$(dirname "$folder")")
+    else
+        [ -n "$date_dir" ] || date_dir=$(date +%Y-%m-%d)
+        folder="$kb_path/_sessions/$date_dir/$session_id"
+    fi
+
+    mkdir -p "$folder/docs"
+    echo "$folder" > "/tmp/second-brain-folder-$session_id"
+
+    if [ ! -f "$folder/session.md" ]; then
+        [ -n "$cwd" ] && project=$(basename "$cwd")
+        [ -n "$cwd" ] && branch=$(git -C "$cwd" branch --show-current 2>/dev/null)
+        forked=$(transcript_forked_from "$transcript" "$session_id")
+        title=$(tail -r "$transcript" 2>/dev/null \
+            | grep -m1 '"type":"custom-title"' \
+            | jq -r '.customTitle // empty' 2>/dev/null)
+        write_session_md "$folder/session.md" "schema_version: \"2.0\"
+session_id: \"$session_id\"
+date: $date_dir
+project: \"$project\"
+cwd: \"$cwd\"
+git_branch: \"$branch\"
+started_at: $started
+docs_path: \"_sessions/$date_dir/$session_id/docs\"
+forked_from: \"$forked\"
+transcript_source: \"$transcript\"
+session_name: \"$title\"
+ended_at:
+duration_seconds:
+summary:
+tags:" "# Session: $session_id"
+    fi
+
+    echo "$folder"
+}
+
 export -f read_frontmatter_prop
 export -f read_frontmatter_list
 export -f write_session_md
@@ -150,3 +246,6 @@ export -f append_kb_log
 export -f read_custom_title
 export -f rename_terminal_window
 export -f rename_herdr_agent
+export -f resolve_session_folder
+export -f transcript_forked_from
+export -f rebuild_session_md

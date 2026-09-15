@@ -6,12 +6,7 @@
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 CWD=$(echo "$INPUT" | jq -r '.cwd')
-
-# Write ghost ID for resume cleanup coordination.
-# TODO: Remove ghost cleanup (this + session_resume.sh lines 27-35) if Claude Code
-# stops firing the "startup" matcher on SessionStart during resume.
-CWD_HASH=$(echo "$CWD" | md5)
-echo "$SESSION_ID" > "/tmp/second-brain-startup-$CWD_HASH"
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,19 +39,27 @@ mkdir -p "$DOCS_PATH"
 # Cache folder path so SessionEnd/PreCompact can skip folder search
 echo "$SESSION_FOLDER" > "/tmp/second-brain-folder-$SESSION_ID"
 
-# Detect git branch and project
-GIT_BRANCH=""
-if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
-    GIT_BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
-fi
-PROJECT=$(detect_project "$CWD")
+# Write the note only when it is absent. This hook also fires for /clear and for
+# a fork, and a /clear keeps the same session id, so rewriting here would discard
+# the tags, summary and name set earlier in the very same session.
+if [ ! -f "$SESSION_FOLDER/session.md" ]; then
+    # Detect git branch and project
+    GIT_BRANCH=""
+    if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
+        GIT_BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
+    fi
+    PROJECT=$(detect_project "$CWD")
 
-# Timestamps
-STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
+    # Timestamps
+    STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
-# Create session.md with full frontmatter in one atomic filesystem write.
-# Bypasses Obsidian CLI for reliability — CLI create can fail silently.
-FRONTMATTER="schema_version: \"2.0\"
+    # A forked session continues another conversation under a new id, and replays
+    # its parent's history, so the parent is recoverable from this transcript.
+    FORKED_FROM=$(transcript_forked_from "$TRANSCRIPT_PATH" "$SESSION_ID")
+
+    # Create session.md with full frontmatter in one atomic filesystem write.
+    # Bypasses Obsidian CLI for reliability — CLI create can fail silently.
+    FRONTMATTER="schema_version: \"2.0\"
 session_id: \"$SESSION_ID\"
 date: $TODAY
 project: \"$PROJECT\"
@@ -64,6 +67,7 @@ cwd: \"$CWD\"
 git_branch: \"$GIT_BRANCH\"
 started_at: $STARTED_AT
 docs_path: \"_sessions/$TODAY/$SESSION_ID/docs\"
+forked_from: \"$FORKED_FROM\"
 transcript_source:
 session_name:
 ended_at:
@@ -71,7 +75,8 @@ duration_seconds:
 summary:
 tags:"
 
-write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "# Session: $SESSION_ID"
+    write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "# Session: $SESSION_ID"
+fi
 
 # Inject system prompt with docs path
 cat << EOF

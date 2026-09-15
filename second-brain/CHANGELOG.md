@@ -7,6 +7,24 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-09-14
+
+### Fixed
+- **Session folders are no longer deleted by a peer session.** `session_resume.sh` cleaned up "ghost" folders through a rendezvous file keyed by `md5(cwd)`. Because that key is shared by every session in a directory while the folder it removed belonged to a single session, any second session resuming or compacting in the same directory deleted a live session's folder. Confirmed collateral across the corpus was six real sessions, one of them 2709 lines and 442 turns, against one confirmed ghost caught. The rendezvous and the `rm -rf` are both gone; no hook deletes a session folder any more. See `docs/adr/0001-hooks-never-delete-session-folders.md`.
+- **A lost note is now rebuilt mid-session, not only at session end.** `session_resume.sh` rebuilt only when the whole folder was missing, so a folder that survived as a shell (recreated by a later document write) kept a missing `session.md` for the rest of the session's life, which made the session-manager skill fail against it.
+- **`session_end.sh` no longer files a recovered session under today's date with blank metadata.** It read the properties it wanted to preserve out of the very file that was missing, producing notes with empty `date`, `project`, `cwd` and `started_at`. It now reconstructs from the transcript and takes the date from the existing folder. Same fix in `pre_compact.sh`, which could record a compaction boundary into a freshly invented folder.
+- **`/clear` no longer discards tags, summary and name.** `session_start.sh` also fires for `clear` with the same session id and rewrote the note unconditionally. It now writes only when the note is absent.
+- **Hook timeouts were in the wrong units.** Values of `5000` and `30000` were written as milliseconds, but the field is seconds. Corrected to 5 and 10. Removed from `SessionEnd`, whose 1.5 second budget is fixed by the harness and cannot be raised by a plugin.
+
+### Added
+- **Forked sessions are registered.** New `fork` SessionStart matcher routed to `session_start.sh`. Previously a fork fired no matcher at all, so it got no folder at start and `session_end.sh` invented a bare one, which is what made forks look like empty duplicates of a real session.
+- **`forked_from` frontmatter property**, derived from the parent's replayed folder marker in the fork's own transcript, and backfilled at session end because the transcript is written asynchronously and the fork-time scan can lose the race.
+- **`resolve_session_folder`, `transcript_forked_from` and `rebuild_session_md`** in `skills/common/obsidian_helpers.sh`, shared by the resume, pre-compact and end hooks so all three agree on how a session folder is found and repaired. Timing comes from the transcript's birth time, which is the session's own start even for a fork, whose first records are its parent's replayed history.
+- **kb-lint check 6, ghost session folders.** Collecting ghosts moved out of the hooks and into lint, on a signature no live session can match: a note nobody updated, no documents, no end time, older than a day, and a transcript that is absent or never grew. Reports by default and quarantines rather than deletes.
+
+### Changed
+- `session_end.sh` now preserves unknown frontmatter properties verbatim instead of rebuilding from a fixed list, so properties written by skills survive a rewrite.
+
 ## [2.9.0] - 2026-09-12
 
 ### Added

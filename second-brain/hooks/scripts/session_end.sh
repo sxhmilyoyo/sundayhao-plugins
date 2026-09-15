@@ -8,6 +8,7 @@ shopt -s nullglob
 INPUT=$(cat)
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
 SESSION_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
+CWD_INPUT=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,16 +26,13 @@ EOF
     exit 0
 fi
 
-# Read cached folder path from SessionStart (O(1)), fall back to glob
-SESSION_FOLDER=$(cat "/tmp/second-brain-folder-$SESSION_ID" 2>/dev/null)
-if [ ! -d "$SESSION_FOLDER" ]; then
-    MATCHES=("$KB_PATH/_sessions"/*/"$SESSION_ID")
-    SESSION_FOLDER="${MATCHES[0]}"
-fi
-if [ ! -d "$SESSION_FOLDER" ]; then
-    TODAY=$(date +%Y-%m-%d)
-    SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
-    mkdir -p "$SESSION_FOLDER"
+# Resolve the folder, and reconstruct the note when it is missing instead of
+# writing a blank one under today's date. The rebuild takes the date from the
+# existing folder and the timing, cwd, project and lineage from the transcript,
+# so the properties read below survive a note that was lost mid-session.
+SESSION_FOLDER=$(resolve_session_folder "$KB_PATH" "$SESSION_ID")
+if [ -z "$SESSION_FOLDER" ] || [ ! -f "$SESSION_FOLDER/session.md" ]; then
+    SESSION_FOLDER=$(rebuild_session_md "$KB_PATH" "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD_INPUT")
 fi
 
 # ── 1. Read properties to preserve across overwrite ───────────────────
@@ -50,6 +48,23 @@ DATE_PROP=$(read_frontmatter_prop "$SESSION_MD" "date")
 TAGS=$(read_frontmatter_list "$SESSION_MD" "tags")
 SUMMARY=$(read_frontmatter_prop "$SESSION_MD" "summary")
 SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
+# Lineage: the transcript is complete by now, so backfill what the fork-time scan
+# may have missed while the file was still being written asynchronously.
+FORKED_FROM=$(read_frontmatter_prop "$SESSION_MD" "forked_from")
+[ -n "$FORKED_FROM" ] || FORKED_FROM=$(transcript_forked_from "$TRANSCRIPT_PATH" "$SESSION_ID")
+
+# Preserve every property this hook does not manage, verbatim, so properties
+# written by skills (recap_* and anything added later) survive the rewrite.
+KNOWN_PROPS="schema_version session_id date project cwd git_branch started_at docs_path forked_from transcript_source session_name ended_at duration_seconds summary tags"
+EXTRA_YAML=""
+if [ -f "$SESSION_MD" ]; then
+    while IFS= read -r fm_line; do
+        fm_key="${fm_line%%:*}"
+        case " $KNOWN_PROPS " in *" $fm_key "*) continue ;; esac
+        EXTRA_YAML="${EXTRA_YAML}${fm_line}
+"
+    done < <(sed -n '/^---$/,/^---$/p' "$SESSION_MD" | grep -E '^[a-z_][a-z0-9_]*:')
+fi
 
 # ── 2. Compute end-time metadata ─────────────────────────────────────
 ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
@@ -141,12 +156,13 @@ cwd: \"$(_yaml_escape "${CWD:-}")\"
 git_branch: \"$(_yaml_escape "${GIT_BRANCH:-}")\"
 started_at: ${STARTED_AT:-}
 docs_path: \"$(_yaml_escape "${DOCS_PATH_PROP:-}")\"
+forked_from: \"$(_yaml_escape "${FORKED_FROM:-}")\"
 transcript_source: \"$(_yaml_escape "$TRANSCRIPT_PATH")\"
 session_name: \"$(_yaml_escape "${SESSION_NAME:-}")\"
 ended_at: $ENDED_AT
 duration_seconds: ${DURATION:-}
 summary: \"$(_yaml_escape "${SUMMARY:-}")\"
-tags:
+${EXTRA_YAML}tags:
 ${TAGS_YAML}"
 
 RESOLVED_BODY=$(printf '%b' "$BODY")
