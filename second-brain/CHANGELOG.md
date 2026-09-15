@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`resolve_session_folder`, `transcript_forked_from` and `rebuild_session_md`** in `skills/common/obsidian_helpers.sh`, shared by the resume, pre-compact and end hooks so all three agree on how a session folder is found and repaired. Timing comes from the transcript's birth time, which is the session's own start even for a fork, whose first records are its parent's replayed history.
 - **kb-lint check 6, ghost session folders.** Collecting ghosts moved out of the hooks and into lint, on a signature no live session can match: a note nobody updated, no documents, no end time, older than a day, and a transcript that is absent or never grew. Reports by default and quarantines rather than deletes.
 
+- **Regression suite** at `tests/hook-regression-suite.sh`, 25 cases against a scratch knowledge bank in a temp directory, never the real vault. Covers the failures above directly: a peer resuming in the same directory cannot delete another session's folder, a lost note is rebuilt without being refiled under today, `/clear` preserves tags and summary, a fork records its parent, and unknown frontmatter properties survive the end rewrite. Resolves the plugin from its own location, or from `PLUGIN=` to test an installed copy.
+
 ### Changed
 - `session_end.sh` now preserves unknown frontmatter properties verbatim instead of rebuilding from a fixed list, so properties written by skills survive a rewrite.
 
