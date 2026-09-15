@@ -19,6 +19,13 @@ _Avoid_: session dir, cubby, bucket
 The record of a single session, carrying its identity, timing, project, name, tags and summary.
 _Avoid_: session file, metadata file, frontmatter
 
+**Project**:
+The knowledge-bank domain a session's work belongs to, drawn from the fixed set of domains the bank
+already files knowledge under. Not the repository, directory or component a session touched: those are
+tags. Left unset when the work belongs to no established domain, so that an unrecognised one is
+visibly missing rather than quietly invented.
+_Avoid_: repo, package, workspace, component, folder name
+
 **Registration**:
 Creating a session's folder and note at the moment the session begins, so later stages have something
 to update rather than invent.
@@ -34,6 +41,22 @@ _Avoid_: duplicate session, copy, clone
 **Parent session**:
 The session a fork continues. Recorded on the fork so lineage can be followed in either direction.
 _Avoid_: origin, source session, root
+
+**Delegated session**:
+A session that another session starts to carry out work on its behalf. It has its own id, transcript
+and note, and its own conversation from the first prompt. Distinct from a fork, which continues a
+conversation instead of starting one.
+_Avoid_: sub session, child session, spawned session, background session
+
+**Launching session**:
+The session that started a delegated session. Named on the delegate, alongside its id, so work can be
+traced back to the request that caused it.
+_Avoid_: parent session, caller, owner, orchestrator
+
+**Subagent**:
+A helper the model runs inside a session, sharing that session's id and transcript. Not a session, so
+it is never registered, never named and never recapped. What a delegated session is not.
+_Avoid_: sub session, child session, delegated session
 
 **Ghost folder**:
 A folder registered for a session id that never became a conversation, recognised by a note nobody
