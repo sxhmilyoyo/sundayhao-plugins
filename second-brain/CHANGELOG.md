@@ -7,6 +7,39 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] - 2026-09-15
+
+Session metadata is now seeded when a session starts instead of waiting to be asked for. See
+`docs/adr/0004-project-names-a-knowledge-bank-domain.md` and
+`docs/adr/0005-delegation-is-declared-not-detected.md`.
+
+### Added
+- **`project` is a knowledge-bank domain**, resolved by a new shared `skills/common/resolve_project.sh` from a `project_domains` map in the plugin config. A map key matches a directory it equals or contains, and a key ending in `*` matches any path beginning with the stem, so one entry covers a family of sibling packages. The longest match wins. Anything unmapped resolves to empty, and so does any stored value outside the domain set, which is what lets older notes keep their directory basenames without a reader ever mistaking one for a domain. `list_project_domains` is the single source of truth every consumer validates against.
+- **The name is taken from the hook's stdin.** `session_start.sh` now reads the `session_title` and `source` input fields, so `session_name` is written at registration instead of being recovered later from a transcript that is documented to lag.
+- **Lineage properties `forked_from_name`, `delegated_by` and `delegated_by_name`**, and a `## Lineage` body section that both the start and the end hook regenerate from those properties. The section links the counterpart's full `_sessions/<date>/<id>/session` path with its name as the alias, because every note is called `session.md` and a bare link would be ambiguous across the whole vault.
+- **Delegation is recorded when it is declared.** A launcher sets `SECOND_BRAIN_DELEGATED_BY` and `SECOND_BRAIN_DELEGATED_BY_NAME` inline on the launched command and the delegate's own hook records them. Honoured only when `source` is `startup`, so a variable that leaked into a shell cannot make every later session in it look delegated.
+- **`skills/common/launch_delegate.sh`**, one thin helper that starts a delegated session with the marker set, names it `<role>-<launcher>` so the distinguishing part survives the 32-character agent-name limit, and opens a Herdr pane or prints the command when there is none.
+- **Forks and delegates inherit** their source's domain and tags at registration. An untagged source leaves them untagged rather than falling through to the model, whose request would otherwise land in the middle of a fork's conversation or on top of a delegate's first instruction.
+- **The hook asks for what it cannot derive.** A named session with no stamp gets an instruction to run the `session-manager` skill in automatic mode, carrying the resolved domain and the mapped directory's tag hints. Gated on a genuine startup with no declared launcher, no parent and a known name, and stamped with `metadata_requested_at` at the moment the request is made, so a session whose model never ran the skill is asked once rather than on every later start.
+- **The terminal is named at startup.** The name is on stdin from the first event, so a freshly launched session no longer sits in an unlabelled pane until its first resume.
+- **`--set` and `--set-domain`** in `setup_kb_path.sh`, both read-modify-write, and `get_plugin_config_value` in `get_kb_path.sh`, which falls back on every failure so a broken config disables a feature rather than enabling it. A domain that does not exist in the bank is refused rather than stored.
+- **`set_frontmatter_prop`, `yaml_escape`, `session_folder_relpath` and `session_lineage_body`** in `skills/common/obsidian_helpers.sh`.
+- **Regression cases 9 to 15** in `tests/hook-regression-suite.sh`, 49 new assertions: the resolver's boundary, wildcard, longest-prefix and out-of-set rules, config preservation, the full injection gate, a stray marker on a resume, fork and delegate inheritance including the untagged case, the quoted-marker false positive, and lineage backfill at exit.
+
+### Fixed
+- **A conversation that merely quoted another session's registration line was read as its fork.** `transcript_forked_from` matched the marker text anywhere in the first 200 lines. It now also requires the record to be an `attachment`, which is the only shape a replayed marker has; verified against four fork transcripts in the corpus. A session that reads a hook script or another transcript early, which a recap session does, was the case at risk.
+- **Notes rebuilt mid-session no longer invent a project.** `rebuild_session_md` computed its own `basename "$cwd"`, so a note recovered at resume, pre-compact or exit kept getting a directory name after the change. It calls the shared resolver, and writes the lineage properties, so a rebuilt note matches a freshly registered one.
+- **`--configure` no longer discards the rest of the config.** It rewrote `config.json` wholesale from a heredoc, which would have wiped the domain map and any other key on every reconfigure.
+- **The start hook's output is built with `jq`** instead of a heredoc. Two of the strings it carries are chosen by a person, and a single quote in a session name produced invalid JSON that silenced the hook for every consumer of it.
+
+### Changed
+- `session_end.sh` backfills `forked_from_name` alongside `forked_from`, never tags: inheritance belongs at registration, where a fork had not yet done work of its own to describe. It also manages the three new lineage properties, while `metadata_requested_at` flows through the unknown-property preserve loop untouched.
+- `skills/session-manager/SKILL.md`: the ownership rule now reads as hooks seed at registration and the skill is the only mid-session writer; `project` is described as a domain from a closed set; the report gains a lineage line.
+- `skills/session-manager/tag-canonicalization.md` step 4 splits into interactive and automatic modes. Automatic writes tags that already have a canonical form without asking, reports any it could not match, and never prompts, so a derivation never interrupts the user's first request.
+
+### Removed
+- `skills/common/detect_project.sh`. Its `basename "$cwd"` was the single reason a session note ever recorded `data`, `src` or a bare home-directory name as a project.
+
 ## [2.11.0] - 2026-09-14
 
 ### Changed

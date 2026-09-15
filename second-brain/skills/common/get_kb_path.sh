@@ -48,6 +48,21 @@ get_kb_path() {
     return 0
 }
 
+# Read one key from the plugin config.
+# Falls back on every failure — missing file, missing key, unreadable JSON, no
+# jq — so a broken config disables a feature rather than enabling it.
+# Args: $1=key, $2=default
+# Returns: the configured value, or the default
+get_plugin_config_value() {
+    local key="$1" default="$2" value=""
+    [ -f "$PLUGIN_CONFIG_FILE" ] || { echo "$default"; return 0; }
+    if command -v jq &> /dev/null; then
+        value=$(jq -r --arg k "$key" '.[$k] // empty' "$PLUGIN_CONFIG_FILE" 2>/dev/null)
+    fi
+    if [ -n "$value" ]; then echo "$value"; else echo "$default"; fi
+    return 0
+}
+
 # Validate that KB path exists
 validate_kb_path() {
     local kb_path="$1"
@@ -127,6 +142,7 @@ find_first_moc() {
 
 # Export functions for use in scripts
 export -f get_kb_path
+export -f get_plugin_config_value
 export -f validate_kb_path
 export -f discover_projects
 export -f discover_categories

@@ -37,14 +37,22 @@ session's note.
 | new-feature | new-feature      | no near match       |
 ```
 
-## 4. Confirm, then set
-
-Confirm with the **AskUserQuestion** tool, one option per plausible tag set, and write only what the
-user picks:
+## 4. Set them
 
 ```bash
-obsidian vault="knowledge-bank" property:set name="tags" value="<approved, comma, separated>" type="list" path="<vault-relative-path>"
+obsidian vault="knowledge-bank" property:set name="tags" value="<comma, separated>" type="list" path="<vault-relative-path>"
 ```
 
-**Done when:** every tag the user offered appears in the note in its canonical form, or the user
-dropped it.
+How you arrive at that list depends on which mode you are in.
+
+**Interactive**, the ordinary case, where a person asked for tags. Confirm with the
+**AskUserQuestion** tool, one option per plausible tag set, and write only what they pick.
+
+**Automatic**, when the start hook's instruction named that mode. Write the tags that already have a
+canonical form and stop there. Report any tag the session name implies that the vault has never seen,
+and write nothing for it. Do not prompt: the request that shares this turn is the user's, not yours,
+and coining a new tag is a deliberate act that belongs to an invocation by hand, where the
+confirmation above applies unchanged.
+
+**Done when:** every tag with a canonical form appears in the note in that form, and in automatic mode
+anything without one has been named in your report rather than invented.

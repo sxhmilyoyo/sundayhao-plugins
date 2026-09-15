@@ -33,7 +33,51 @@ echo "Knowledge bank: $KB_PATH"
 
 **Functions**:
 - `get_kb_path()` - Returns the configured knowledge bank path
+- `get_plugin_config_value(key, default)` - Returns one config key, falling back on every failure so a broken config disables a feature rather than enabling it
 - `validate_kb_path(path)` - Validates that the path exists and is accessible
+
+### resolve_project.sh
+
+**Purpose**: The one place a session's project is derived. `project` names a knowledge-bank **domain**
+drawn from the vault's `projects/` folders, never the directory a session ran in (see
+`docs/adr/0004-project-names-a-knowledge-bank-domain.md`). Mapped from the working directory through
+`project_domains` in the plugin config.
+
+```bash
+source resolve_project.sh
+
+resolve_project "/path/to/cwd"      # → a domain, or empty when unmapped
+validate_project "$stored_value"    # → the value, or empty when out of set
+list_project_domains                # → the domain set, one per line
+project_default_tags "/path/to/cwd" # → "tag, tag" hints for the matched prefix
+```
+
+A map key matches a directory it equals or contains; a key ending in `*` matches any path beginning
+with the stem, which covers a family of sibling packages with one entry. The longest match wins.
+
+Two rules every caller depends on. Anything unmapped resolves to **empty**, so an unrecognised domain
+stays visibly missing instead of being invented. Any stored value outside the domain set also resolves
+to empty, which is what makes leaving older notes alone safe: a directory basename is non-empty but is
+not a domain, and `validate_project` reports it as unresolved without the caller needing to know when
+the note was written.
+
+`project_default_tags` is for building a prompt, not for writing to a note. Tags written by a hook
+would leave every mapped session already tagged, and the trigger that asks Claude to describe a new
+session would never fire.
+
+### launch_delegate.sh
+
+**Purpose**: Start a session that records which session launched it.
+
+```bash
+./launch_delegate.sh <role> <prompt>
+```
+
+Sets `SECOND_BRAIN_DELEGATED_BY` and `SECOND_BRAIN_DELEGATED_BY_NAME` **inline on the launched
+command**, so the delegate's own SessionStart hook records the relationship. Never use a terminal
+manager's `--env` option for this: that adds the variable to the pane's root shell, so every later
+session in that pane inherits a launcher that never launched it. Under Herdr the script opens a pane;
+elsewhere it prints the command to run.
 
 ### setup_kb_path.sh
 
@@ -44,7 +88,14 @@ echo "Knowledge bank: $KB_PATH"
 # Configure knowledge bank path interactively
 ./setup_kb_path.sh --configure
 
-# Show current configuration
+# Set one key, preserving every other key in the file
+./setup_kb_path.sh --set auto_recap notify
+
+# Map a directory prefix to a domain, with optional default tags
+./setup_kb_path.sh --set-domain /path/to/service aax aax
+./setup_kb_path.sh --set-domain '/path/to/Service*' aax aax
+
+# Show current configuration, including the domain map
 ./setup_kb_path.sh --show
 ./setup_kb_path.sh  # Default: same as --show
 ```
@@ -54,9 +105,17 @@ echo "Knowledge bank: $KB_PATH"
 {
   "version": "1.0",
   "knowledge_bank_path": "/path/to/your/knowledge-bank",
-  "configured_at": "2026-01-07T12:00:00Z"
+  "configured_at": "2026-01-07T12:00:00Z",
+  "project_domains": {
+    "/path/to/service": { "domain": "aax", "default_tags": ["aax"] },
+    "/path/to/Service*": { "domain": "aax" }
+  }
 }
 ```
+
+`--set` and `--set-domain` are read-modify-write and preserve keys they do not know, which is what
+other features in this file depend on. `--configure` rewrites only the path and timestamp and leaves
+the rest intact for the same reason.
 
 ## Configuration
 
@@ -134,7 +193,7 @@ Common utilities follow semantic versioning:
 - **Minor**: New utilities or non-breaking enhancements
 - **Patch**: Bug fixes
 
-Current version: **2.0.0**
+Current version: **2.1.0**
 
 ## Best Practices
 

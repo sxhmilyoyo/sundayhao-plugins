@@ -1,7 +1,6 @@
 ---
 status: accepted
 date: 2026-09-14
-implementation: pending
 ---
 
 # Project names a knowledge-bank domain

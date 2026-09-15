@@ -52,10 +52,22 @@ SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 # may have missed while the file was still being written asynchronously.
 FORKED_FROM=$(read_frontmatter_prop "$SESSION_MD" "forked_from")
 [ -n "$FORKED_FROM" ] || FORKED_FROM=$(transcript_forked_from "$TRANSCRIPT_PATH" "$SESSION_ID")
+FORKED_FROM_NAME=$(read_frontmatter_prop "$SESSION_MD" "forked_from_name")
+DELEGATED_BY=$(read_frontmatter_prop "$SESSION_MD" "delegated_by")
+DELEGATED_BY_NAME=$(read_frontmatter_prop "$SESSION_MD" "delegated_by_name")
+
+# A fork detected only now has an id but no name, so resolve the name here too.
+# Tags are deliberately not backfilled: inheritance belongs at registration,
+# where the fork had not yet done any work of its own to describe.
+if [ -n "$FORKED_FROM" ] && [ -z "$FORKED_FROM_NAME" ]; then
+    PARENT_FOLDER=$(resolve_session_folder "$KB_PATH" "$FORKED_FROM")
+    [ -n "$PARENT_FOLDER" ] && FORKED_FROM_NAME=$(read_frontmatter_prop \
+        "$PARENT_FOLDER/session.md" "session_name")
+fi
 
 # Preserve every property this hook does not manage, verbatim, so properties
 # written by skills (recap_* and anything added later) survive the rewrite.
-KNOWN_PROPS="schema_version session_id date project cwd git_branch started_at docs_path forked_from transcript_source session_name ended_at duration_seconds summary tags"
+KNOWN_PROPS="schema_version session_id date project cwd git_branch started_at docs_path forked_from forked_from_name delegated_by delegated_by_name transcript_source session_name ended_at duration_seconds summary tags"
 EXTRA_YAML=""
 if [ -f "$SESSION_MD" ]; then
     while IFS= read -r fm_line; do
@@ -99,6 +111,13 @@ fi
 
 # ── 4. Build hub body ────────────────────────────────────────────────
 BODY="# Session: $SESSION_ID"
+
+# Lineage is regenerated from the properties rather than preserved, because this
+# hook rebuilds the whole body: a link written at registration would otherwise be
+# deleted here, and a fork whose parent was detected late would never get one.
+LINEAGE=$(session_lineage_body "$KB_PATH" "$FORKED_FROM" "$FORKED_FROM_NAME" \
+    "$DELEGATED_BY" "$DELEGATED_BY_NAME")
+[ -n "$LINEAGE" ] && BODY="$BODY\n\n$LINEAGE"
 
 # Generated Artifacts (docs/*.md)
 DOCS_DIR="$SESSION_FOLDER/docs"
@@ -146,22 +165,23 @@ if [ -n "$TAGS" ]; then
     done)
 fi
 
-_yaml_escape() { echo "${1//\"/\\\"}"; }
-
 FRONTMATTER="schema_version: \"${SCHEMA_VERSION:-2.0}\"
 session_id: \"$SESSION_ID\"
 date: ${DATE_PROP:-}
-project: \"$(_yaml_escape "${PROJECT:-}")\"
-cwd: \"$(_yaml_escape "${CWD:-}")\"
-git_branch: \"$(_yaml_escape "${GIT_BRANCH:-}")\"
+project: \"$(yaml_escape "${PROJECT:-}")\"
+cwd: \"$(yaml_escape "${CWD:-}")\"
+git_branch: \"$(yaml_escape "${GIT_BRANCH:-}")\"
 started_at: ${STARTED_AT:-}
-docs_path: \"$(_yaml_escape "${DOCS_PATH_PROP:-}")\"
-forked_from: \"$(_yaml_escape "${FORKED_FROM:-}")\"
-transcript_source: \"$(_yaml_escape "$TRANSCRIPT_PATH")\"
-session_name: \"$(_yaml_escape "${SESSION_NAME:-}")\"
+docs_path: \"$(yaml_escape "${DOCS_PATH_PROP:-}")\"
+forked_from: \"$(yaml_escape "${FORKED_FROM:-}")\"
+forked_from_name: \"$(yaml_escape "${FORKED_FROM_NAME:-}")\"
+delegated_by: \"$(yaml_escape "${DELEGATED_BY:-}")\"
+delegated_by_name: \"$(yaml_escape "${DELEGATED_BY_NAME:-}")\"
+transcript_source: \"$(yaml_escape "$TRANSCRIPT_PATH")\"
+session_name: \"$(yaml_escape "${SESSION_NAME:-}")\"
 ended_at: $ENDED_AT
 duration_seconds: ${DURATION:-}
-summary: \"$(_yaml_escape "${SUMMARY:-}")\"
+summary: \"$(yaml_escape "${SUMMARY:-}")\"
 ${EXTRA_YAML}tags:
 ${TAGS_YAML}"
 

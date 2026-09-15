@@ -11,7 +11,7 @@ TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../skills/common/get_kb_path.sh"
-source "$SCRIPT_DIR/../../skills/common/detect_project.sh"
+source "$SCRIPT_DIR/../../skills/common/resolve_project.sh"
 source "$SCRIPT_DIR/../../skills/common/obsidian_helpers.sh"
 
 KB_PATH=$(get_kb_path 2>/dev/null)

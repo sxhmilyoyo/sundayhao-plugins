@@ -330,6 +330,49 @@ Replace `/path/to/your/knowledge-bank` with your actual knowledge bank directory
 
 **Then restart Claude Code.**
 
+### Step 4: Map your directories to domains (optional)
+
+A session's `project` is the knowledge-bank **domain** its work belongs to, one of the folders under
+`projects/` in your bank. It is not the repository or directory the session ran in: those are tags.
+Until a directory is mapped, sessions there record no project, which is the intended signal rather
+than a directory name standing in for a domain.
+
+```bash
+# One directory tree
+skills/common/setup_kb_path.sh --set-domain /path/to/service aax aax
+
+# A whole family of sibling packages: a trailing * matches any deeper path
+skills/common/setup_kb_path.sh --set-domain '/path/to/Service*' aax aax
+
+# Review what is mapped
+skills/common/setup_kb_path.sh --show
+```
+
+The third argument is optional default tags, used only as hints when the plugin asks Claude to
+describe a new session. The longest matching prefix wins, so a specific subdirectory can override a
+broader entry, and a domain that does not exist in your bank is refused rather than stored.
+
+Use `--set <key> <value>` for any other single key. Both commands preserve every key they do not
+touch, unlike `--configure`, which rewrites the path and timestamp.
+
+### What the plugin fills in on its own
+
+When a session starts, its note is seeded with what can be established mechanically: the name you gave
+it with `-n` or `/rename`, the domain its directory maps to, and, for a fork or a delegated session,
+the lineage and tags of the session it came from. Tags for an ordinary named session cannot be derived
+from a name alone, so instead of guessing the plugin asks Claude to run the `session-manager` skill
+once, early in the session. Nothing is asked twice: the request is recorded on the note.
+
+To start a session that records who launched it:
+
+```bash
+skills/common/launch_delegate.sh review "Review the auth refactor on this branch"
+```
+
+Under Herdr this opens a pane and names the new session after its role and its launcher; elsewhere it
+prints the command to run. The delegate's note then carries `delegated_by`, so work can be traced back
+to the request that caused it.
+
 ---
 
 ## Obsidian Integration

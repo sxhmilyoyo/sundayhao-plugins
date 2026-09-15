@@ -6,14 +6,24 @@ description: Set the current session's name, project, tags, or summary on its se
 # Session Manager
 
 You **own** four properties on the current session's note: `session_name`, `project`, `tags` and
-`summary`. The hooks own every other property, so those four are the only ones you write.
+`summary`. The hooks seed a note when the session starts and never overwrite a value that is already
+there; from then on you are the only writer. Everything else on the note is theirs.
 
 | Property | Type | Holds |
 |----------|------|-------|
 | `session_name` | text | The session's name, kept in step with `/rename` |
-| `project` | text | Project name, seeded from the working directory and yours to override |
+| `project` | text | The knowledge-bank domain the work belongs to, one of the vault's `projects/` folders, empty when it belongs to none |
 | `tags` | list | Categorization, drawn from the vault's existing tags |
 | `summary` | text | One line on what the session accomplished |
+
+`project` names a domain, never a repository or directory: those are tags. A value outside the domain
+set is unresolved, which is what a note written before this rule holds, so treat it as empty and set it
+properly rather than leaving it to be read as a domain.
+
+When the start hook's injected instruction names **automatic mode**, it is asking you to derive tags
+for a session it could name but not describe. Run the preflight, then set tags in the automatic mode of
+[tag-canonicalization.md](tag-canonicalization.md), which writes without prompting. Do it after you
+have answered the user's first request, never instead of it.
 
 ## Preflight
 
@@ -74,6 +84,13 @@ there was nothing to apply.
 - project: <value or empty>
 - tags: <value or empty>
 - summary: <value or empty>
+```
+
+Add one more line when `forked_from` or `delegated_by` is set, naming where the session came from, so a
+copied project and copied tags are visibly inherited rather than looking chosen:
+
+```
+- lineage: forked from <name or id> | delegated by <name or id>
 ```
 
 **5. Dispatch.** Carry out the user's request. When the request names no property, ask with the
