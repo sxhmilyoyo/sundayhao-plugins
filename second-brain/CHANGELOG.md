@@ -7,6 +7,21 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2026-09-14
+
+### Changed
+- **session-manager skill rewritten** against the skill-authoring guidance, 160 lines down to 93 plus a 50-line disclosed reference. The mandatory opening sequence now sits at the top rather than below all the reference material, where it had needed three separate emphatics to overcome its own placement. Its header also claimed "steps 1-4" while listing six, so which steps were mandatory was genuinely ambiguous.
+- **Tag canonicalization disclosed** to `tag-canonicalization.md`. Only the tags branch reaches it, so setting a project or summary no longer carries it.
+- **Description pruned** from 90 words to 36. It had one branch written five ways, which cost context on every turn without adding a trigger.
+- **Leading words** replace restatement: *own* carries the boundary between the four properties the skill writes and the rest that the hooks manage, which had been stated in three places; *preflight* names the opening sequence; *canonical* replaces the prohibition against setting tags directly.
+- **Prohibitions turned positive**, four down to zero, since naming a banned behaviour makes it more available rather than less.
+
+### Added
+- **A verifiable completion criterion for the terminal rename.** `rename_terminal_window` is best-effort and reports nothing, so a failed rename was silent and the skill could not tell done from not-done. It now reads the label back from Herdr or tmux and confirms it matches.
+
+### Removed
+- The Examples and Constraints sections, which restated the command form, the property table and the tag workflow already defined above them.
+
 ## [2.10.0] - 2026-09-14
 
 ### Fixed
