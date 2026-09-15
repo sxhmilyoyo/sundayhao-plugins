@@ -6,14 +6,24 @@
 
 # project is derived in one place for every caller (ADR-0004); sourcing it here
 # means a note rebuilt mid-session gets the same domain a fresh one would.
-_SB_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# BASH_SOURCE is unset under zsh, which sets $0 to the sourced file instead. This
+# file is the one the session-manager skill tells the model to source from a
+# shell that is zsh on macOS, so relying on BASH_SOURCE alone resolved the path
+# against the caller's cwd and left the resolver undefined.
+_SB_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$_SB_COMMON_DIR/resolve_project.sh"
 
 # Escape a value for use inside a double-quoted YAML scalar. A session name is
 # chosen by a person and can contain a quote, which would otherwise end the
 # scalar early and leave the whole note unparseable.
 # Args: $1=value
-yaml_escape() { printf '%s' "${1//\"/\\\"}"; }
+yaml_escape() { local v="${1//\\/\\\\}"; printf '%s' "${v//\"/\\\"}"; }
+
+# The inverse. Every writer here escapes, so every reader has to unescape, or a
+# value that survives one rewrite is escaped twice and the note stops parsing.
+# Args: $1=value as stored
+yaml_unescape() { local v="${1//\\\"/\"}"; printf '%s' "${v//\\\\/\\}"; }
 
 # Read a YAML frontmatter property directly from a markdown file (no CLI).
 # Args: $1=absolute_file_path, $2=property_name
@@ -21,10 +31,14 @@ yaml_escape() { printf '%s' "${1//\"/\\\"}"; }
 read_frontmatter_prop() {
     local file="$1"
     local prop="$2"
+    local raw
     [ -f "$file" ] || return 0
-    sed -n '/^---$/,/^---$/p' "$file" \
+    raw=$(sed -n '/^---$/,/^---$/p' "$file" \
         | grep "^${prop}:" | head -1 \
-        | sed "s/^${prop}: *//" | sed 's/^"//;s/"$//'
+        | sed "s/^${prop}: *//" | sed 's/^"//;s/"$//')
+    # Unquoting is not enough: the value was escaped on the way in, so a caller
+    # that writes it back would escape it again.
+    yaml_unescape "$raw"
 }
 
 # Read a YAML list property directly from a markdown file (no CLI).
@@ -49,8 +63,14 @@ set_frontmatter_prop() {
     local file="$1" prop="$2" value="$3" tmp
     [ -f "$file" ] || return 0
     tmp="${file}.setprop.$$"
-    awk -v p="$prop" -v v="$(yaml_escape "$value")" '
-        BEGIN { fm = 0; done = 0 }
+    # The value travels through the environment, not through `awk -v`, which
+    # processes escape sequences in its assignments: a `\"` would be turned back
+    # into a bare quote, and a `\n` into a real newline that splits the scalar and
+    # injects a second key. Newlines are stripped for the same reason, since a
+    # YAML scalar written this way cannot hold one.
+    SB_PROP="$prop" SB_VALUE="$(yaml_escape "$(printf '%s' "$value" | tr -d '\n\r')")" \
+    awk '
+        BEGIN { fm = 0; done = 0; p = ENVIRON["SB_PROP"]; v = ENVIRON["SB_VALUE"] }
         /^---$/ {
             fm++
             if (fm == 2 && !done) { print p ": \"" v "\""; done = 1 }
@@ -317,20 +337,23 @@ rebuild_session_md() {
         [ -n "$lineage" ] && body="$body
 
 $lineage"
-        write_session_md "$folder/session.md" "schema_version: \"2.0\"
+        # Every value a person can influence is escaped. This is the one writer
+        # nothing rewrites afterwards, so an unescaped quote here leaves the note
+        # unparseable for the rest of the session rather than for one hop.
+        write_session_md "$folder/session.md" "schema_version: \"2.1\"
 session_id: \"$session_id\"
 date: $date_dir
-project: \"$project\"
-cwd: \"$cwd\"
-git_branch: \"$branch\"
+project: \"$(yaml_escape "$project")\"
+cwd: \"$(yaml_escape "$cwd")\"
+git_branch: \"$(yaml_escape "$branch")\"
 started_at: $started
 docs_path: \"_sessions/$date_dir/$session_id/docs\"
-forked_from: \"$forked\"
-forked_from_name: \"$forked_name\"
+forked_from: \"$(yaml_escape "$forked")\"
+forked_from_name: \"$(yaml_escape "$forked_name")\"
 delegated_by: \"\"
 delegated_by_name: \"\"
-transcript_source: \"$transcript\"
-session_name: \"$title\"
+transcript_source: \"$(yaml_escape "$transcript")\"
+session_name: \"$(yaml_escape "$title")\"
 ended_at:
 duration_seconds:
 summary:
@@ -341,6 +364,7 @@ tags:" "$body"
 }
 
 export -f yaml_escape
+export -f yaml_unescape
 export -f read_frontmatter_prop
 export -f read_frontmatter_list
 export -f set_frontmatter_prop

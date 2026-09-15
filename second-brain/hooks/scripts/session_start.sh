@@ -10,15 +10,18 @@
 # request is made once rather than on every later start.
 
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
-CWD=$(echo "$INPUT" | jq -r '.cwd')
-TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
-# `source` distinguishes a genuine launch from a resume, a fork, a /clear or a
-# compaction, and every decision below turns on it. `session_title` carries the
-# name from --name or /rename, which removes the old race against a transcript
-# that is documented to lag.
-SOURCE=$(echo "$INPUT" | jq -r '.source // empty')
-SESSION_TITLE=$(echo "$INPUT" | jq -r '.session_title // empty')
+# One jq pass for all five fields. `source` distinguishes a genuine launch from a
+# resume, a fork, a /clear or a compaction, and every decision below turns on it.
+# `session_title` carries the name from --name or /rename, which removes the old
+# race against a transcript that is documented to lag.
+{
+    IFS= read -r SESSION_ID
+    IFS= read -r CWD
+    IFS= read -r TRANSCRIPT_PATH
+    IFS= read -r SOURCE
+    IFS= read -r SESSION_TITLE
+} < <(echo "$INPUT" | jq -r '.session_id // "", .cwd // "", .transcript_path // "",
+                             .source // "", .session_title // ""')
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,9 +67,16 @@ Run this command to configure:
     exit 0
 fi
 
-# Session folder setup
-TODAY=$(date +%Y-%m-%d)
-SESSION_FOLDER="$KB_PATH/_sessions/$TODAY/$SESSION_ID"
+# An existing folder is authoritative about which day the session belongs to.
+# Assuming today instead meant a /clear after midnight, or a reused --session-id,
+# checked a path that was not the session's folder: the "write only when absent"
+# guard below saw nothing, a second blank note appeared under today, and the note
+# holding the real metadata was orphaned. The other three hooks already resolve.
+SESSION_FOLDER=$(resolve_session_folder "$KB_PATH" "$SESSION_ID")
+if [ -z "$SESSION_FOLDER" ]; then
+    SESSION_FOLDER="$KB_PATH/_sessions/$(date +%Y-%m-%d)/$SESSION_ID"
+fi
+DATE_DIR=$(basename "$(dirname "$SESSION_FOLDER")")
 DOCS_PATH="$SESSION_FOLDER/docs"
 SESSION_MD="$SESSION_FOLDER/session.md"
 mkdir -p "$DOCS_PATH"
@@ -83,6 +93,17 @@ DELEGATED_BY_NAME=""
 if [ "$SOURCE" = "startup" ]; then
     DELEGATED_BY="${SECOND_BRAIN_DELEGATED_BY:-}"
     DELEGATED_BY_NAME="${SECOND_BRAIN_DELEGATED_BY_NAME:-}"
+fi
+
+# Resolved here rather than inside the note-creation branch below, because the
+# marker exists only for this one process: if the note already exists, nothing
+# later can recover the launcher's name, and the end hook has no marker to read.
+LAUNCHER_FOLDER=""
+if [ -n "$DELEGATED_BY" ]; then
+    LAUNCHER_FOLDER=$(resolve_session_folder "$KB_PATH" "$DELEGATED_BY")
+    if [ -n "$LAUNCHER_FOLDER" ] && [ -z "$DELEGATED_BY_NAME" ]; then
+        DELEGATED_BY_NAME=$(read_frontmatter_prop "$LAUNCHER_FOLDER/session.md" "session_name")
+    fi
 fi
 
 # Write the note only when it is absent. This hook also fires for /clear and for
@@ -112,19 +133,17 @@ if [ ! -f "$SESSION_MD" ]; then
     # source leaves them untagged rather than falling through to the model: a
     # derivation request would land in the middle of a fork's conversation or on
     # top of a delegate's first instruction.
+    # A session can be both forked and declared-delegated, so both names are
+    # resolved; the fork's parent is the one metadata is inherited from, being the
+    # conversation this one continues.
     FORKED_FROM_NAME=""
     INHERIT_FROM=""
     if [ -n "$FORKED_FROM" ]; then
         INHERIT_FROM=$(resolve_session_folder "$KB_PATH" "$FORKED_FROM")
         [ -n "$INHERIT_FROM" ] && FORKED_FROM_NAME=$(read_frontmatter_prop \
             "$INHERIT_FROM/session.md" "session_name")
-    elif [ -n "$DELEGATED_BY" ]; then
-        INHERIT_FROM=$(resolve_session_folder "$KB_PATH" "$DELEGATED_BY")
-        if [ -n "$INHERIT_FROM" ] && [ -z "$DELEGATED_BY_NAME" ]; then
-            DELEGATED_BY_NAME=$(read_frontmatter_prop \
-                "$INHERIT_FROM/session.md" "session_name")
-        fi
     fi
+    [ -n "$INHERIT_FROM" ] || INHERIT_FROM="$LAUNCHER_FOLDER"
 
     INHERITED_TAGS=""
     if [ -n "$INHERIT_FROM" ] && [ -f "$INHERIT_FROM/session.md" ]; then
@@ -145,14 +164,14 @@ if [ ! -f "$SESSION_MD" ]; then
 
     # Create session.md with full frontmatter in one atomic filesystem write.
     # Bypasses Obsidian CLI for reliability — CLI create can fail silently.
-    FRONTMATTER="schema_version: \"2.0\"
+    FRONTMATTER="schema_version: \"2.1\"
 session_id: \"$SESSION_ID\"
-date: $TODAY
+date: $DATE_DIR
 project: \"$(yaml_escape "$PROJECT")\"
 cwd: \"$(yaml_escape "$CWD")\"
 git_branch: \"$(yaml_escape "$GIT_BRANCH")\"
 started_at: $STARTED_AT
-docs_path: \"_sessions/$TODAY/$SESSION_ID/docs\"
+docs_path: \"_sessions/$DATE_DIR/$SESSION_ID/docs\"
 forked_from: \"$(yaml_escape "$FORKED_FROM")\"
 forked_from_name: \"$(yaml_escape "$FORKED_FROM_NAME")\"
 delegated_by: \"$(yaml_escape "$DELEGATED_BY")\"
@@ -176,6 +195,16 @@ $LINEAGE"
     write_session_md "$SESSION_MD" "$FRONTMATTER" "$BODY"
 fi
 
+# Declared lineage is recorded even when the note already existed, because the
+# marker lives for this process only. A note rebuilt at an earlier resume, or a
+# session restarted under the same id, would otherwise lose the relationship for
+# good: nothing downstream can rediscover it and the end hook has no marker.
+if [ -n "$DELEGATED_BY" ] \
+   && [ -z "$(read_frontmatter_prop "$SESSION_MD" "delegated_by")" ]; then
+    set_frontmatter_prop "$SESSION_MD" "delegated_by" "$DELEGATED_BY"
+    set_frontmatter_prop "$SESSION_MD" "delegated_by_name" "$DELEGATED_BY_NAME"
+fi
+
 # A delegate whose launcher passed no name is named here, which is its only
 # chance: no later event carries a name for a session that never had one.
 EMIT_TITLE=""
@@ -185,27 +214,29 @@ if [ -z "$SESSION_TITLE" ] && [ -n "$DELEGATED_BY" ] \
     set_frontmatter_prop "$SESSION_MD" "session_name" "$EMIT_TITLE"
 fi
 
-# Name the enclosing terminal container as soon as the name is known. The name
-# is on stdin at startup, so waiting for a resume or a hand-run skill left a
-# freshly launched session sitting in an unlabelled pane for its whole first life.
-rename_terminal_window "$(read_frontmatter_prop "$SESSION_MD" "session_name")"
+SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 
-# ── Ask the model for what cannot be derived mechanically ─────────────────────
-# Tags describe the work, which the name only hints at, so they are the model's
-# to choose. The gate is narrow on purpose: a genuine launch, no declared
-# launcher, no parent, a name to reason from, and no stamp from a previous start.
+# Name the enclosing terminal container as soon as the name is known, which is
+# what a launch now provides. Only on a genuine startup: a fork arrives carrying
+# its parent's title, and renaming there would take the parent's Herdr agent name
+# away from the session still using it.
+[ "$SOURCE" = "startup" ] && rename_terminal_window "$SESSION_NAME"
+
+# ââ Ask the model for what cannot be derived mechanically âââââââââââââââââââââ
+# Tags describe the work, which the name only hints at, so they are the model's to
+# choose. The gate is narrow on purpose: a genuine launch, no declared launcher, no
+# parent, a name to reason from, no tags already, and no stamp from a previous
+# start. The tags check matters for a session restarted under its own id, whose
+# note already carries inherited tags the instruction would otherwise contradict.
 INSTRUCTION=""
+STAMP_NOW=no
 if [ "$SOURCE" = "startup" ] \
    && [ -z "$DELEGATED_BY" ] \
    && [ -z "$(read_frontmatter_prop "$SESSION_MD" "forked_from")" ] \
-   && [ -n "$(read_frontmatter_prop "$SESSION_MD" "session_name")" ] \
+   && [ -n "$SESSION_NAME" ] \
+   && [ -z "$(read_frontmatter_list "$SESSION_MD" "tags")" ] \
    && [ -z "$(read_frontmatter_prop "$SESSION_MD" "metadata_requested_at")" ]; then
-    # Stamped at the moment the request is made, not when it is carried out, so a
-    # session whose model never ran the skill is asked once and not again.
-    set_frontmatter_prop "$SESSION_MD" "metadata_requested_at" \
-        "$(date -u +%Y-%m-%dT%H:%M:%S)"
-
-    SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
+    STAMP_NOW=yes
     PROJECT_NOW=$(read_frontmatter_prop "$SESSION_MD" "project")
     TAG_HINTS=$(project_default_tags "$CWD")
 
@@ -224,3 +255,11 @@ emit_output "Session folder created: $SESSION_FOLDER
 Session docs path: $DOCS_PATH
 
 $DOCS_GUIDANCE$INSTRUCTION" "$EMIT_TITLE"
+
+# Stamped only after the request has been written out. Stamping first spent the
+# one-shot on any later failure — a timeout, a jq error, a full disk — and since
+# startup fires once per session id, the request could then never be made again.
+if [ "$STAMP_NOW" = "yes" ]; then
+    set_frontmatter_prop "$SESSION_MD" "metadata_requested_at" \
+        "$(date -u +%Y-%m-%dT%H:%M:%S)"
+fi

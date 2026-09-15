@@ -71,7 +71,9 @@ F1="$KB/_sessions/$TODAY/$S1"; M1="$F1/session.md"
 chk "date is today" "$(prop "$M1" date)" "$TODAY"
 chk "unmapped cwd leaves project empty" "$(prop "$M1" project)" ""
 chk "forked_from empty for a new session" "$(prop "$M1" forked_from)" ""
-[ -z "$(find /tmp -maxdepth 1 -name 'second-brain-startup-*' -print -quit)" ] && ok "no rendezvous key written" || no "no rendezvous key written"
+# /private/tmp, not /tmp: on macOS /tmp is a symlink and find does not descend it,
+# so this assertion passed no matter what the hook wrote.
+[ -z "$(find /private/tmp -maxdepth 1 -name 'second-brain-startup-*' -print -quit 2>/dev/null)" ] && ok "no rendezvous key written" || no "no rendezvous key written"
 
 echo "== 2. /clear does not discard user metadata =="
 sed -i '' 's/^summary:$/summary: "kept summary"/' "$M1"
@@ -240,7 +242,134 @@ run session_end.sh "{\"transcript_path\":\"$H/.claude/projects/proj/$SC.jsonl\",
 chk "delegated_by survives the end rewrite"      "$(prop "$MC" delegated_by)" "$S9"
 chk "delegated_by_name survives the end rewrite" "$(prop "$MC" delegated_by_name)" "named-one"
 
+echo "== 16. a person-chosen name survives every writer, escaped exactly once =="
+HELP="$PLUGIN/skills/common/obsidian_helpers.sh"
+NASTY='fix the "auth" bug'
+# The round trip is the property that matters: whatever a reader returns must be
+# what a writer can store again without changing it.
+chk "escape then unescape is the identity" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; yaml_unescape "$(yaml_escape "$2")"' _ "$HELP" "$NASTY")" "$NASTY"
+T16="$ROOT/nasty.md"
+printf -- '---\nsession_name: "%s"\nsummary: ""\ntags:\n---\n\n# body\n' "$(printf '%s' "$NASTY" | sed 's/"/\\"/g')" > "$T16"
+chk "reading a quoted scalar returns the plain value" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_prop "$2" session_name' _ "$HELP" "$T16")" "$NASTY"
+# set_frontmatter_prop must not let awk re-interpret the value it is given.
+bash -c 'source "$1" >/dev/null 2>&1; set_frontmatter_prop "$2" summary "$3"' _ "$HELP" "$T16" "$NASTY"
+chk "set_frontmatter_prop round-trips a quote" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_prop "$2" summary' _ "$HELP" "$T16")" "$NASTY"
+# The round trip alone cannot tell escaping from doing nothing at all, so assert
+# the stored form too: the quote must be backslashed on disk.
+chk "and stores it escaped on disk" "$(grep -c '^summary: "fix the \\"auth\\" bug"$' "$T16")" "1"
+INJ='evil
+summary: pwned'
+bash -c 'source "$1" >/dev/null 2>&1; set_frontmatter_prop "$2" session_name "$3"' _ "$HELP" "$T16" "$INJ"
+chk "a newline in a value cannot inject a second key" \
+    "$(sed -n '/^---$/,/^---$/p' "$T16" | grep -c '^summary: pwned$')" "0"
+chk "frontmatter is still one block" "$(grep -c '^---$' "$T16")" "2"
+
+echo "== 17. the helpers load under zsh, which is what the skill documents =="
+if command -v zsh >/dev/null 2>&1; then
+    chk "sourcing from an unrelated cwd defines the resolver" \
+        "$(cd /tmp && zsh -c "source '$HELP' >/dev/null 2>&1; type resolve_project >/dev/null 2>&1 && echo yes || echo no")" "yes"
+    chk "and does not error on the relative source" \
+        "$(cd /tmp && zsh -c "source '$HELP' 2>&1 >/dev/null" | grep -c 'no such file')" "0"
+else
+    ok "zsh absent, skipped"; ok "zsh absent, skipped"
+fi
+
+echo "== 18. a more specific mapping beats a wildcard that also matches =="
+mkdir -p "$KB/projects/broad" "$KB/projects/narrow"
+CFG18="$ROOT/cfg18"; mkdir -p "$CFG18/.claude/plugins/config/second-brain"
+jq -n --arg kb "$KB" '{knowledge_bank_path:$kb,project_domains:{"/w/a*":{domain:"broad"},"/w/ab":{domain:"narrow"}}}' \
+    > "$CFG18/.claude/plugins/config/second-brain/config.json"
+rp18(){ env HOME="$CFG18" bash -c 'source "$1"; resolve_project "$2"' _ "$RP" "$1"; }
+chk "exact key beats a wildcard"          "$(rp18 /w/ab)"      "narrow"
+chk "child of the exact key beats it too" "$(rp18 /w/ab/deep)" "narrow"
+chk "the wildcard still covers siblings"  "$(rp18 /w/az)"      "broad"
+
+echo "== 19. a mapping the tool accepts is a mapping that resolves =="
+SK19(){ env HOME="$CFG18" "$SK" "$@" >/dev/null 2>&1; }
+SK19 --set-domain /tmp/notags broad && ok "--set-domain works without tags" || no "--set-domain works without tags"
+chk "and the tagless entry resolves"      "$(rp18 /tmp/notags)" "broad"
+SK19 --set-domain /tmp/slash/ broad t && ok "a tab-completed trailing slash is accepted" || no "a tab-completed trailing slash is accepted"
+chk "a trailing slash still resolves"     "$(rp18 /tmp/slash)"     "broad"
+chk "and so do its children"              "$(rp18 /tmp/slash/sub)" "broad"
+SK19 --set-domain '/tmp/mid*dle' broad && no "a non-final * is refused" || ok "a non-final * is refused"
+chk "a regex-ish value does not validate as a domain" \
+    "$(env HOME="$CFG18" bash -c 'source "$1"; validate_project "b.oad"' _ "$RP")" ""
+
+echo "== 20. --set cannot clobber keys that have their own writer =="
+SK20(){ env HOME="$CFG18" "$SK" "$@" >/dev/null 2>&1; }
+C20="$CFG18/.claude/plugins/config/second-brain/config.json"
+SK20 --set knowledge_bank_path /nonexistent && no "--set refuses the kb path" || ok "--set refuses the kb path"
+chk "the kb path is untouched"   "$(jq -r '.knowledge_bank_path' "$C20")" "$KB"
+SK20 --set project_domains oops && no "--set refuses the domain map" || ok "--set refuses the domain map"
+chk "the domain map is still an object" "$(jq -r '.project_domains|type' "$C20")" "object"
+
+echo "== 21. the one-shot request is not consumed unless it was made =="
+S21=77777777-7777-7777-7777-777777777771
+O=$(start $S21 startup named-21 /tmp/mapped); M21="$KB/_sessions/$TODAY/$S21/session.md"
+chk "the request was emitted"        "$(inj "$O")" yes
+chk "and only then stamped"          "$(has "$(prop "$M21" metadata_requested_at)")" yes
+# A session that already carries tags has nothing to derive.
+S22=77777777-7777-7777-7777-777777777772
+start $S22 startup named-22 /tmp/mapped >/dev/null
+M22="$KB/_sessions/$TODAY/$S22/session.md"
+sed -i '' 's/^metadata_requested_at: .*//' "$M22"; ins_after "$M22" "tags:"
+O=$(start $S22 startup named-22 /tmp/mapped)
+chk "an already-tagged session is not asked" "$(inj "$O")" no
+
+echo "== 22. a named session is still collectable as a ghost =="
+GL="$PLUGIN/skills/kb-lint/scripts/lint_ghost_folders.sh"
+GKB="$ROOT/ghostkb"; mkdir -p "$GKB/_sessions/2026-01-01/g1111111-1111-1111-1111-111111111111"
+printf -- '---\nsession_id: "g1111111-1111-1111-1111-111111111111"\ndate: 2026-01-01\nsession_name: "refactor-auth"\nended_at:\nsummary:\ntranscript_source:\ntags:\n---\n\n# Session\n' \
+    > "$GKB/_sessions/2026-01-01/g1111111-1111-1111-1111-111111111111/session.md"
+# The script reports its count on stderr and the findings on stdout.
+chk "a named but empty folder is reported" \
+    "$(env HOME="$H" bash "$GL" "$GKB" 0 2>&1 >/dev/null | sed -n 's/^TOTAL_GHOSTS=//p')" "1"
+chk "and it is named in the findings" \
+    "$(env HOME="$H" bash "$GL" "$GKB" 0 2>/dev/null | grep -c 'g1111111')" "1"
+
+echo "== 23. the terminal is named on a launch, never on a fork =="
+# A stub herdr on PATH records what would have been renamed. A fork arrives
+# carrying its parent's title, so renaming there would take the parent's agent
+# name away from the session still using it.
+mkdir -p "$H/.local/bin"
+cat > "$H/.local/bin/herdr" << 'STUB'
+#!/bin/bash
+echo "$*" >> "$HOME/herdr-calls.log"
+exit 0
+STUB
+chmod +x "$H/.local/bin/herdr"
+hstart(){ # $1=id $2=source $3=title
+    local t="$H/.claude/projects/proj/$1.jsonl"
+    [ -f "$t" ] || printf '{"type":"user","cwd":"/tmp/mapped"}\n' > "$t"
+    printf '{"session_id":"%s","cwd":"/tmp/mapped","transcript_path":"%s","source":"%s","session_title":"%s"}' \
+        "$1" "$t" "$2" "$3" \
+      | env HOME="$H" PATH="$H/.local/bin:$PATH" HERDR_PANE_ID=stub:p1 TMUX_PANE= \
+        "$PLUGIN/hooks/scripts/session_start.sh" >/dev/null 2>&1
+}
+: > "$H/herdr-calls.log"
+hstart 66666666-6666-6666-6666-66666666aaa1 startup launch-named
+chk "a launch renames the pane"  "$(grep -c 'pane rename stub:p1 launch-named' "$H/herdr-calls.log")" "1"
+: > "$H/herdr-calls.log"
+FK=66666666-6666-6666-6666-66666666aaa2
+fork_transcript $FK "$KB/_sessions/$TODAY/$S9"
+hstart $FK fork inherited-parent-title
+chk "a fork renames nothing"     "$(grep -c 'rename' "$H/herdr-calls.log")" "0"
+: > "$H/herdr-calls.log"
+hstart 66666666-6666-6666-6666-66666666aaa1 clear launch-named
+chk "a /clear renames nothing"   "$(grep -c 'rename' "$H/herdr-calls.log")" "0"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
+# The hooks cache a folder path per session id under /tmp, and the ids here are
+# fixed, so leaving those files behind lets one run hand a stale path to the next.
+# Matched on content, not on the id, so a real session's cache file is never
+# touched even if it happens to share an id with a fixture.
+for cache_file in /private/tmp/second-brain-folder-*; do
+    [ -f "$cache_file" ] || continue
+    case "$(cat "$cache_file" 2>/dev/null)" in "$ROOT"/*) rm -f "$cache_file" ;; esac
+done
 rm -rf "$ROOT"
 [ "$FAIL" -eq 0 ]

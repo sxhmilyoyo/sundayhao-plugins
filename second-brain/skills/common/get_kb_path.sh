@@ -8,8 +8,10 @@
 #   source get_kb_path.sh
 #   KB_PATH=$(get_kb_path)
 
-# Plugin config file location
-PLUGIN_CONFIG_FILE="${HOME}/.claude/plugins/config/second-brain/config.json"
+# Plugin config file location. Exported because the functions that read it are
+# exported too, and a child shell that inherited them without the path resolved
+# every project to empty.
+export PLUGIN_CONFIG_FILE="${HOME}/.claude/plugins/config/second-brain/config.json"
 
 get_kb_path() {
     # Check if config file exists

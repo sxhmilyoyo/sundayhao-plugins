@@ -68,14 +68,25 @@ fi
 # Preserve every property this hook does not manage, verbatim, so properties
 # written by skills (recap_* and anything added later) survive the rewrite.
 KNOWN_PROPS="schema_version session_id date project cwd git_branch started_at docs_path forked_from forked_from_name delegated_by delegated_by_name transcript_source session_name ended_at duration_seconds summary tags"
+# Continuation lines are carried with the key above them. Filtering to key lines
+# alone kept an unknown list property as a bare null key and silently deleted
+# every one of its items, which is exactly the preservation ADR-0002 promises.
 EXTRA_YAML=""
 if [ -f "$SESSION_MD" ]; then
-    while IFS= read -r fm_line; do
-        fm_key="${fm_line%%:*}"
-        case " $KNOWN_PROPS " in *" $fm_key "*) continue ;; esac
-        EXTRA_YAML="${EXTRA_YAML}${fm_line}
+    EXTRA_YAML=$(SB_KNOWN=" $KNOWN_PROPS " awk '
+        BEGIN { fm = 0; keep = 0; known = ENVIRON["SB_KNOWN"] }
+        /^---$/ { fm++; if (fm == 2) exit; next }
+        fm != 1 { next }
+        /^[a-z_][a-z0-9_]*:/ {
+            key = $0; sub(/:.*/, "", key)
+            keep = (index(known, " " key " ") == 0)
+            if (keep) print
+            next
+        }
+        keep { print }
+    ' "$SESSION_MD")
+    [ -n "$EXTRA_YAML" ] && EXTRA_YAML="$EXTRA_YAML
 "
-    done < <(sed -n '/^---$/,/^---$/p' "$SESSION_MD" | grep -E '^[a-z_][a-z0-9_]*:')
 fi
 
 # ── 2. Compute end-time metadata ─────────────────────────────────────
@@ -110,14 +121,17 @@ if [ -n "$CWD" ]; then
 fi
 
 # ── 4. Build hub body ────────────────────────────────────────────────
-BODY="# Session: $SESSION_ID"
+BODY=""
 
 # Lineage is regenerated from the properties rather than preserved, because this
 # hook rebuilds the whole body: a link written at registration would otherwise be
 # deleted here, and a fork whose parent was detected late would never get one.
+# It is kept out of BODY because BODY is expanded with printf %b below, and a
+# person-chosen name carrying a backslash escape would be interpreted there: a
+# `\c` truncates the body and takes the ## Transcript pointer with it, which under
+# the reference-only architecture is the only pointer to the conversation.
 LINEAGE=$(session_lineage_body "$KB_PATH" "$FORKED_FROM" "$FORKED_FROM_NAME" \
     "$DELEGATED_BY" "$DELEGATED_BY_NAME")
-[ -n "$LINEAGE" ] && BODY="$BODY\n\n$LINEAGE"
 
 # Generated Artifacts (docs/*.md)
 DOCS_DIR="$SESSION_FOLDER/docs"
@@ -185,7 +199,11 @@ summary: \"$(yaml_escape "${SUMMARY:-}")\"
 ${EXTRA_YAML}tags:
 ${TAGS_YAML}"
 
-RESOLVED_BODY=$(printf '%b' "$BODY")
+RESOLVED_BODY="# Session: $SESSION_ID"
+[ -n "$LINEAGE" ] && RESOLVED_BODY="$RESOLVED_BODY
+
+$LINEAGE"
+RESOLVED_BODY="$RESOLVED_BODY$(printf '%b' "$BODY")"
 write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "$RESOLVED_BODY"
 
 # ── Output ──────────────────────────────────────────────────────────────

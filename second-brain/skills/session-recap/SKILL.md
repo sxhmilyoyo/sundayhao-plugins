@@ -132,16 +132,23 @@ fi
 
 #### 1.2 Detect Project
 
-If session.md `project` property is set (non-empty) → use it directly.
+`project` names a knowledge-bank domain, one of the folders under `projects/`
+([ADR-0004](../../../docs/adr/0004-project-names-a-knowledge-bank-domain.md)). Non-empty is not the
+same as resolved: notes written before that decision hold a directory basename, and hundreds of them
+exist. Validate, never trust:
 
-Otherwise → fall back to transcript parsing:
 ```bash
-./scripts/parse_transcript.sh "$TRANSCRIPT" project
+source ../common/resolve_project.sh
+PROJECT=$(validate_project "$(read_frontmatter_prop "$SESSION_FOLDER/session.md" project)")
+[ -n "$PROJECT" ] || PROJECT=$(resolve_project "$CWD")
 ```
 
-| Path Pattern | Project | KB Location |
-|--------------|---------|-------------|
-| `/.claude/` | cc | `projects/cc/` |
+If that leaves `PROJECT` empty, **stop and ask which domain the work belongs to.** Do not fall back to
+`./scripts/parse_transcript.sh project`: it returns `unknown` when nothing matches, and filing under
+`projects/unknown/` invents the domain ADR-0004 exists to keep visibly missing. A basename like `data`
+or `src` would do the same, one directory at a time.
+
+`list_project_domains` prints the valid set when you need to offer choices.
 
 #### 1.3 Extract Session Facts
 

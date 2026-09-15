@@ -65,6 +65,19 @@ set_key() {
                     ;;
             esac
             ;;
+        # These have their own validating writers, and --set stores every value as
+        # a string. Setting the path here would skip the directory check and leave
+        # every hook reporting an unconfigured bank; setting the map here would
+        # replace the whole object with a scalar, after which every directory
+        # resolves to empty with nothing to show why.
+        knowledge_bank_path)
+            echo -e "${RED}ERROR: use --configure to set the knowledge bank path${NC}" >&2
+            exit 1
+            ;;
+        project_domains)
+            echo -e "${RED}ERROR: use --set-domain <prefix> <domain> [tags] for the domain map${NC}" >&2
+            exit 1
+            ;;
     esac
 
     write_config_keys --arg k "$key" --arg v "$value" '.[$k] = $v'
@@ -82,6 +95,24 @@ set_domain() {
         exit 1
     fi
 
+    # Shell completion appends a slash to every directory, so this is the likeliest
+    # way to type a prefix. Normalise rather than store a key that matches nothing
+    # and is indistinguishable afterwards from never having been mapped.
+    while [ "${prefix%/}" != "$prefix" ] && [ "$prefix" != "/" ]; do prefix="${prefix%/}"; done
+
+    # Only a trailing * is a wildcard. Anything else would be stored, listed by
+    # --show and matched literally, so refuse it instead of accepting a mapping
+    # that can never fire.
+    case "$prefix" in
+        *'*'*)
+            if [ "${prefix%\*}" != "${prefix%%\**}" ]; then
+                echo -e "${RED}ERROR: * is only supported at the end of a prefix${NC}" >&2
+                echo "Got: $prefix" >&2
+                exit 1
+            fi
+            ;;
+    esac
+
     # The domain must already exist in the bank. A typo here would resolve to
     # empty at every read, which looks like an unmapped directory rather than a
     # mistake, so it is refused up front.
@@ -93,7 +124,11 @@ set_domain() {
         exit 1
     fi
 
-    tags_json=$(printf '%s' "$tags" | jq -R 'split(",") | map(gsub("^ +| +$";"")) | map(select(length > 0))')
+    # -n with --arg, not piped input: an empty tag list produced no input at all,
+    # so jq emitted nothing and --argjson was handed invalid JSON, which made the
+    # documented two-argument form fail every time.
+    tags_json=$(jq -cn --arg s "$tags" \
+        '$s | split(",") | map(gsub("^ +| +$";"")) | map(select(length > 0))')
 
     write_config_keys --arg p "$prefix" --arg d "$domain" --argjson t "$tags_json" \
         '.project_domains = ((.project_domains // {}) + { ($p): ({domain: $d}

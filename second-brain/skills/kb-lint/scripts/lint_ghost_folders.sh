@@ -27,12 +27,19 @@ for folder in "$KB_PATH"/_sessions/*/*; do
     # A folder with no note at all is a different finding, not a ghost.
     [ -f "$note" ] || continue
 
-    # Any of these means work happened here: files, documents, an end time, a
-    # name, or a summary.
+    # Any of these means work happened here: files, documents, an end time, or a
+    # summary.
+    #
+    # session_name is deliberately NOT one of them. It was, while only a finished
+    # conversation could set it; since plugin 2.12.0 the start hook writes it at
+    # registration from the launch name, so treating it as evidence exempted every
+    # named session from this check — including the failed launch ADR-0005 cites,
+    # which is exactly the folder that should be collected. Hooks never delete a
+    # folder (ADR-0001), so this check is the only collector and a wrong exemption
+    # means the folder accumulates permanently.
     [ -n "$(find "$folder" -mindepth 1 -maxdepth 1 ! -name session.md ! -name docs ! -name .DS_Store -print -quit 2>/dev/null)" ] && continue
     [ -n "$(find "$folder/docs" -mindepth 1 -print -quit 2>/dev/null)" ] && continue
     grep -qE '^ended_at: *[^[:space:]]' "$note" && continue
-    grep -qE '^session_name: *"?[^"[:space:]]' "$note" && continue
     grep -qE '^summary: *"?[^"[:space:]]' "$note" && continue
 
     # Age gate, so a session that started moments ago is never mistaken for a ghost.

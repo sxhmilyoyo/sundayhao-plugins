@@ -40,6 +40,30 @@ Session metadata is now seeded when a session starts instead of waiting to be as
 ### Removed
 - `skills/common/detect_project.sh`. Its `basename "$cwd"` was the single reason a session note ever recorded `data`, `src` or a bare home-directory name as a project.
 
+### Fixed after review
+
+A code review of the above found fifteen defects, each reproduced before being fixed. The ones worth
+knowing about:
+
+- **A quote in a session name could leave a whole note unparseable.** `read_frontmatter_prop` stripped the surrounding quotes but not the escaping inside them, so a value read off a note and written back was escaped twice. Seeding `session_name` from the launch name made this reachable on a session's first exit rather than never. There is now a `yaml_unescape` inverse and reading applies it, so a value round-trips unchanged however many times it passes through.
+- **`set_frontmatter_prop` handed its value to `awk -v`,** which processes escape sequences: a `\"` came back out as a bare quote, and a `\n` became a real newline that split the scalar and injected a second YAML key. The value now travels through the environment, and newlines are stripped.
+- **`rebuild_session_md` wrote every value unescaped.** It is the one writer nothing rewrites afterwards, so a quote there left a note broken for the rest of the session rather than for one hop.
+- **The helpers did not load under zsh,** which is the shell the session-manager skill is documented to source them from. `BASH_SOURCE` is unset there, so the resolver was looked for in the caller's directory and silently never defined. Both files now fall back to `$0`.
+- **Seeding a name at registration exempted every named session from the ghost-folder check,** which treated a non-empty `session_name` as proof that work happened. That inference was sound only while a finished conversation was the only thing that could set it. Since hooks never delete a folder, kb-lint is the only collector, so a failed launch would have accumulated permanently. The check no longer looks at the name; the transcript, the documents, the end time and the summary decide.
+- **The start hook assumed the session's folder was under today's date** instead of resolving it, which the other three hooks already do. A `/clear` after midnight, or a reused `--session-id`, therefore checked a path that was not the session's folder: the "write only when absent" guard saw nothing, a second blank note appeared, and the note holding the real metadata was orphaned.
+- **The one-shot derivation request could be spent without being made.** The stamp was written before the instruction was emitted, so a timeout or a jq failure consumed it, and since `startup` fires once per session id nothing could ask again. It is now written last. The gate also checks that the note has no tags, which the instruction had been asserting without verifying.
+- **Declared delegation was recorded in one narrow window.** The launcher's name was resolved only while creating a note, so a session whose note already existed lost the relationship for good: the marker is gone by exit and nothing downstream can rediscover it. A session that is both forked and delegated now records both.
+- **A wildcard mapping outranked a more specific exact one,** because specificity counted the trailing `*`. Since `project` decides where distilled knowledge is filed, that filed a whole tree under the wrong domain silently.
+- **Two mappings the tool accepted could never match anything**: a prefix with a trailing slash, which is what shell completion produces, and a `*` anywhere but the end. The first is now normalised and the second refused. `--set-domain` without tags failed outright, which was the form the help text and the README both documented.
+- **`--set` could overwrite keys with their own validated writers.** Setting the knowledge bank path through it skipped the directory check and left every hook reporting an unconfigured bank; setting the domain map replaced the object with a string, after which every directory resolved to empty with nothing to show why. Both are now refused with a pointer to the right command.
+- **The unknown-property preserve loop dropped list values.** It kept only key lines, so an unknown list property survived as a bare null key with every item deleted. That is exactly the preservation ADR-0002 promises. Continuation lines now travel with their key.
+- **Person-chosen names reached a `printf '%b'`.** A name containing `\c` truncated the note body and took the `## Transcript` pointer with it, which under the reference-only architecture is the only pointer to the conversation. The lineage section is assembled outside that expansion.
+- **`validate_project` matched its argument as a regular expression,** so a legacy basename like `a.x` validated against the domain `a2x`.
+- **`PLUGIN_CONFIG_FILE` was not exported** although the functions reading it were, so a child shell resolved every project to empty. `resolve_project.sh` also no longer clobbers a caller's `SCRIPT_DIR`.
+- **ccfind showed nothing for an unnamed session** in an unmapped directory, since its label fell back to `project`. It now falls back to the directory the session ran in.
+- **`schema_version` is `2.1`** on newly written notes, four properties having been added. Existing notes keep the version they were written with.
+- **The regression suite gave false confidence.** It passed with the escaping made a no-op, with the fork detector's hardening removed, and with the terminal rename unscoped. Those three are now covered, along with the review's own findings, taking it from 74 assertions to 104. Two hygiene bugs fixed: one assertion was vacuous because `/tmp` is a symlink on macOS and `find` does not descend it, and the suite left per-session cache files in `/tmp` that could hand a stale path to the next run.
+
 ## [2.11.0] - 2026-09-14
 
 ### Changed

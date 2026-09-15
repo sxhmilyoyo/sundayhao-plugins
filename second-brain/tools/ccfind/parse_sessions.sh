@@ -81,8 +81,14 @@ function output_line() {
     d_date = (date_val == "") ? "-" : date_val
     d_tags = (tags == "") ? "-" : tags
 
-    # session_name first, fall back to project
+    # session_name first, then the domain, then the directory the session ran in.
+    # project names a knowledge-bank domain now and is empty for an unmapped
+    # directory, so without the third fallback an unnamed session showed nothing.
     d_label = (session_name != "") ? session_name : project
+    if (d_label == "") {
+        d_label = cwd
+        sub(/.*\//, "", d_label)
+    }
     if (d_label == "") d_label = "-"
 
     # Truncate for display

@@ -19,8 +19,10 @@
 # invented, and a legacy note holding a directory basename reads as unresolved
 # without every consumer having to know it predates this decision.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/get_kb_path.sh"
+# A private name, because callers of this file have their own SCRIPT_DIR, and
+# ${BASH_SOURCE[0]:-$0} because zsh sets only the latter for a sourced file.
+_SB_RP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "$_SB_RP_DIR/get_kb_path.sh"
 
 # The knowledge bank's domain set: one directory per domain under projects/.
 # The single source of truth every consumer validates against.
@@ -30,8 +32,10 @@ list_project_domains() {
     local kb_path="${1:-}"
     [ -n "$kb_path" ] || kb_path=$(get_kb_path 2>/dev/null) || return 0
     [ -d "$kb_path/projects" ] || return 0
-    find "$kb_path/projects" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; \
-        2>/dev/null | sort
+    # sed rather than -exec basename, which forks once per domain on a path this
+    # hook reads on every session start.
+    find "$kb_path/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+        | sed 's|.*/||' | sort
 }
 
 # Echo a project value only when it is a member of the domain set.
@@ -40,7 +44,9 @@ list_project_domains() {
 validate_project() {
     local value="$1" kb_path="${2:-}"
     [ -n "$value" ] || return 0
-    list_project_domains "$kb_path" | grep -qx -- "$value" && echo "$value"
+    # -F because the value is data, not a pattern: a legacy basename like `a.x`
+    # would otherwise match the domain `a2x` and read as resolved.
+    list_project_domains "$kb_path" | grep -qxF -- "$value" && echo "$value"
     return 0
 }
 
@@ -51,27 +57,45 @@ _domain_map_keys() {
     return 0
 }
 
-# The longest map key matching a working directory.
+# The most specific map key matching a working directory.
+#
+# Specificity is the length of the path the key actually constrains, so a
+# wildcard's trailing `*` does not count towards it. Without that, `/w/a*` scored
+# one character longer than its own stem and so outranked the strictly more
+# specific `/w/ab`, quietly filing that tree's knowledge under the broader
+# domain. A directory match also outranks a wildcard of equal reach, since it
+# names a real place rather than a family.
 # Args: $1=cwd
 # Returns: the matched key, or empty
 _match_domain_key() {
-    local cwd="$1" best="" best_len=0 key stem len
+    local cwd="$1" best="" best_len=-1 best_exact=0 key stem len exact
     [ -n "$cwd" ] || return 0
+    # Trailing slashes are stripped from both sides. A hook's cwd never has one,
+    # but shell completion appends one to every directory, so a key typed that way
+    # would match nothing and look exactly like an unmapped directory.
+    while [ "${cwd%/}" != "$cwd" ] && [ "$cwd" != "/" ]; do cwd="${cwd%/}"; done
     while IFS= read -r key; do
         [ -n "$key" ] || continue
         case "$key" in
             *'*')
                 stem="${key%\*}"
+                while [ "${stem%/}" != "$stem" ] && [ "$stem" != "/" ]; do stem="${stem%/}"; done
                 case "$cwd" in "$stem"*) ;; *) continue ;; esac
+                len=${#stem}; exact=0
                 ;;
             *)
-                if [ "$cwd" != "$key" ]; then
-                    case "$cwd" in "$key"/*) ;; *) continue ;; esac
+                stem="$key"
+                while [ "${stem%/}" != "$stem" ] && [ "$stem" != "/" ]; do stem="${stem%/}"; done
+                if [ "$cwd" != "$stem" ]; then
+                    case "$cwd" in "$stem"/*) ;; *) continue ;; esac
                 fi
+                len=${#stem}; exact=1
                 ;;
         esac
-        len=${#key}
-        if [ "$len" -gt "$best_len" ]; then best="$key"; best_len="$len"; fi
+        if [ "$len" -gt "$best_len" ] \
+           || { [ "$len" -eq "$best_len" ] && [ "$exact" -gt "$best_exact" ]; }; then
+            best="$key"; best_len="$len"; best_exact="$exact"
+        fi
     done < <(_domain_map_keys)
     echo "$best"
 }

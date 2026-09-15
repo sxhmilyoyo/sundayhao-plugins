@@ -6,16 +6,26 @@ they approve the result.
 
 ## 1. Load the vault's tags
 
-ccfind's cache holds one session per line with tags in field 5, comma-separated:
+Read them from the vault, which is where they actually live. `$KB` is the vault root, the part of the
+injected docs path above `_sessions/`:
 
 ```bash
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ccfind/sessions.tsv"
-cut -f5 "$CACHE" 2>/dev/null | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^-$' | grep -v '^$' | sort | uniq -c | sort -rn
+find "$KB" -name '*.md' -not -path '*/.obsidian/*' -print0 \
+  | xargs -0 awk 'FNR==1 { fm=0; in_tags=0 }
+      /^---$/ { fm++; next }
+      fm==1 && /^tags:/ { in_tags=1; next }
+      fm==1 && /^[a-z_]/ { in_tags=0 }
+      fm==1 && in_tags && /^ *- / { sub(/^ *- */, ""); print }' \
+  | sort | uniq -c | sort -rn
 ```
 
-The count matters as much as the tag: a tag used by twenty sessions is the canonical form, one used
-once is a candidate for retirement. If the cache is absent, fall back to the tags already on this
-session's note.
+The count matters as much as the tag: a tag used by twenty documents is the canonical form, one used
+once is a candidate for retirement.
+
+Do not substitute ccfind's cache for this. It is written only when someone runs that tool, it holds
+session tags alone, and its absence used to send this step to "the tags already on this session's
+note" — which in automatic mode is empty by definition, since having no tags is the condition that
+triggered the run. Every tag would then look new and nothing would ever be written.
 
 ## 2. Find each tag's canonical form
 

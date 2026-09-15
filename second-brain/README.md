@@ -118,8 +118,14 @@ Tag sessions while you work—no extra steps after the fact.
 
 | Property | Purpose | Example |
 |----------|---------|---------|
+| `session_name` | The session's name, kept in step with `/rename` | `refactor-auth` |
+| `project` | The knowledge-bank domain the work belongs to, or empty | `cc` |
 | `tags` | Freeform categorization | `brainstorming`, `debugging`, `refactor-auth` |
 | `summary` | One-line description | "Designed new auth flow for v2" |
+
+The name and the domain are filled in when the session starts, so running the skill is usually about
+tags and a summary. It never guesses a domain: an unmapped directory leaves `project` empty rather than
+recording the directory's own name.
 
 ### `ccfind` — Find and Resume Any Session
 
@@ -339,13 +345,13 @@ than a directory name standing in for a domain.
 
 ```bash
 # One directory tree
-skills/common/setup_kb_path.sh --set-domain /path/to/service aax aax
+<plugin-path>/skills/common/setup_kb_path.sh --set-domain /path/to/service aax aax
 
 # A whole family of sibling packages: a trailing * matches any deeper path
-skills/common/setup_kb_path.sh --set-domain '/path/to/Service*' aax aax
+<plugin-path>/skills/common/setup_kb_path.sh --set-domain '/path/to/Service*' aax aax
 
 # Review what is mapped
-skills/common/setup_kb_path.sh --show
+<plugin-path>/skills/common/setup_kb_path.sh --show
 ```
 
 The third argument is optional default tags, used only as hints when the plugin asks Claude to
@@ -366,7 +372,7 @@ once, early in the session. Nothing is asked twice: the request is recorded on t
 To start a session that records who launched it:
 
 ```bash
-skills/common/launch_delegate.sh review "Review the auth refactor on this branch"
+<plugin-path>/skills/common/launch_delegate.sh review "Review the auth refactor on this branch"
 ```
 
 Under Herdr this opens a pane and names the new session after its role and its launcher; elsewhere it
