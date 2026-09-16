@@ -39,6 +39,9 @@ USAGE
 
 MODE=""
 SUBJECT=""
+# Only --auto has a parent worth waiting for: it runs from the ending session's own hook,
+# so CLAUDE_PID is that session. Under --manual the invoking shell is not the subject.
+PARENT_PID=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --manual) MODE="manual" ;;
@@ -86,8 +89,13 @@ CHILD="$PLUGIN_ROOT/hooks/scripts/recap_child.sh"
 # passed that way outlives this recap: every later claude started in that pane would
 # register as a recap session and be stamped exempt at its own exit, losing its work.
 # %q throughout, because a vault path may contain a space or a quote.
-CMD=$(printf 'SECOND_BRAIN_RECAP_OF=%q SECOND_BRAIN_RECAP_NAME=%q SECOND_BRAIN_PLUGIN_ROOT=%q bash %q %q' \
-    "$SUBJECT" "$NAME" "$PLUGIN_ROOT" "$CHILD" "$SUBJECT")
+# SECOND_BRAIN_PARENT_PID travels too, and is empty under --manual because there is no
+# dying session to wait for. It is what the child's parent-exit wait reads, and Stage 2's
+# --auto is where that matters: launched from the end hook, the subject's process is
+# still flushing its transcript, and without this the child would start reading a file
+# that is still being written.
+CMD=$(printf 'SECOND_BRAIN_RECAP_OF=%q SECOND_BRAIN_RECAP_NAME=%q SECOND_BRAIN_PARENT_PID=%q SECOND_BRAIN_PLUGIN_ROOT=%q bash %q %q' \
+    "$SUBJECT" "$NAME" "${PARENT_PID:-}" "$PLUGIN_ROOT" "$CHILD" "$SUBJECT")
 
 HERDR_BIN=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
 
@@ -107,23 +115,40 @@ if [ -z "$KB_PATH" ]; then
     exit 2
 fi
 
+# stdout and stderr are kept apart: the response is parsed as JSON, and one deprecation
+# notice or auth warning on stderr would otherwise prefix the document, make jq fail, and
+# send this down the error path below — after the pane had already been created, leaving
+# an orphan behind.
+PANE_ERR="${TMPDIR:-/tmp}/recap-launcher-$$.err"
 PANE_JSON=$("$HERDR_BIN" pane split --pane "$HERDR_PANE_ID" --direction right \
-    --no-focus --cwd "$KB_PATH" 2>&1)
+    --no-focus --cwd "$KB_PATH" 2>"$PANE_ERR")
 NEW_PANE=$(printf '%s' "$PANE_JSON" \
     | jq -r '.result.pane.pane_id // .result.pane_id // empty' 2>/dev/null)
 
 if [ -z "$NEW_PANE" ]; then
-    printf 'recap_launcher.sh: could not open a pane; herdr said: %s\n' "$PANE_JSON" >&2
+    printf 'recap_launcher.sh: could not open a pane; herdr said: %s %s\n' \
+        "$PANE_JSON" "$(cat "$PANE_ERR" 2>/dev/null)" >&2
+    rm -f "$PANE_ERR"
     echo "Run this in a new terminal instead:" >&2
     echo "  cd $(printf '%q' "$KB_PATH") && $CMD" >&2
     exit 2
 fi
+rm -f "$PANE_ERR"
 
 # Label the pane before anything runs in it, so a person watching sees what it is.
 # Never rename_terminal_window: under --auto this runs in the dying parent's
 # environment, where that helper would rename the parent's own pane.
 "$HERDR_BIN" pane rename "$NEW_PANE" "$NAME" >/dev/null 2>&1 || true
-"$HERDR_BIN" pane run "$NEW_PANE" "$CMD" >/dev/null 2>&1
+
+# Checked, like the split above. Reporting a recap as started when the hand-off failed
+# leaves an empty pane open and the subject sitting at `requested`, with the notice
+# repeating the same row every session and nothing saying why.
+if ! "$HERDR_BIN" pane run "$NEW_PANE" "$CMD" >/dev/null 2>&1; then
+    printf 'recap_launcher.sh: opened pane %s but could not start the recap in it\n' "$NEW_PANE" >&2
+    echo "Run this in that pane, or in a new terminal:" >&2
+    echo "  cd $(printf '%q' "$KB_PATH") && $CMD" >&2
+    exit 2
+fi
 
 echo "Recapping $(basename "$SUBJECT") as $NAME in pane $NEW_PANE"
 exit 0

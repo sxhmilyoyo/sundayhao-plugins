@@ -419,7 +419,10 @@ chk "and --force is its only exit"     "$(prop "$SUBJ/session.md" recap_status)"
 # the subject gets two daily logs. Refusals are counted as a delta, because the
 # refused transition asserted above is already in this log.
 REFUSED_BEFORE=$(grep -c 'refused' "$SUBJ/recap.log")
-CLAIMS=$(seq 20 | xargs -P20 -I{} sh -c 'env HOME="$4" "$1" "$2" running >/dev/null 2>&1 && echo won' _ "$ST" "$SUBJ" "$H" | grep -c won)
+# $1 $2 $3, not $4: sh -c takes the word after the script as $0, so `_ A B C` puts C in
+# $3. Reading $4 gave every racer an empty HOME, which escaped this suite's scratch HOME
+# and would reach the real config the moment anything in that path reads one.
+CLAIMS=$(seq 20 | xargs -P20 -I{} sh -c 'env HOME="$3" "$1" "$2" running >/dev/null 2>&1 && echo won' _ "$ST" "$SUBJ" "$H" | grep -c won)
 chk "exactly one claim wins"           "$CLAIMS" "1"
 chk "the nineteen losers are refused"  "$(( $(grep -c 'refused' "$SUBJ/recap.log") - REFUSED_BEFORE ))" "19"
 chk "the note keeps one status line"   "$(grep -c '^recap_status:' "$SUBJ/session.md")" "1"
@@ -603,6 +606,61 @@ start $RS4 resume stray /tmp/mapped SECOND_BRAIN_RECAP_OF="$RSUB" >/dev/null
 chk "a marker on resume is ignored"     "$(prop "$KB/_sessions/$TODAY/$RS4/session.md" recap_of)" ""
 chk "an ordinary note gains no empty recap_of" \
     "$(grep -c '^recap_of:' "$KB/_sessions/$TODAY/$RS4/session.md")" "0"
+
+echo "== 30. the notice cannot send you to recap the session you are in =="
+# A /clear fires the start hook with the same session id, so a session already stamped
+# `requested` would be offered to itself. Recapping a live session reads a transcript
+# still being written and marks it `done`, after which its real exit sees a settled
+# status and the real recap never happens. Silent, and it loses the whole session.
+ncfg notify
+SELFID=13131313-1111-1111-1111-111111111111
+nstart $SELFID >/dev/null
+SELFMD="$NKB/_sessions/$TODAY/$SELFID/session.md"
+awk '$0=="tags:"{print "recap_status: \"requested\""} {print}' "$SELFMD" > "$SELFMD.t" && mv "$SELFMD.t" "$SELFMD"
+SOUT=$(printf '{"session_id":"%s","cwd":"/tmp/mapped","transcript_path":"%s","source":"clear","session_title":"mine"}' \
+        "$SELFID" "$NH/.claude/projects/proj/$SELFID.jsonl" \
+      | env HOME="$NH" HERDR_PANE_ID= TMUX_PANE= "$PLUGIN/hooks/scripts/session_start.sh" 2>/dev/null)
+chk "the current session is never listed" \
+    "$(printf '%s' "$SOUT" | jq -r '.systemMessage // ""' | grep -c "$SELFID")" "0"
+chk "but another session still is" \
+    "$(printf '%s' "$SOUT" | jq -r '.systemMessage // ""' | grep -c 'inv-recap-hook')" "1"
+
+echo "== 31. a stuck running recap is recoverable, and says how =="
+# A manual launch can die without its wrapper running, and `running` is then a dead end:
+# there is no running-to-running transition, so the launcher would refuse it as claimed
+# by a process that no longer exists. The notice has to offer the reopen instead, and it
+# has to list the row in `notify` too, which is the only mode this version ships.
+nmk 2026-09-08 h8888888-8888-8888-8888-888888888888 stuck-one '"running"'
+touch -t "$(date -v-3H +%Y%m%d%H%M 2>/dev/null || date -d '3 hours ago' +%Y%m%d%H%M)" \
+    "$NKB/_sessions/2026-09-08/h8888888-8888-8888-8888-888888888888/session.md"
+ROUT=$(nstart 13131313-2222-2222-2222-222222222222 | jq -r '.systemMessage // ""')
+chk "a stale running is listed in notify"  "$(printf '%s' "$ROUT" | grep -c 'stuck-one')" "1"
+chk "and it offers the reopen, not --manual" \
+    "$(printf '%s' "$ROUT" | grep 'stuck-one' | grep -c 'requested --force')" "1"
+# The command the notice prints has to work as printed.
+RCMD=$(printf '%s' "$ROUT" | sed -n 's/.*if nothing is running: //p' | head -1)
+eval "env HOME=\"$NH\" $RCMD" >/dev/null 2>&1
+chk "and the printed command reopens it" \
+    "$(prop "$NKB/_sessions/2026-09-08/h8888888-8888-8888-8888-888888888888/session.md" recap_status)" "requested"
+
+echo "== 32. ccfind refreshes a cache whose shape predates the recap column =="
+# The cache carries no version, and get_sessions is stale-while-revalidate, so a cache
+# written by an older version would be served to a filter reading a field that is not
+# there: every session would read as recapped and the backlog would look empty.
+CC="$ROOT/cchome"; mkdir -p "$CC/ccfind"
+printf 'display\tid1\t/tmp/x\t/p/session.md\t-\t-\n' > "$CC/ccfind/sessions.tsv"
+chk "an old cache has six fields" "$(awk -F'\t' '{print NF}' "$CC/ccfind/sessions.tsv")" "6"
+XDG_CACHE_HOME="$CC" env HOME="$H" "$PLUGIN/tools/ccfind/ccfind.sh" --tags >/dev/null 2>&1 || true
+chk "and is rewritten with seven"  "$(awk -F'\t' 'NR==1{print NF}' "$CC/ccfind/sessions.tsv")" "7"
+# Against a six-field cache this filter matched nothing at all, which read as "every
+# session has been recapped". The property is that it now matches, and that it still
+# excludes the settled ones rather than matching everything.
+chk "the backlog filter matches something" \
+    "$(awk -F'\t' '$7 == "-" || $7 == "requested" || $7 == "failed"' "$CC/ccfind/sessions.tsv" \
+       | grep -c . | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
+chk "and still excludes done, exempt and running" \
+    "$(awk -F'\t' '$7 == "done" || $7 == "exempt" || $7 == "running"' "$CC/ccfind/sessions.tsv" \
+       | awk -F'\t' '$7 == "-" || $7 == "requested" || $7 == "failed"' | grep -c .)" "0"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

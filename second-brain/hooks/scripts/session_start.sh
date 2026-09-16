@@ -72,10 +72,11 @@ emit_output() {
 # Args: $1=mode (notify|on)
 # Returns: the notice on stdout; empty when nothing needs attention
 recap_notice() {
-    local mode="$1" launcher now cands st nm folder label date_dir line
+    local mode="$1" launcher status_writer now cands st nm folder q_folder label date_dir line
     local mtime age reason body="" count=0
     [ -d "$KB_PATH/_sessions" ] || return 0
     launcher="$PLUGIN_ROOT/hooks/scripts/recap_launcher.sh"
+    status_writer="$PLUGIN_ROOT/skills/common/recap_status.sh"
     now=$(date +%s)
 
     # Fourteen date directories, newest first, so the ordering inside each kind below
@@ -123,40 +124,62 @@ recap_notice() {
         [ -n "$folder" ] || continue
         [ "$count" -lt 5 ] || break
         folder="${folder%/session.md}"
+        # Never advertise the session this hook is running for. A /clear fires this hook
+        # with the same session id, so a session stamped `requested` by an earlier exit
+        # and then resumed would be offered as a recap candidate to itself: recapping a
+        # live session reads a transcript still being written and marks it `done`, after
+        # which its real exit sees a settled status and never requests the real recap.
+        [ "$folder" != "$SESSION_FOLDER" ] || continue
         date_dir=$(basename "$(dirname "$folder")")
         # An unnamed session is still identifiable, and the first eight characters of
         # the id are what the rest of this plugin shows for one.
         label="${nm:-$(basename "$folder" | cut -c1-8)}"
-        mtime=$(stat -f %m "$folder/session.md" 2>/dev/null || echo "$now")
+        # BSD then GNU: `stat -f` reports the filesystem on GNU, so without the second
+        # form every age read as zero and no staleness threshold below could ever fire.
+        mtime=$(stat -f %m "$folder/session.md" 2>/dev/null \
+            || stat -c %Y "$folder/session.md" 2>/dev/null || echo "$now")
         age=$(( now - mtime ))
+        # A path is data: a vault directory may contain a space, and an unquoted one
+        # turns the printed command into three arguments the launcher rejects.
+        q_folder=$(printf '%q' "$folder")
         case "$st" in
             failed)
                 # The reason is the recap's, written to recap.log as `reason=<text>`
                 # before it marked the subject failed.
                 reason=$(grep 'reason=' "$folder/recap.log" 2>/dev/null | tail -1 | sed 's/.*reason=//')
                 body="$body
-- $date_dir $label — failed${reason:+: $reason} (see recap.log) — retry: $launcher --manual $folder"
+- $date_dir $label — failed${reason:+: $reason} (see recap.log) — retry: $launcher --manual $q_folder"
                 count=$(( count + 1 )) ;;
             requested)
                 # In notify mode nothing ever starts a recap, so a request is a pending
                 # to-do rather than a stall and needs no clock on it.
                 if [ "$mode" = "notify" ]; then
                     body="$body
-- $date_dir $label — requested, not started — run: $launcher --manual $folder"
+- $date_dir $label — requested, not started — run: $launcher --manual $q_folder"
                     count=$(( count + 1 ))
                 elif [ "$age" -ge 600 ]; then
                     body="$body
-- $date_dir $label — requested $(_ago "$age") ago, never started — run: $launcher --manual $folder"
+- $date_dir $label — requested $(_ago "$age") ago, never started — run: $launcher --manual $q_folder"
                     count=$(( count + 1 ))
                 fi ;;
             running)
-                # Only in `on` mode, and only when the note has not changed in two
-                # hours: the writer rewrites the file on every transition, so an
-                # untouched note means nothing has advanced. A stalled recap is a
-                # judgement from elapsed time, never a stored state.
-                if [ "$mode" = "on" ] && [ "$age" -ge 7200 ]; then
+                # Listed in both modes, not only in `on`. A manual launch can die
+                # without its wrapper running — kill -9, a closed pane shell, a reboot —
+                # and `running` is then a dead end that nothing else reports, so leaving
+                # it out of `notify` means the one mode this version actually ships
+                # cannot surface the state it can reach. The clock is the note's mtime,
+                # since the writer rewrites the file on every transition: an untouched
+                # note means nothing has advanced. Stalled is a judgement from elapsed
+                # time, never a stored state.
+                #
+                # The command has to be the reopen, not `--manual`. A recap claims its
+                # subject by moving `requested` to `running`, and there is deliberately
+                # no `running` to `running` transition, so `--manual` against a stuck
+                # subject is refused as "another recap holds the claim" — which is true
+                # of a process that no longer exists. Reopening it is the only way back.
+                if [ "$age" -ge 7200 ]; then
                     body="$body
-- $date_dir $label — running $(_ago "$age") with no change — check its pane, or retry: $launcher --manual $folder"
+- $date_dir $label — running $(_ago "$age") with no change — check its pane; if nothing is running: $status_writer $q_folder requested --force"
                     count=$(( count + 1 ))
                 fi ;;
         esac

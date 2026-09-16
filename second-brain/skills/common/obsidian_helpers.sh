@@ -236,28 +236,48 @@ read_custom_title() {
 # Nesting would deadlock the hook against its own stamp. That is safe to do because
 # each part is atomic on its own and the transition table refuses anything a writer
 # slipped into the gap.
-# Args: $1=session_folder
+#
+# Every caller that acquires must release on exit through a trap, not only on the happy
+# path: a process killed while holding this lock leaves a directory that blocks every
+# writer until it ages past a minute.
+# Args: $1=session_folder, $2=max attempts in 50 ms steps (default 40, so 2 s)
 # Returns: 0 when held, 1 when it timed out (callers proceed unlocked rather than
 #          abandon a write; the note matters more than the serialisation)
 recap_lock_acquire() {
-    local folder="$1" lock="$1/.recap.lock" i=0 broke=0 mtime now
+    local folder="$1" max="${2:-40}" lock="$1/.recap.lock" i=0 mtime now
     [ -d "$folder" ] || return 1
-    while [ "$i" -lt 40 ]; do          # 40 x 50 ms = 2 s, far longer than any hold
+
+    # The overwhelmingly common case: nobody holds it, one syscall, no forks.
+    mkdir "$lock" 2>/dev/null && return 0
+
+    # Held. Decide once whether it is a corpse, before spending anything on waiting: a
+    # lock older than a minute belongs to a writer that crashed, since no writer here
+    # holds it for more than a few file writes. Checking this per iteration cost a stat
+    # and a date fork each time round for an answer that cannot change in the 0.2 s a
+    # caller on a clock is prepared to wait.
+    #
+    # BSD then GNU, the idiom this repo already uses in ccfind and kb-lint. `stat -f`
+    # means something else entirely on GNU (report the filesystem), so without the second
+    # form every mtime read as 0, the staleness test could never be true, and one leaked
+    # lock would refuse every recap of that session forever.
+    mtime=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    if [ "$mtime" -gt 0 ] && [ $(( now - mtime )) -gt 60 ]; then
+        rm -rf "$lock" 2>/dev/null || true
+        printf '%s broke stale lock pid=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" >> "$folder/recap.log" 2>/dev/null || true
         mkdir "$lock" 2>/dev/null && return 0
-        # A lock older than a minute belongs to a writer that crashed. Break it once
-        # only: a lock nothing can remove must not spin here forever.
-        if [ "$broke" -eq 0 ]; then
-            mtime=$(stat -f %m "$lock" 2>/dev/null || echo 0)
-            now=$(date +%s)
-            if [ "$mtime" -gt 0 ] && [ $(( now - mtime )) -gt 60 ]; then
-                rm -rf "$lock" 2>/dev/null || true
-                broke=1
-                printf '%s broke stale lock pid=%s\n' \
-                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" >> "$folder/recap.log" 2>/dev/null || true
-                continue
-            fi
-        fi
+    fi
+
+    # Live, so wait for it. max counts attempts; each costs a `sleep` fork, which measures
+    # nearer 70 ms than the 50 ms asked for, so the default 40 is about 2.8 s in practice.
+    # A caller on a clock passes far less: SessionEnd has about 1.5 s for the whole hook,
+    # and spending it here would get the hook killed before writing the note at all —
+    # losing ended_at, the duration, the transcript pointer and the rebuilt body, which is
+    # a far worse outcome than the lost update this lock exists to prevent.
+    while [ "$i" -lt "$max" ]; do
         sleep 0.05
+        mkdir "$lock" 2>/dev/null && return 0
         i=$(( i + 1 ))
     done
     return 1

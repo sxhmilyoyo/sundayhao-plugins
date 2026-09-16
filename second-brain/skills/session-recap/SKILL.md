@@ -151,9 +151,14 @@ recap holds it, `done` means it is already recapped and only a person's `--force
 document:
 
 ```bash
-grep -rl "^session-folder: _sessions/<date>/<id>" "$KB_PATH" \
-    --include="*.md" daily-log/ projects/ reflections/
+grep -rl "^session-folder: _sessions/<date>/<id>" "$KB_PATH" --include="*.md"
 ```
+
+One root, not four. Adding `daily-log/ projects/ reflections/` beside `$KB_PATH` gives grep four
+search roots, so every hit is printed twice under two different path forms, and the relative ones resolve
+only when the working directory happens to be the vault. Phase 3.0 then treats one daily log as two
+documents to reconcile, which is the duplication it exists to prevent. `$KB_PATH` already covers all three
+directories.
 
 Record the list. Non-empty means this is a resumed recap, which changes Phase 3.
 

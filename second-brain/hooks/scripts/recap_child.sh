@@ -21,7 +21,13 @@ fi
 while [ "${SUBJECT%/}" != "$SUBJECT" ] && [ "$SUBJECT" != "/" ]; do SUBJECT="${SUBJECT%/}"; done
 
 # Exported functions do not survive into this shell: it was started by a terminal
-# multiplexer, not forked from the launcher.
+# multiplexer, not forked from the launcher. Checked rather than assumed, because the
+# plugin cache holds several version directories and the one this command names may have
+# been retired since the notice printed the command.
+if [ ! -f "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/obsidian_helpers.sh" ]; then
+    echo "recap_child.sh: no plugin at $SECOND_BRAIN_PLUGIN_ROOT" >&2
+    exit 2
+fi
 source "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/obsidian_helpers.sh"
 STATUS="$SECOND_BRAIN_PLUGIN_ROOT/skills/common/recap_status.sh"
 LOG="$SUBJECT/recap.log"
@@ -70,13 +76,30 @@ fi
 
 # Compare-and-set, so a second child for the same subject, or a hand-run recap that
 # already holds the claim, is refused here and leaves without marking anything failed.
-# The trap is cleared first: this process changed nothing and owns no outcome.
-if ! "$STATUS" "$SUBJECT" running >/dev/null 2>&1; then
+#
+# Only exit 3 means that, though. The writer also exits 2 for a missing note or bad
+# usage, and the shell exits 127 when the script is not where this process was told it
+# would be — realistic, since the plugin cache holds several version directories and an
+# orphaned one can still be referenced. Reporting those as "another recap holds the
+# claim" would send someone looking for a process that never existed, and clearing the
+# trap on them would leave the subject `requested` with nothing recording why.
+"$STATUS" "$SUBJECT" running >/dev/null 2>&1
+CLAIM=$?
+if [ "$CLAIM" -eq 3 ]; then
     printf '%s claim refused status=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "$(read_frontmatter_prop "$SUBJECT/session.md" recap_status)" >> "$LOG" 2>/dev/null || true
+    # This process changed nothing and owns no outcome, so it must not mark failed.
     trap - EXIT
     echo "Another recap holds the claim on $(basename "$SUBJECT"); nothing to do."
+    echo "  why: $LOG"
     exit 0
+elif [ "$CLAIM" -ne 0 ]; then
+    printf '%s claim error exit=%s status=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CLAIM" \
+        "$(read_frontmatter_prop "$SUBJECT/session.md" recap_status)" >> "$LOG" 2>/dev/null || true
+    trap - EXIT
+    echo "Could not claim $(basename "$SUBJECT"): $STATUS exited $CLAIM." >&2
+    echo "Check that SECOND_BRAIN_PLUGIN_ROOT points at a plugin copy that still exists." >&2
+    exit 1
 fi
 
 printf '%s start pane=%s name=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

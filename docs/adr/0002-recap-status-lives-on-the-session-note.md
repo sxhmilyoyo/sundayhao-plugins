@@ -35,7 +35,8 @@ session-manager skill writes while a session runs, and the recap writes once it 
 `recap_status` takes one of `requested`, `running`, `done`, `failed`, `exempt`, and each value has exactly
 one writer: the SessionEnd hook, the launcher once the recap session starts, the recap skill's final
 phase, the launcher's exit check, and the SessionEnd hook again for sessions that are never recapped.
-The hook requests a recap only when the property is empty, so repeated exits after a resume cannot
-request twice. A stalled recap is a judgement from elapsed time, never a stored value. A retry resumes:
-it inventories documents already carrying the subject's `session-folder` and updates them in place;
-recap never deletes knowledge-bank documents.
+The hook requests a recap only when the property is empty or `exempt`, so repeated exits after a resume
+cannot request twice, while a session that was too small at its first exit and then did real work is
+re-evaluated rather than written off. A stalled recap is a judgement from elapsed time, never a stored
+value. A retry resumes: it inventories documents already carrying the subject's `session-folder`
+and updates them in place; recap never deletes knowledge-bank documents.

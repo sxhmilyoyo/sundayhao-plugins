@@ -120,6 +120,63 @@ as its outcome. Nothing is deleted and nothing runs unless you switch it on. See
   for nothing, which fails if an injection is ever re-added, and case 15 plants
   `metadata_requested_at` by hand so the unknown-property survival assertion still guards the preserve
   loop that `recap_status` depends on. Nine assertions that tested the removed mechanism are gone, 98
+
+### Fixed after review
+
+A code review of the above found fifteen defects, each reproduced before being fixed. Suite grows to 176
+assertions. The ones worth knowing about:
+
+- **A killed SessionEnd hook leaked the lock and blocked every recap of that session.** It acquired the
+  lock 177 lines before releasing it and installed no trap, so a hook killed inside that window — by its
+  own budget, a slow `git` call, a large memory directory to copy — left `.recap.lock` behind and every
+  later writer was refused until the lock aged past a minute. Verified by killing the hook mid-run at
+  seven points: all seven leaked before, none after.
+- **The lock could consume the whole hook budget.** The acquire spun for the helper's default while the
+  hook has about 1.5 s in total, and it paid that wait twice, once for its own rewrite and once for the
+  stamp. A contended lock therefore risked the hook being killed *before writing the note at all*, losing
+  `ended_at`, the duration, the transcript pointer and the rebuilt body: strictly worse than the lost
+  update the lock exists to prevent. The hook now asks for a short wait and the stamp for a shorter one,
+  and the acquire itself was restructured to check staleness once instead of once per iteration, since a
+  `sleep` fork measures nearer 70 ms than the 50 ms requested. A contended end-to-end exit went from
+  1.80 s to 1.16 s, and the uncontended one from 1.02 s to 0.86 s.
+- **The staleness check could never fire outside macOS.** It read `stat -f %m`, which on GNU reports the
+  filesystem rather than the mtime, so every lock read as age zero, no leaked lock was ever broken, and
+  one leak would have disabled recaps for that session permanently. The same bug made every age in the
+  notice zero, so no staleness threshold could fire. Both now try BSD then GNU, the idiom already used in
+  `ccfind.sh` and the kb-lint scripts three files away.
+- **The notice could tell you to recap the session you were sitting in.** A `/clear` fires the start hook
+  with the same session id, so a session already stamped `requested` was offered as a candidate to itself.
+  Following that advice reads a transcript still being written and marks the session `done`, after which
+  its real exit sees a settled status and the real recap never happens. It now skips its own folder.
+- **A recap stuck in `running` was a dead end.** There is deliberately no `running` to `running`
+  transition, so the launcher command the notice printed was refused as "another recap holds the claim" —
+  true of a process that no longer existed. The notice now prints the reopen instead, and lists a stale
+  `running` in `notify` as well as `on`, which matters because `notify` is the only mode this version
+  ships and a manual launch can die without its wrapper running.
+- **The child reported every failure as "another recap holds the claim".** A lock timeout, a missing note
+  and a plugin root that no longer exists all produced that message, and the last of those is realistic
+  because the plugin cache holds several version directories. It also cleared its failure trap on them, so
+  the subject sat `requested` with nothing recording why. Only a refused transition says that now; the
+  plugin root is checked before anything is sourced.
+- **`ccfind --not-recapped` reported an empty backlog after the upgrade.** The cache carries no version and
+  is served stale-while-revalidate, so the new seventh field was missing from a cache an older version
+  wrote and the filter matched nothing, reading as "everything has been recapped". A field-count mismatch
+  now forces a synchronous refresh.
+- **The launcher called a failed hand-off a success.** `pane run`'s exit status was discarded, so a failure
+  left an empty pane open, the subject at `requested`, and the user told a recap had started. It also
+  merged herdr's stderr into the buffer it parsed as JSON, where one warning line would have sent a
+  successful split down the error path and orphaned the pane it had just made.
+- **The notice printed commands that broke on a vault path containing a space**, and the launcher never
+  passed `SECOND_BRAIN_PARENT_PID`, leaving the child's wait for the ending session dead — harmless for a
+  manual launch, but that wait is the whole point of the Stage 2 path the launcher was written for.
+- **The suite's twenty-way race ran with an empty HOME.** It passed `$4` to `sh -c`, which receives the
+  word after the script as `$0`, so the scratch HOME never arrived. Harmless only because nothing in that
+  path reads HOME today; the moment one did, twenty parallel writers would have reached the real config.
+- Stale text the removals left behind: the recap skill's inventory grep passed four search roots and
+  reported every hit twice, `resolve_project.sh` still described tag hints as feeding a derivation request
+  that no longer exists, the recap README listed `metadata_requested_at` as a written property, and
+  ADR-0002 still said the hook requests a recap only when the status is empty. `session-manager` also
+  gained the changelog entry the repo's own policy requires for a skill whose behaviour changed.
   remain, and the suite ends the release at 167.
 
 ## [2.12.0] - 2026-09-15

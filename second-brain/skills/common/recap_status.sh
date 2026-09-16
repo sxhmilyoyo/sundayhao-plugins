@@ -110,7 +110,12 @@ log_line() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>
 # same lock around its read-rebuild-write and two copies of a spin-and-break-stale
 # loop would drift apart. Unlike that hook, this script will not write without it:
 # every guarantee here rests on reading the current state under the lock.
-if ! recap_lock_acquire "$FOLDER"; then
+#
+# The wait defaults to 2 s, which is right for a person or a recap that can afford to
+# queue. A caller on a clock lowers it: SessionEnd has about 1.5 s for the whole hook and
+# pays this wait twice, once for its own rewrite and once for this stamp, so it asks for
+# a fraction of the default rather than risk being killed before the note is written.
+if ! recap_lock_acquire "$FOLDER" "${SECOND_BRAIN_LOCK_ATTEMPTS:-40}"; then
     log_line "lock timeout pid=$$ wanted=$STATE"
     printf 'recap_status.sh: could not take the lock on %s\n' "$FOLDER" >&2
     exit 3

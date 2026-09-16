@@ -41,11 +41,24 @@ fi
 
 # Everything from the property reads to the rewrite below is one transaction, because
 # a recap marking this subject `done` in between would have its write read, discarded
-# and overwritten. recap_lock_acquire is best-effort on purpose: if the lock cannot be
-# taken within two seconds the note is still written, since losing a concurrent
-# property is a smaller failure than losing the whole note.
+# and overwritten. Two deliberate limits on that.
+#
+# It is best-effort: if the lock cannot be taken the note is still written, since losing
+# one concurrent property is a smaller failure than losing the whole note. And it spins
+# briefly rather than for the helper's default, because this hook's entire budget is
+# about 1.5 s: waiting the default would let a contended lock consume the budget and get
+# the hook killed here, before ended_at, the duration, the transcript pointer or the
+# rebuilt body were written.
+#
+# The trap matters as much as the acquire. Without it a hook killed mid-rewrite — the
+# budget, a slow git call, a large memory directory to copy — would leave .recap.lock
+# behind and every recap of this session would be refused until the lock aged past a
+# minute.
 LOCKED=""
-recap_lock_acquire "$SESSION_FOLDER" && LOCKED=1
+if recap_lock_acquire "$SESSION_FOLDER" 3; then
+    LOCKED=1
+    trap 'recap_lock_release "$SESSION_FOLDER"' EXIT HUP INT TERM
+fi
 
 # ── 1. Read properties to preserve across overwrite ───────────────────
 SESSION_MD="$SESSION_FOLDER/session.md"
@@ -222,7 +235,11 @@ write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "$RESOLVED_BODY"
 # stamping while holding it would deadlock the hook against itself. Each half is
 # atomic on its own, and the transition table refuses whatever a writer slipped into
 # the gap, which is why splitting the transaction here is safe.
-[ -n "$LOCKED" ] && recap_lock_release "$SESSION_FOLDER"
+if [ -n "$LOCKED" ]; then
+    recap_lock_release "$SESSION_FOLDER"
+    trap - EXIT HUP INT TERM
+    LOCKED=""
+fi
 
 # ── 6. Request a recap, or record that this session never needs one ────
 # Every stamp goes through recap_status.sh, so each is compare-and-set: this hook can
@@ -232,6 +249,11 @@ MODE=$(get_plugin_config_value auto_recap off)
 case "$REASON_INPUT" in clear|resume) ENDING="" ;; *) ENDING=1 ;; esac
 if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
     STATUS="$SCRIPT_DIR/../../skills/common/recap_status.sh"
+    # The stamp waits on the same lock this hook just released, and this hook is on a
+    # 1.5 s clock. Two attempts, so the ordinary case succeeds on the first mkdir with no
+    # wait at all, and a contended one gives up in 0.1 s rather than queueing behind a
+    # recap mid-write for a stamp the transition table would refuse anyway.
+    export SECOND_BRAIN_LOCK_ATTEMPTS=2
     CURRENT=$(read_frontmatter_prop "$SESSION_MD" "recap_status")
     if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
         # Read second, and only here, because a note already holding `requested`,

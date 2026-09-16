@@ -440,7 +440,7 @@ The Session Manager preserves full context across context compactions using Clau
 
 The `session.md` file serves as a navigation hub with two data surfaces:
 
-**Frontmatter properties**: `schema_version`, `session_id`, `date`, `project`, `cwd`, `git_branch`, `started_at`, `ended_at`, `duration_seconds`, `session_name`, `tags`, `summary`, `docs_path`, `transcript_source`, `forked_from`, `forked_from_name`, `delegated_by`, `delegated_by_name`, `metadata_requested_at`
+**Frontmatter properties**: `schema_version`, `session_id`, `date`, `project`, `cwd`, `git_branch`, `started_at`, `ended_at`, `duration_seconds`, `session_name`, `tags`, `summary`, `docs_path`, `transcript_source`, `forked_from`, `forked_from_name`, `delegated_by`, `delegated_by_name`, and the recap's own `recap_status`, `recapped_at`, `recap_session` and `recap_of`. (`metadata_requested_at` is no longer written by anything; notes that already carry it keep it.)
 
 **Body sections**: `## Generated Artifacts`, `## Transcripts`, `## Agents`, `## Plans`, `## Memory Snapshot`
 

@@ -113,9 +113,10 @@ resolve_project() {
 }
 
 # The matched path's default tags, comma-separated.
-# These are hints for the derivation instruction and nothing else: a hook that
-# wrote them would leave every mapped session already tagged, and the trigger
-# that asks the model to derive metadata would never fire again.
+# Hints for whoever is choosing tags, and never values to write: a hook that wrote them
+# would leave every mapped session tagged by its directory rather than by its work. The
+# reader is the recap now, which weighs them against the conversation before deciding
+# (ADR-0006); until 2.13.0 it was the start hook's derivation request, which is gone.
 # Args: $1=cwd
 # Returns: "tag, tag" or empty
 project_default_tags() {

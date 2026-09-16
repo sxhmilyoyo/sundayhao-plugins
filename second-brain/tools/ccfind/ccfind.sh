@@ -5,6 +5,7 @@
 #   ccfind                  # Flat search across all sessions
 #   ccfind --by-name        # Show only named sessions
 #   ccfind --by-tag         # Two-step: pick tag first, then session
+#   ccfind --not-recapped  # Sessions still waiting on a recap, or whose recap failed
 #   ccfind --tags           # List unique tags (non-interactive)
 #   ccfind --refresh        # Force cache refresh
 
@@ -71,6 +72,9 @@ fi
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ccfind"
 CACHE_FILE="$CACHE_DIR/sessions.tsv"
 CACHE_TTL=300  # 5 minutes before background refresh
+# Fields parse_sessions.sh emits. A cache with a different count was written by another
+# version and is refreshed synchronously rather than served to filters that read by index.
+CACHE_FIELDS=7
 
 mkdir -p "$CACHE_DIR"
 
@@ -102,7 +106,17 @@ get_sessions() {
     local age
     age=$(cache_age)
 
-    if [ "$age" -ge "$CACHE_TTL" ] && [ -f "$CACHE_FILE" ]; then
+    # A cache written by an older version has fewer fields than the filters now read,
+    # and there is no version stamp in the file to check. The field count is the check:
+    # refresh synchronously rather than serving a row shape the filters cannot match.
+    # Without this the first --not-recapped after an upgrade tests a seventh field that
+    # is not there, matches nothing, and reports an empty backlog as though every
+    # session had been recapped. Stale-while-revalidate is the wrong trade when the
+    # staleness is structural rather than just old.
+    if [ -f "$CACHE_FILE" ] \
+       && [ "$(head -1 "$CACHE_FILE" 2>/dev/null | awk -F'\t' '{print NF}')" != "$CACHE_FIELDS" ]; then
+        refresh_cache
+    elif [ "$age" -ge "$CACHE_TTL" ] && [ -f "$CACHE_FILE" ]; then
         refresh_cache &
     elif [ ! -f "$CACHE_FILE" ]; then
         refresh_cache
@@ -112,7 +126,7 @@ get_sessions() {
     printf '%s\n' "$_SESSIONS_CACHE"
 }
 
-# Filter cached data using raw fields (tab field 5=tags, 6=session_name)
+# Filter cached data using raw fields (tab field 5=tags, 6=session_name, 7=recap_status)
 get_unique_tags() {
     get_sessions | awk -F'\t' '$5 != "-" { split($5, a, ","); for (i in a) { gsub(/^ +| +$/, "", a[i]); if (a[i] != "") print a[i] } }' | sort -u
 }
@@ -124,7 +138,6 @@ filter_by_tag() {
     }'
 }
 
-
 # Sessions whose knowledge has not been distilled yet: never requested, waiting, or
 # failed. Deliberately excludes `exempt` (decided too small to recap), `done`, and
 # `running` (someone holds it), and excludes recap sessions themselves, which have a
@@ -133,6 +146,7 @@ filter_by_tag() {
 filter_not_recapped() {
     get_sessions | awk -F'\t' '$7 == "-" || $7 == "requested" || $7 == "failed"'
 }
+
 filter_named() {
     get_sessions | awk -F'\t' '$6 != "-"'
 }
