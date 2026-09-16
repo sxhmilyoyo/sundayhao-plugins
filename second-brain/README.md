@@ -243,6 +243,18 @@ Once a recap finishes it writes the subject's `project`, `tags` and `summary` as
 read the whole conversation. Nothing is ever deleted: a retry updates the documents from the first attempt
 in place. To turn it all off again, `--set auto_recap off`; the properties already written are inert.
 
+**To recap a session again**, clear its status and it will be requested at its next exit:
+
+```bash
+<plugin-path>/skills/common/recap_status.sh /path/to/session-folder clear --force
+```
+
+The status only moves forwards otherwise, which is deliberate: nothing automatic may un-request a subject,
+so `requested`, `done` and `failed` are all dead ends to the end hook. Clearing is the way back, it needs
+`--force` because it is a decision rather than a transition, and it is recorded in that session's
+`recap.log` like everything else. For a recap that is stuck part-way, `... requested --force` re-stamps it
+instead, which is what the start-of-session notice offers you.
+
 **If you see `SessionEnd hook ... failed: Hook cancelled` on exit**, the hook ran out of time rather than
 breaking. Claude Code gives *all* SessionEnd hooks 1.5 seconds together, and on a session with a large
 transcript this one needs about 1.7. The note is normally written and stamped before the cancellation

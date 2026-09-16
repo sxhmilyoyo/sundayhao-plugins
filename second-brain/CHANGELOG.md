@@ -7,6 +7,60 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0] - 2026-09-16
+
+Two rulings from the planning session, and a correctness fix its ordering argument uncovered.
+
+### Fixed
+- **A cancelled SessionEnd hook dropped the session out of the recap pipeline, silently.** The stamp was the
+  last thing the hook did, after the memory copy and the note rewrite. Measured under `SIGKILL` at every
+  point from 0.3 s to 1.1 s, the old order left `recap_status` empty every time: the note looked complete,
+  and the start-of-session notice skips an empty status, so the session was never recapped and never
+  described, with nothing visible to say so. The predicate and the stamp now run **first**, before the lock
+  and before the rewrite. Same kills, same transcript: `requested` every time. This matters because the hook
+  costs about 1.6 s against a default budget of 1.5 s, so cancellation is the normal case, not the edge.
+
+  The failure inverts to the better one. A hook cancelled after the stamp leaves a note missing `ended_at`
+  and `duration_seconds`, which is visible and which the recap can work around, for a session that will
+  still be recapped. Both reads the predicate needs are safe outside the lock: `recap_of` is written once at
+  registration and never changes, and a stale `recap_status` only makes the compare-and-set writer refuse a
+  transition, which is the safe direction.
+- **The note rewrite could be observed truncated.** `write_session_md` used a plain redirect, which empties
+  the target before filling it, and the hook reaches that line at about 1.4 s against a 1.5-second budget,
+  so a cancellation can land inside the write. What a half-written note loses is the `## Transcript` pointer,
+  which under the reference-only architecture is the only record of where the conversation lives. It now
+  writes through a temp file and renames, like every other writer here, and returns non-zero rather than
+  leaving a partial note if the write itself fails. Verified with seven kills straddling the rewrite: no
+  truncated note, no leftover temp file.
+
+### Added
+- **`recap_status.sh <folder> clear --force`**, the documented way to recap a session again. The status only
+  moves forwards, so `requested`, `done` and `failed` are all dead ends to the end hook, which acts only on
+  a status that is empty or `exempt`. Nothing automatic may un-request a subject, which is why this is a
+  removal rather than a transition, why it needs `--force`, and why it is logged as `reset <from>->empty`
+  beside the writer's own lines. `--force requested` is unchanged and still re-stamps a subject that is
+  done or stuck. This closes a gap that had forced a hand edit of a real note.
+
+### Changed
+- **The recap skill verifies its claim instead of re-taking it.** In every sanctioned path the wrapper has
+  already moved the subject from `requested` to `running` before `claude` starts, so Phase 1.0's old
+  instruction to claim it produced a guaranteed refusal and told the skill to stop every single time. It was
+  visible in a real run as `refused running->running` in the log, 43 seconds after the child's own claim.
+  The skill now reads the status and decides: `running` with its own `recap_of` naming that subject means the
+  claim is already its own, so it proceeds and makes no writer call; `requested` or `failed` means the
+  wrapper never claimed and it claims now; `done`, an empty status, or `running` under a different subject
+  mean stop. A refusal is fatal only when this session is not the registered recap session for the subject.
+- Batch triage says the same thing from the other side: a batch claims each subject itself, because no
+  wrapper ran for the ones it picks up.
+- The regression suite clears six Herdr variables rather than four. `HERDR_SOCKET_PATH` is the channel to
+  the running daemon, so the real binary reaches the live workspace through it whatever pane id it is handed,
+  and `HERDR_BIN_PATH` is an absolute path that would bypass `PATH` order and the tripwire with it. Nothing
+  in the plugin reads the second one today, which makes it latent rather than live.
+- Seventeen new assertions: `clear` from every state with the rest of the note intact, that it refuses
+  without `--force` and takes no description, that `--force` still serves only `requested` and `clear`, that
+  every reset is logged, that the stamp precedes both the lock and the rewrite, and that the two extra Herdr
+  variables are cleared. 225 pass.
+
 ## [2.14.1] - 2026-09-16
 
 ### Fixed

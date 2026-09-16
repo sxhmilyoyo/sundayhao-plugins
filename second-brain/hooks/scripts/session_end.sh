@@ -45,6 +45,101 @@ if [ -z "$SESSION_FOLDER" ] || [ ! -f "$SESSION_FOLDER/session.md" ]; then
     SESSION_FOLDER=$(rebuild_session_md "$KB_PATH" "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD_INPUT")
 fi
 
+# ── 1. Request a recap, or record that this session never needs one ────
+# This runs FIRST, before the lock and before the rewrite, and that ordering is the
+# whole point. Measured, this hook costs about 1.58 s against a default SessionEnd
+# budget of 1.5 s, so on a machine where the budget has not been raised it is cancelled.
+# With the stamp last, a cancelled hook rewrote the note and never stamped: the note then
+# looked complete, the status stayed empty, and the start-of-session notice skips an empty
+# status, so the session dropped out of the recap pipeline permanently with nothing
+# visible to say so. That is the one failure mode where knowledge is lost silently.
+#
+# Stamping first inverts the failure into the better one. A hook cancelled after this
+# point leaves a note missing `ended_at` and `duration_seconds`, which is visible and
+# which the recap can work around, but the session is still going to be recapped.
+#
+# Two reads happen outside the lock, deliberately. `recap_of` is written once at
+# registration and never changes, so it cannot be read stale. A stale `recap_status` only
+# means the compare-and-set writer refuses a transition, which is the safe direction. The
+# rewrite below picks the new status up through the unknown-property preserve loop,
+# because that loop reads the note after this block has written to it.
+#
+# Every stamp goes through recap_status.sh, so each is compare-and-set: this hook can
+# only move a note from no status, or from `exempt`, and can never disturb a recap in
+# flight (ADR-0002). Output is discarded because a hook's stdout carries the protocol.
+SESSION_MD="$SESSION_FOLDER/session.md"
+MODE=$(get_plugin_config_value auto_recap off)
+case "$REASON_INPUT" in clear|resume) ENDING="" ;; *) ENDING=1 ;; esac
+if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
+    STATUS="$SCRIPT_DIR/../../skills/common/recap_status.sh"
+    # The stamp takes the per-folder lock itself, briefly. Two attempts, so the ordinary
+    # case succeeds on the first mkdir with no wait at all, and a contended one gives up
+    # in 0.1 s rather than queueing behind a recap mid-write for a stamp the transition
+    # table would refuse anyway.
+    export SECOND_BRAIN_LOCK_ATTEMPTS=2
+    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; } \
+        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of)
+    if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
+        # RECAP_OF is what decides whether this is a recap session, never
+        # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
+        # note is the record. If registration ever failed to write it, one redundant
+        # recap is wasted, whereas trusting a marker here would let any process that
+        # inherited one stamp a working session `exempt` and lose its knowledge. The
+        # cheaper failure wins.
+        if [ -n "$RECAP_OF" ]; then
+            # A recap session: exempt for good, so a recap never recaps itself.
+            [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+        elif [ ! -f "$TRANSCRIPT_PATH" ]; then
+            # Nothing to recap, ever. A permanent `requested` would nag forever.
+            [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+        else
+            # Assistant records, not messages typed and not lines. Measured over every
+            # vault session with a live transcript, they separate trivial from real with
+            # an empty band from five to nine, while a prompt count exempted a third of
+            # real sessions here (long autonomous runs driven by one slash command) and a
+            # line count loses a 35-line session with fourteen model turns while being
+            # fooled by a 15-line launch carrying 34 KB of injected context and no reply
+            # at all. The bounded grep stops at the fifth match, so it reads the head of
+            # the file and stays robust to the documented transcript lag. An unreadable
+            # transcript yields no number and stamps nothing, which is the safe answer
+            # whenever the evidence is missing.
+            #
+            # Two things to know before anyone makes this precise. It counts matching
+            # lines, so a session that reads or quotes a transcript can match on content
+            # rather than on its own model turns; that biases towards recapping, which is
+            # the safe direction, and a recap session is already excluded by recap_of
+            # above. And no match is an answer of zero, not a failure: grep exits 1
+            # there, so this must never be wrapped in `|| echo 0` (which appends a second
+            # line and breaks the numeric test) nor guarded by `|| exit`, which would
+            # abort on exactly the sessions that need `exempt`.
+            TURNS=$(grep -c -m5 '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
+            case "$TURNS" in
+                ''|*[!0-9]*) : ;;
+                *) if [ "$TURNS" -ge 5 ]; then
+                       # empty→requested, or exempt→requested for a session that was
+                       # resumed after a small start and then did real work.
+                       "$STATUS" "$SESSION_FOLDER" requested >/dev/null 2>&1
+                       # `on` also starts the recap, in a session of its own. After the
+                       # stamp, never before: the recap claims its subject by moving
+                       # `requested` to `running`, and a child that won that race would
+                       # find an empty status, be refused by the transition table, and
+                       # exit having done nothing.
+                       #
+                       # Detached rather than backgrounded. Measured: when Claude Code
+                       # cancels a hook it kills the hook's whole process tree, so a
+                       # plain `&` child can die mid-launch and leave an orphaned pane.
+                       if [ "$MODE" = "on" ]; then
+                           spawn_detached "$SCRIPT_DIR/recap_launcher.sh" \
+                               --auto "$SESSION_FOLDER"
+                       fi
+                   elif [ -z "$CURRENT" ]; then
+                       "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+                   fi ;;
+            esac
+        fi
+    fi
+fi
+
 # Everything from the property reads to the rewrite below is one transaction, because
 # a recap marking this subject `done` in between would have its write read, discarded
 # and overwritten. Two deliberate limits on that.
@@ -66,12 +161,15 @@ if recap_lock_acquire "$SESSION_FOLDER" 3; then
     trap 'recap_lock_release "$SESSION_FOLDER"' EXIT HUP INT TERM
 fi
 
-# ── 1. Read properties to preserve across overwrite ───────────────────
 # One pass for all thirteen scalars, in the order listed. Read one at a time this cost
 # three processes each, about 0.28 s of fork overhead, on a hook that shares a
 # 1.5-second budget with a memory copy, two transcript scans and a rewrite — enough on a
 # real session to have the whole hook cancelled after doing its work.
-SESSION_MD="$SESSION_FOLDER/session.md"
+#
+# recap_status and recap_of are deliberately absent: the predicate above already read them
+# and has since written the status, so re-reading here would either waste a pass or, worse,
+# invite someone to use a value that is now stale. The rewrite carries the new status
+# through the unknown-property preserve loop instead.
 {
     IFS= read -r SCHEMA_VERSION
     IFS= read -r STARTED_AT
@@ -88,16 +186,9 @@ SESSION_MD="$SESSION_FOLDER/session.md"
     IFS= read -r FORKED_FROM_NAME
     IFS= read -r DELEGATED_BY
     IFS= read -r DELEGATED_BY_NAME
-    # The two the predicate needs, read here with the rest rather than separately after
-    # the rewrite. Same values either way, since the rewrite preserves both through the
-    # unknown-property loop, and reading them under the lock with everything else is one
-    # fewer process and one fewer chance to see a half-written note.
-    IFS= read -r RECAP_STATUS
-    IFS= read -r RECAP_OF
 } < <(read_frontmatter_props "$SESSION_MD" \
         schema_version started_at project cwd git_branch docs_path date \
-        summary session_name forked_from forked_from_name delegated_by delegated_by_name \
-        recap_status recap_of)
+        summary session_name forked_from forked_from_name delegated_by delegated_by_name)
 
 # tags is a list, so it needs the list reader rather than the scalar batch.
 TAGS=$(read_frontmatter_list "$SESSION_MD" "tags")
@@ -264,85 +355,6 @@ if [ -n "$LOCKED" ]; then
     recap_lock_release "$SESSION_FOLDER"
     trap - EXIT HUP INT TERM
     LOCKED=""
-fi
-
-# ── 6. Request a recap, or record that this session never needs one ────
-# Every stamp goes through recap_status.sh, so each is compare-and-set: this hook can
-# only move a note from no status, or from `exempt`, and can never disturb a recap in
-# flight (ADR-0002). Output is discarded because a hook's stdout carries the protocol.
-MODE=$(get_plugin_config_value auto_recap off)
-case "$REASON_INPUT" in clear|resume) ENDING="" ;; *) ENDING=1 ;; esac
-if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
-    STATUS="$SCRIPT_DIR/../../skills/common/recap_status.sh"
-    # The stamp waits on the same lock this hook just released, and this hook is on a
-    # 1.5 s clock. Two attempts, so the ordinary case succeeds on the first mkdir with no
-    # wait at all, and a contended one gives up in 0.1 s rather than queueing behind a
-    # recap mid-write for a stamp the transition table would refuse anyway.
-    export SECOND_BRAIN_LOCK_ATTEMPTS=2
-    # Both came off the note in the batch read above, so this costs no processes.
-    CURRENT="$RECAP_STATUS"
-    if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
-        # RECAP_OF is what decides whether this is a recap session, never
-        # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
-        # note is the record. If registration ever failed to write it, one redundant
-        # recap is wasted, whereas trusting a marker here would let any process that
-        # inherited one stamp a working session `exempt` and lose its knowledge. The
-        # cheaper failure wins.
-        if [ -n "$RECAP_OF" ]; then
-            # A recap session: exempt for good, so a recap never recaps itself.
-            [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
-        elif [ ! -f "$TRANSCRIPT_PATH" ]; then
-            # Nothing to recap, ever. A permanent `requested` would nag forever.
-            [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
-        else
-            # Assistant records, not messages typed and not lines. Measured over every
-            # vault session with a live transcript, they separate trivial from real
-            # with an empty band from five to nine, while a prompt count exempted a
-            # third of real sessions here (long autonomous runs driven by one slash
-            # command) and a line count loses a 35-line session with fourteen model
-            # turns while being fooled by a 15-line launch carrying 34 KB of injected
-            # context and no reply at all. The bounded grep stops at the fifth match,
-            # so it reads the head of the file and stays robust to the documented
-            # transcript lag. An unreadable transcript yields no number and stamps
-            # nothing, which is the safe answer whenever the evidence is missing.
-            #
-            # Two things to know before anyone makes this precise. It counts matching
-            # lines, so a session that reads or quotes a transcript can match on
-            # content rather than on its own model turns; that biases towards
-            # recapping, which is the safe direction, and a recap session is already
-            # excluded by recap_of above. And no match is an answer of zero, not a
-            # failure: grep exits 1 there, so this must never be wrapped in `|| echo 0`
-            # (which appends a second line and breaks the numeric test) nor guarded by
-            # `|| exit`, which would abort on exactly the sessions that need `exempt`.
-            TURNS=$(grep -c -m5 '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
-            case "$TURNS" in
-                ''|*[!0-9]*) : ;;
-                *) if [ "$TURNS" -ge 5 ]; then
-                       # empty→requested, or exempt→requested for a session that was
-                       # resumed after a small start and then did real work.
-                       "$STATUS" "$SESSION_FOLDER" requested >/dev/null 2>&1
-                       # `on` also starts the recap, in a session of its own. After the
-                       # stamp, never before: the recap claims its subject by moving
-                       # `requested` to `running`, and a child that won the race would
-                       # find an empty status, be refused by the transition table, and
-                       # exit having done nothing.
-                       #
-                       # Detached rather than backgrounded. Measured: when Claude Code
-                       # cancels a hook it kills the hook's whole process tree, and this
-                       # hook runs close enough to its budget to be cancelled, so a plain
-                       # `&` child can die mid-launch and leave an orphaned pane. The
-                       # launcher itself then talks only to recap.log, because by the time
-                       # it runs there is no terminal left to talk to.
-                       if [ "$MODE" = "on" ]; then
-                           spawn_detached "$SCRIPT_DIR/recap_launcher.sh" \
-                               --auto "$SESSION_FOLDER"
-                       fi
-                   elif [ -z "$CURRENT" ]; then
-                       "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
-                   fi ;;
-            esac
-        fi
-    fi
 fi
 
 # ── Output ──────────────────────────────────────────────────────────────

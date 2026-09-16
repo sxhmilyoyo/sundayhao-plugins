@@ -92,9 +92,14 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
    |---|---|---|
    | `done` | already recapped | skip; only a person's `--force requested` reopens it |
    | `exempt` | deliberately never recapped | skip |
-   | `running` | another recap holds the claim | skip |
-   | `requested` or `failed` | waiting, or stalled | candidate |
+   | `running` | a recap holds the claim, unless it is this session's own subject | skip, unless your `recap_of` names it, in which case the claim is yours and you proceed |
+   | `requested` or `failed` | waiting, or stalled | candidate; claim each one as you reach it |
    | empty | never requested | candidate if it has a transcript |
+
+   A batch claims each subject itself, because no wrapper ran for the ones it picks up. That is the
+   difference from the single-subject path in Phase 1.0, where the claim already exists. A subject a person
+   wants re-requested is cleared with `recap_status.sh <folder> clear --force`, which removes the status so
+   the session is requested again at its next exit.
 
    Also skip a session with no transcript, and one that is trivial: **fewer than five assistant records**
    (`grep -c -m5 '"type":"assistant"'`), the same test the end hook applies. Not a count of user messages:
@@ -138,14 +143,26 @@ with the subject's outcome, or leave it unmarked so that it is itself recapped a
 writes the subject's `project`, `tags` and `summary`, which in the wrong session overwrites the
 description of real work with someone else's.
 
-**(2) Claim the subject.** One call, and it is a compare-and-set:
+**(2) Verify the claim. Do not re-take it.** In every sanctioned path your wrapper already moved the
+subject from `requested` to `running` before `claude` started, so the claim is normally *yours* and calling
+the writer for it again would be refused and would leave a misleading `refused running->running` in
+`recap.log`. Read the status and decide:
 
 ```bash
-"$PLUGIN_ROOT/skills/common/recap_status.sh" "$SUBJECT" running
+SUBJECT_STATUS=$(read_frontmatter_prop "$SUBJECT/session.md" "recap_status")
 ```
 
-On exit 3 the claim was refused. Report the subject's current status and **stop**: `running` means another
-recap holds it, `done` means it is already recapped and only a person's `--force requested` reopens it.
+| Status | What it means | What to do |
+|---|---|---|
+| `running`, and step 1 matched your `recap_of` to this subject | your own wrapper claimed it | **proceed**, and make no writer call |
+| `requested` or `failed` | the wrapper never claimed: it died first, or the command was pasted without the child script | claim it now with `recap_status.sh "$SUBJECT" running`, and stop if that is refused |
+| `done` | already recapped | **stop**; only a person's `--force requested` reopens it |
+| `running`, but your `recap_of` names a different subject, or you have none | another recap holds it | **stop** |
+| empty | nothing requested this | **stop**; a recap should not invent its own subject |
+
+A refusal is fatal only when this session is **not** the registered recap session for that subject. That is
+the distinction step 1 already established, so use it rather than asking the writer a question it will
+answer with a refusal either way.
 
 **(3) Prior recap inventory.** A retry resumes rather than starts over, and recap never deletes a
 document:

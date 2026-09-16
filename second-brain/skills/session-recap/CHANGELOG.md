@@ -5,6 +5,19 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-09-16
+
+### Changed
+- **Phase 1.0 step 2 verifies the claim rather than re-taking it.** The wrapper moves the subject from
+  `requested` to `running` before `claude` starts, so claiming it again was a guaranteed refusal that told
+  the skill to stop on every sanctioned run. Observed in the first real automatic recap as
+  `refused running->running` in `recap.log`. The step now reads the status: `running` with this session's own
+  `recap_of` naming the subject means the claim is already ours and no writer call is made; `requested` or
+  `failed` means the wrapper never claimed, so claim now; `done`, empty, or `running` under another subject
+  mean stop. A refusal is fatal only when this session is not the registered recap session for that subject.
+- **Batch triage** claims each subject itself, since no wrapper ran for the ones a batch picks up, and it
+  names `clear --force` as the way to re-request a subject that a person wants recapped again.
+
 ## [3.3.0] - 2026-09-15
 
 The recap now owns the subject's outcome and its description. See

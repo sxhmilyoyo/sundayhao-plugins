@@ -221,8 +221,25 @@ write_session_md() {
     local file_path="$1"
     local frontmatter="$2"
     local body="$3"
+    local tmp
     mkdir -p "$(dirname "$file_path")"
-    printf '%s\n' "---" "$frontmatter" "---" "" "$body" > "$file_path"
+    # Through a temp file and a rename, like every other writer here, because a plain
+    # redirect truncates the target first and then fills it. The end hook reaches this
+    # line at about 1.4 s against a 1.5-second budget, so a cancellation can land inside
+    # the write, and what a half-written note loses is the `## Transcript` pointer, which
+    # under the reference-only architecture is the only record of where the conversation
+    # lives. rename is atomic, so a reader sees the old note or the new one and never a
+    # truncated one.
+    tmp="${file_path}.write.$$"
+    if printf '%s\n' "---" "$frontmatter" "---" "" "$body" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$file_path"
+    else
+        # Out of space, or an unwritable directory. Leaving the existing note alone is the
+        # only safe answer: a partial note is worse than a stale one.
+        rm -f "$tmp"
+        return 1
+    fi
+    return 0
 }
 
 # Append an entry to the KB operation log (_meta/log.md).

@@ -36,10 +36,13 @@ usage() {
     cat >&2 <<'USAGE'
 Usage: recap_status.sh <session_folder> <state> [recap_session_folder]
                        [--project P] [--tags "a, b"] [--summary S] [--force]
+       recap_status.sh <session_folder> clear --force
 
   state                requested | running | done | failed | exempt
   --project/--tags/--summary   the description; accepted on done and failed only
-  --force              with state `requested`, reopen a subject already done
+  --force              with `requested`, re-stamp a subject that is done or stuck
+                       running; with `clear`, remove the status so the subject is
+                       requested again at its next exit
 USAGE
     exit 2
 }
@@ -75,9 +78,26 @@ done
 while [ "${FOLDER%/}" != "$FOLDER" ] && [ "$FOLDER" != "/" ]; do FOLDER="${FOLDER%/}"; done
 
 case "$STATE" in
-    requested|running|done|failed|exempt) ;;
+    requested|running|done|failed|exempt|clear) ;;
     *) printf 'recap_status.sh: not a state: %s\n' "$STATE" >&2; usage ;;
 esac
+
+# `clear` is not a state, it is the removal of one, and it is the documented way to
+# re-request a subject: the SessionEnd predicate acts on a status that is empty or
+# `exempt`, so a subject sitting at `requested`, `done` or `failed` will never be picked
+# up again by an exit. The transition table has no arrow back out of those, deliberately,
+# because no automated writer should ever un-request a subject. A person can, which is why
+# this needs --force and why it is logged like any other transition.
+if [ "$STATE" = "clear" ]; then
+    [ -n "$FORCE" ] || {
+        printf 'recap_status.sh: clear needs --force; it is a deliberate reset\n' >&2
+        usage
+    }
+    case "$HAVE_PROJECT$HAVE_TAGS$HAVE_SUMMARY" in
+        000) ;;
+        *) printf 'recap_status.sh: clear takes no description\n' >&2; usage ;;
+    esac
+fi
 
 # Restricted to the two terminal-ish states the recap actually reaches, so a stray
 # description on a `requested` stamp is a caught mistake rather than a silent write.
@@ -89,12 +109,16 @@ if [ "$HAVE_PROJECT$HAVE_TAGS$HAVE_SUMMARY" != "000" ]; then
     esac
 fi
 
-# --force exists for one case: reopening a subject whose recap is done. Allowing it
-# to force any state would give every other transition a way around the table.
-if [ -n "$FORCE" ] && [ "$STATE" != "requested" ]; then
-    printf 'recap_status.sh: --force applies to requested only\n' >&2
-    usage
-fi
+# --force exists for two cases, both human-invoked: re-stamping a subject whose recap is
+# done or stuck running, and clearing the status so an exit will request it again.
+# Allowing it to force any state would give every other transition a way around the table.
+case "$STATE" in
+    requested|clear) ;;
+    *) if [ -n "$FORCE" ]; then
+           printf 'recap_status.sh: --force applies to requested or clear only\n' >&2
+           usage
+       fi ;;
+esac
 
 MD="$FOLDER/session.md"
 if [ ! -f "$MD" ]; then
@@ -137,6 +161,27 @@ allowed() {
     esac
     return 1
 }
+
+# A reset takes the property out rather than putting a value in, so it skips the table
+# entirely: --force is its authorisation and the log line is its record. Nothing to do if
+# there was no status to begin with.
+if [ "$STATE" = "clear" ]; then
+    if [ -z "$FROM" ]; then
+        log_line "reset empty->empty pid=$$ (already clear)"
+        exit 0
+    fi
+    tmp="${MD}.clear.$$"
+    # Only inside the frontmatter, and only that key: a body line that happens to start
+    # the same way is someone's prose, not a property.
+    awk '
+        /^---$/ { fm++; print; next }
+        fm == 1 && /^recap_status:/ { next }
+        { print }
+    ' "$MD" > "$tmp" && mv "$tmp" "$MD"
+    rm -f "$tmp"
+    log_line "reset ${FROM}->empty pid=$$"
+    exit 0
+fi
 
 if ! allowed "$FROM" "$STATE"; then
     if [ -n "$FORCE" ]; then

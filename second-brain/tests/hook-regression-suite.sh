@@ -61,7 +61,14 @@ exit 1
 TRIP
 chmod +x "$ROOT/bin/herdr"
 export PATH="$ROOT/bin:$PATH"
-export HERDR_ENV= HERDR_PANE_ID= HERDR_TAB_ID= HERDR_WORKSPACE_ID= TMUX_PANE=
+# Six variables, not four. HERDR_SOCKET_PATH is the channel to the running daemon, so the
+# real binary reaches the live workspace through it whatever pane id it was handed, which
+# is how a split lands in someone's terminal rather than failing. HERDR_BIN_PATH is an
+# absolute path to the real binary and would bypass PATH order entirely, so the tripwire
+# above cannot cover it; nothing in the plugin reads that one today, which makes it latent
+# rather than live, and exactly the kind of thing to clear before it becomes live.
+export HERDR_ENV= HERDR_PANE_ID= HERDR_TAB_ID= HERDR_WORKSPACE_ID= \
+       HERDR_SOCKET_PATH= HERDR_BIN_PATH= TMUX_PANE=
 
 TODAY=$(date +%Y-%m-%d)
 PASS=0; FAIL=0
@@ -736,8 +743,22 @@ chk "a list item is not read as a property" \
     "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_props "$2" has' _ "$HELPL" "$B1")" ""
 # Structural, because a timing assertion would be flaky on a loaded machine while the
 # thing that actually regressed is the number of processes the hook spawns.
+# Two calls, and both are deliberate: the predicate reads its two properties before the
+# lock, the rewrite reads its thirteen under it. Neither reads one property at a time.
 chk "the end hook batches its property reads" \
-    "$(grep -c 'read_frontmatter_props' "$PLUGIN/hooks/scripts/session_end.sh")" "1"
+    "$(grep -c 'read_frontmatter_props' "$PLUGIN/hooks/scripts/session_end.sh")" "2"
+# The ordering is a correctness property, not tidiness. The hook costs about 1.58 s
+# against a default 1.5 s budget, so it can be cancelled part-way. With the stamp last, a
+# cancelled hook rewrote the note and never stamped: the note looked complete, the status
+# stayed empty, and the notice skips an empty status, so the session left the recap
+# pipeline permanently and silently. Stamping first inverts that into a visibly incomplete
+# note for a session that will still be recapped.
+chk "the recap stamp precedes the lock" \
+    "$(awk '/recap_status.sh"$/{s=NR} /^if recap_lock_acquire/{l=NR} END{print (s>0 && l>0 && s<l) ? "yes" : "no"}' \
+       "$PLUGIN/hooks/scripts/session_end.sh")" "yes"
+chk "and precedes the note rewrite" \
+    "$(awk '/^    STATUS=/{s=NR} /^write_session_md "\$SESSION_FOLDER/{w=NR} END{print (s>0 && w>0 && s<w) ? "yes" : "no"}' \
+       "$PLUGIN/hooks/scripts/session_end.sh")" "yes"
 chk "and reads the payload in one jq pass" \
     "$(grep -c 'echo "\$INPUT" | jq' "$PLUGIN/hooks/scripts/session_end.sh")" "1"
 # Two are legitimate: the folder rebuild path and nothing else. This goes red if
@@ -856,6 +877,40 @@ fi
 # `${VAR-x}` not `${VAR:-x}`: these are set-but-empty on purpose, and the colon form
 # reports an empty value as unset, which made this assertion fail against itself.
 chk "Herdr detection is off by default"  "${HERDR_ENV-MISSING}${HERDR_PANE_ID-MISSING}" ""
+# The socket is the one that actually reaches the user's workspace, and the bin path is the
+# one a PATH tripwire cannot defend against. Both must be cleared, not merely unset.
+chk "the daemon socket is unreachable"   "${HERDR_SOCKET_PATH-MISSING}" ""
+chk "and the binary path is not handed over" "${HERDR_BIN_PATH-MISSING}" ""
+
+echo "== 37. a person can re-request a subject, and nothing automatic can =="
+# The status only moves forwards, so `requested`, `done` and `failed` are dead ends to the
+# end hook. `clear` is the documented way back, and it needs --force because it is a
+# decision rather than a transition. This is the operation whose absence forced a hand edit
+# of a real note.
+CSUBJ="$ROOT/clearsubj"; mkdir -p "$CSUBJ"
+cnote(){ printf -- '---\nsession_id: "c"\nsummary: "kept"\nrecap_status: "%s"\ntags:\n  - kepttag\n---\n\n# body\nkeptline\n' "$1" > "$CSUBJ/session.md"; }
+cst(){ env HOME="$H" "$ST" "$@" >/dev/null 2>&1; }
+cnote requested
+cst "$CSUBJ" clear && no "clear refuses without --force" || ok "clear refuses without --force"
+chk "and changes nothing"              "$(prop "$CSUBJ/session.md" recap_status)" "requested"
+for s in requested running done failed exempt; do
+    cnote "$s"; cst "$CSUBJ" clear --force
+    chk "clear works from $s"          "$(grep -c '^recap_status:' "$CSUBJ/session.md")" "0"
+done
+chk "the rest of the note survives"    "$(grep -c '^keptline$' "$CSUBJ/session.md")" "1"
+chk "so do its tags"                   "$(rfl "$CSUBJ/session.md" tags)" "kepttag"
+chk "and its summary"                  "$(prop "$CSUBJ/session.md" summary)" "kept"
+chk "the frontmatter stays one block"  "$(grep -c '^---$' "$CSUBJ/session.md")" "2"
+# Cleared means the end hook will request it again, which is the entire point.
+cst "$CSUBJ" requested
+chk "a cleared subject can be requested" "$(prop "$CSUBJ/session.md" recap_status)" "requested"
+# Guard rails: a reset is not a back door to the description or to other states.
+cnote done; cst "$CSUBJ" clear --force --summary "nope"
+chk "clear takes no description"       "$(prop "$CSUBJ/session.md" recap_status)" "done"
+cnote running
+cst "$CSUBJ" done --force
+chk "--force still only serves requested and clear" "$(prop "$CSUBJ/session.md" recap_status)" "running"
+chk "and every reset is in the log"    "$(grep -c 'reset .*->empty' "$CSUBJ/recap.log")" "5"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
