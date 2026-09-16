@@ -570,8 +570,13 @@ chk "never through the pane's env"     "$(printf '%s' "$LOUT" | grep -c -- '--en
 chk "a trailing slash is normalised"   "$(printf '%s' "$LOUT" | grep -c 'f1111111-1111-1111-1111-111111111111 ')" "1"
 env HOME="$NH" "$PLUGIN/hooks/scripts/recap_launcher.sh" --manual /nope/nothing >/dev/null 2>&1 \
     && no "a missing subject is refused" || ok "a missing subject is refused"
-env HOME="$NH" "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$LSUBJ" >/dev/null 2>&1 \
-    && no "--auto is not implemented yet" || ok "--auto is not implemented yet"
+# --auto has no terminal to talk to, so outside Herdr it does nothing and says nothing:
+# the subject is already `requested` and the notice covers it. `on` degrading to `notify`
+# where there is no Herdr is the documented behaviour.
+AOUT=$(env HOME="$NH" HERDR_ENV= HERDR_PANE_ID= "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$LSUBJ" 2>&1)
+chk "--auto outside Herdr exits 0"      "$?" "0"
+chk "and prints nothing at all"         "${AOUT:-empty}" "empty"
+chk "but records why in recap.log"      "$(grep -c 'not under Herdr' "$LSUBJ/recap.log")" "1"
 
 echo "== 29. a recap session registers as one, only at startup =="
 # The marker is honoured on a genuine launch and nowhere else, and it decides three
@@ -709,6 +714,103 @@ chk "and reads the payload in one jq pass" \
 # per-property reads creep back into the hook body.
 chk "no per-property reads remain in the end hook" \
     "$(grep -c 'read_frontmatter_prop "' "$PLUGIN/hooks/scripts/session_end.sh")" "0"
+
+echo "== 34. on mode launches the recap in a pane of its own =="
+# A stub herdr records every call, so the Herdr flow is asserted without touching a real
+# workspace. process-info answers with a shell_pid, which is what the launcher waits for.
+mkdir -p "$NH/.local/bin"
+cat > "$NH/.local/bin/herdr" << 'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$HOME/herdr-calls.log"
+case "$*" in
+    *"pane split"*)        echo '{"result":{"pane":{"pane_id":"w9:pNEW"}}}' ;;
+    *"pane process-info"*) echo '{"result":{"process_info":{"shell_pid":4242}}}' ;;
+esac
+exit 0
+STUB
+chmod +x "$NH/.local/bin/herdr"
+ASUBJ="$NKB/_sessions/2026-09-13/f1111111-1111-1111-1111-111111111111"
+: > "$NH/herdr-calls.log"; : > "$ASUBJ/recap.log"
+AOUT2=$(env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD \
+    CLAUDE_PID=31337 "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$ASUBJ" 2>&1)
+chk "--auto prints nothing even on success" "${AOUT2:-empty}" "empty"
+chk "it splits the ending session's pane" \
+    "$(grep -c 'pane split --pane w9:pOLD --direction right --no-focus --cwd' "$NH/herdr-calls.log")" "1"
+# --env would put the marker in the pane's root shell, where every later claude in that
+# pane inherits it, registers as a recap and is stamped exempt at its own exit.
+chk "never through the pane environment"    "$(grep -c -- '--env' "$NH/herdr-calls.log")" "0"
+chk "it waits for the pane's shell"         "$(grep -c 'pane process-info --pane w9:pNEW' "$NH/herdr-calls.log")" "1"
+chk "it labels the pane before running"     "$(grep -c 'pane rename w9:pNEW recap-inv-recap-hook' "$NH/herdr-calls.log")" "1"
+chk "it runs the child in the new pane"     "$(grep -c 'pane run w9:pNEW .*recap_child.sh' "$NH/herdr-calls.log")" "1"
+chk "the subject marker is inline"          "$(grep -c 'SECOND_BRAIN_RECAP_OF=' "$NH/herdr-calls.log")" "1"
+# The child waits for this pid to exit before reading a transcript that is still being
+# flushed. Without it the wait loop is dead code and the recap can read a partial file.
+chk "the ending session's pid travels too"  "$(grep -c 'SECOND_BRAIN_PARENT_PID=31337' "$NH/herdr-calls.log")" "1"
+chk "and it logged the launch"              "$(grep -c 'launcher started recap-inv-recap-hook in pane w9:pNEW' "$ASUBJ/recap.log")" "1"
+# A failed split must not look like a started recap, and must not exit non-zero into a
+# hook that is already gone. The subject stays `requested` and the notice asks.
+cat > "$NH/.local/bin/herdr" << 'STUB2'
+#!/bin/bash
+printf '%s\n' "$*" >> "$HOME/herdr-calls.log"
+case "$*" in *"pane split"*) echo "herdr: pane is gone" >&2; exit 1 ;; esac
+exit 0
+STUB2
+chmod +x "$NH/.local/bin/herdr"
+: > "$ASUBJ/recap.log"
+env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD \
+    "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$ASUBJ" >/dev/null 2>&1
+chk "a failed split exits 0 under --auto"   "$?" "0"
+chk "and is logged as a failure"            "$(grep -c 'launcher failed: could not open a pane' "$ASUBJ/recap.log")" "1"
+chk "the subject is left for the notice"    "$(prop "$ASUBJ/session.md" recap_status)" "failed"
+
+echo "== 35. the end hook launches only in on mode, and only detached =="
+# notify records and notifies; on also launches. A stub launcher records that it was
+# called, so this asserts the hook's decision rather than Herdr's behaviour.
+mkdir -p "$ROOT/stubplugin/hooks/scripts" "$ROOT/stubplugin/skills"
+cp -R "$PLUGIN/skills" "$ROOT/stubplugin/" 2>/dev/null
+cp "$PLUGIN/hooks/scripts/session_end.sh" "$ROOT/stubplugin/hooks/scripts/"
+cat > "$ROOT/stubplugin/hooks/scripts/recap_launcher.sh" << 'STUB3'
+#!/bin/bash
+printf 'called %s\n' "$*" >> "${SB_LAUNCH_LOG:-/dev/null}"
+STUB3
+chmod +x "$ROOT/stubplugin/hooks/scripts/recap_launcher.sh"
+LAUNCHLOG="$ROOT/launch.log"
+mode_run(){ # $1=auto_recap value -> did the hook launch anything?
+    jq -n --arg kb "$KB" --arg m "$1" '{knowledge_bank_path:$kb,auto_recap:$m}' > "$CFGF"
+    local id="ababab$2-0000-0000-0000-00000000000$2" t
+    t="$H/.claude/projects/proj/$id.jsonl"; turns "$t" 9
+    start "$id" startup "launch-$1" /tmp/mapped >/dev/null
+    : > "$LAUNCHLOG"
+    printf '{"transcript_path":"%s","cwd":"/tmp/mapped","reason":"prompt_input_exit"}' "$t" \
+      | env HOME="$H" HERDR_PANE_ID= TMUX_PANE= SB_LAUNCH_LOG="$LAUNCHLOG" \
+        "$ROOT/stubplugin/hooks/scripts/session_end.sh" >/dev/null 2>&1
+    # The launcher is detached, so it may land a moment after the hook returns.
+    local i=0; while [ ! -s "$LAUNCHLOG" ] && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i+1)); done
+    # No `|| echo 0`: grep -c already prints 0 on no match and exits 1, so the fallback
+    # would append a second line and the comparison would see "0\n0". The plugin's own
+    # predicate carries a comment about this trap; the harness fell into it anyway.
+    local n; n=$(grep -c 'called' "$LAUNCHLOG" 2>/dev/null); printf '%s' "${n:-0}"; }
+chk "notify launches nothing"          "$(mode_run notify 1)" "0"
+chk "on launches the recap"            "$(mode_run on 2)" "1"
+chk "with --auto and the subject"      "$(grep -c -- '--auto .*_sessions' "$LAUNCHLOG")" "1"
+chk "off launches nothing"             "$(mode_run off 3)" "0"
+# The detach is what makes the launch survive a hook that Claude cancels at its budget:
+# measured, a plain background child and a bare setsid child are both killed with the
+# hook's process tree, and only a double fork escapes it.
+SDR="$ROOT/sd"; mkdir -p "$SDR"
+cat > "$SDR/parent.sh" << PARENT
+#!/bin/bash
+source "$HELPL"
+spawn_detached /bin/sh -c 'sleep 3; touch $SDR/survived'
+touch $SDR/forked
+sleep 30
+PARENT
+chmod +x "$SDR/parent.sh"
+"$SDR/parent.sh" & SDP=$!
+i=0; while [ ! -f "$SDR/forked" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+kill -9 $SDP 2>/dev/null; wait $SDP 2>/dev/null || true
+sleep 5
+chk "a detached child outlives a killed parent" "$([ -f "$SDR/survived" ] && echo survived || echo killed)" "survived"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

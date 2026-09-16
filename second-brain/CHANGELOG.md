@@ -7,6 +7,58 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] - 2026-09-16
+
+Stage 2 of the recap work: `auto_recap: on` starts the recap itself, in a session of its own, inside
+Herdr. Everything else about a recap is unchanged, because Stage 1 already shipped the launcher, the
+child, the status protocol and the notice; this adds one call site and the `--auto` behaviour behind it.
+
+### Added
+- **`recap_launcher.sh --auto`**, called by `session_end.sh` when `auto_recap` is `on` and the size test
+  passed. It splits the ending session's Herdr pane, waits for the new pane's shell, labels it, and runs
+  the recap child there with the subject, the name and the ending session's pid as inline assignments on
+  the command. Never `--env`: Herdr documents that as pane-lifetime, so every later session in that pane
+  would inherit the marker, register as a recap and be stamped `exempt` at its own exit.
+- **It has no terminal, so it writes to the subject's `recap.log`** rather than stdout, the same file the
+  child and the status writer append to, so one file tells the whole story of a recap. Outside Herdr it
+  does nothing and says so there: `on` degrades to `notify`, the subject stays `requested`, and the
+  start-of-session notice covers it. A failed split or hand-off is logged and exits 0, never non-zero into
+  a hook that has already gone.
+- **`spawn_detached`**, which is how the launch survives. Measured against a project-level SessionEnd hook
+  that overran its timeout: when Claude Code cancels a hook it kills the hook's whole process tree. A child
+  backgrounded with a plain `&` died, and so did one that called `setsid` and exec'd, because that leaves
+  it a direct child and a tree walk still finds it. Only a double fork survived, the intermediate exiting
+  at once so the worker is reparented away from the tree being walked. With the same hook exiting normally
+  all three survived, so this matters exactly when a SessionEnd hook is under time pressure, which is
+  always.
+- **The pane readiness wait.** `pane split` returns as soon as the pane exists, which is before its shell
+  can accept text, and `pane run` submits text plus Enter to that shell, so text sent too early is simply
+  lost and leaves a correctly labelled pane at an empty prompt. The launcher polls `pane process-info`
+  until it reports a `shell_pid`, which is a fact about the pane rather than a guess at what a prompt looks
+  like, so it holds whatever shell and theme are in use. It costs nothing anyone waits on, since the
+  launcher is detached by then.
+- **Regression cases 34 and 35**, seventeen assertions against a stub Herdr that records every call: the
+  split targets the ending session's pane, no `--env` is ever used, the shell is waited for, the pane is
+  labelled before anything runs in it, the markers and the parent pid travel inline, a failed split is
+  logged and exits 0, `notify` and `off` launch nothing while `on` launches exactly once, and a detached
+  child outlives a `SIGKILL`ed parent.
+
+### Changed
+- The launch goes **after** the `requested` stamp, never before. A recap claims its subject by moving
+  `requested` to `running`, so a child that won that race would find an empty status, be refused by the
+  transition table, and exit having done nothing.
+- `SECOND_BRAIN_PARENT_PID` now carries the ending session's `CLAUDE_PID`, verified present in the hook
+  environment. Until this stage the child's wait-for-parent loop had nothing to wait on and was dead code;
+  it is what stops the recap reading a transcript the ending session is still flushing.
+
+### Known limits
+- **`on` needs the SessionEnd budget raised.** The launch is the last thing the hook does, so if the hook
+  is cancelled at its budget first, nothing is launched and the session stays `requested` for the notice.
+  That is a safe degradation rather than a fault, but it means `on` is only reliable with
+  `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` set, for the reasons in the 2.13.0 Performance section.
+- **Herdr only.** Anywhere else `on` behaves as `notify`. Stage 3 in the plan covers the headless and
+  scheduled alternatives, and is deliberately not built.
+
 ## [2.13.0] - 2026-09-15
 
 Sessions now keep track of whether their knowledge has been distilled. When a session ends the hook records

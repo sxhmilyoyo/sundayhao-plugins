@@ -321,7 +321,22 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
                        # empty→requested, or exempt→requested for a session that was
                        # resumed after a small start and then did real work.
                        "$STATUS" "$SESSION_FOLDER" requested >/dev/null 2>&1
-                       # Stage 2 launches the recap here, guarded by MODE = on.
+                       # `on` also starts the recap, in a session of its own. After the
+                       # stamp, never before: the recap claims its subject by moving
+                       # `requested` to `running`, and a child that won the race would
+                       # find an empty status, be refused by the transition table, and
+                       # exit having done nothing.
+                       #
+                       # Detached rather than backgrounded. Measured: when Claude Code
+                       # cancels a hook it kills the hook's whole process tree, and this
+                       # hook runs close enough to its budget to be cancelled, so a plain
+                       # `&` child can die mid-launch and leave an orphaned pane. The
+                       # launcher itself then talks only to recap.log, because by the time
+                       # it runs there is no terminal left to talk to.
+                       if [ "$MODE" = "on" ]; then
+                           spawn_detached "$SCRIPT_DIR/recap_launcher.sh" \
+                               --auto "$SESSION_FOLDER"
+                       fi
                    elif [ -z "$CURRENT" ]; then
                        "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
                    fi ;;

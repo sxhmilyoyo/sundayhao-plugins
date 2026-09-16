@@ -340,6 +340,41 @@ recap_lock_release() {
     return 0
 }
 
+# Start a command that has to outlive this process, including the case where this
+# process is killed rather than exiting.
+#
+# Measured 2026-09-16, running a project-level SessionEnd hook that overran its timeout:
+# when Claude Code cancels a hook it kills the hook's whole process tree. A child
+# backgrounded with a plain `&` died. So did one that called `setsid` and then exec'd,
+# because setsid changes the session but leaves the process a direct child, and a walk of
+# the tree still finds it. Only the double fork survived: the intermediate exits at once,
+# so the survivor is reparented to launchd and is no longer in the tree being walked.
+# With the same hook exiting normally all three survived, so this matters exactly when a
+# hook is under time pressure — which is when a SessionEnd hook usually is.
+#
+# The command inherits no stdio: a detached process writing to a terminal that is being
+# torn down is how a pane ends up with output nobody asked for.
+# Args: the command and its arguments
+# Returns: 0 once handed off. The command's own success is unobservable by design, so
+#          anything worth knowing must be logged by the command itself.
+spawn_detached() {
+    [ $# -gt 0 ] || return 0
+    if command -v perl >/dev/null 2>&1; then
+        perl -MPOSIX -e '
+            fork and exit 0;                 # parent returns to the caller immediately
+            POSIX::setsid() or die "setsid: $!";
+            fork and exit 0;                 # session leader exits, orphaning the worker
+            exec @ARGV or die "exec: $!";
+        ' -- "$@" >/dev/null 2>&1 </dev/null &
+    else
+        # No perl, so no double fork available. A plain background child still survives a
+        # hook that exits normally, which is the common case; it will not survive a
+        # cancelled one. Better than declining to launch at all.
+        ( "$@" >/dev/null 2>&1 </dev/null & ) &
+    fi
+    return 0
+}
+
 # Count prompt-shaped user records in a transcript, for the recap's statistics only.
 # The SessionEnd predicate deliberately does not call this: measured over 245 vault
 # sessions, a "fewer than five messages" test exempted 129 of them, several above a
@@ -609,3 +644,4 @@ export -f set_frontmatter_list
 export -f count_user_messages
 export -f recap_lock_acquire
 export -f recap_lock_release
+export -f spawn_detached

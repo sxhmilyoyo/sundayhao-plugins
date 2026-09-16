@@ -10,15 +10,21 @@
 # recapped afterwards, or the skill marks the note it is running in and that session's
 # real work is written off as exempt. Hence a launcher.
 #
-# Stage 1 ships --manual only, for retries a person asks for. Stage 2 adds --auto,
-# called from the end hook, which is why the Herdr path below is written once.
+# Two ways in, one Herdr path:
+#
+#   --manual <folder>   a person asking for a recap or a retry. Talks to the terminal:
+#                       opens a pane under Herdr, prints a paste-able command elsewhere.
+#   --auto <folder>     the SessionEnd hook, when auto_recap is `on`. Has no terminal to
+#                       talk to, so everything it would say goes to the subject's
+#                       recap.log, and outside Herdr it does nothing at all: the subject
+#                       stays `requested` and the start-of-session notice covers it.
 #
 # There is deliberately no project precondition. The recap is where the domain for
 # work in an unmapped directory is decided, so refusing to launch without one would
 # block the value on the only thing that can supply it (ADR-0006). A recap that still
 # cannot place the work marks the subject failed and the notice asks a person.
 #
-# Exit: 0 launched or command printed, 2 usage or no such subject.
+# Exit: 0 launched, command printed, or deliberately did nothing; 2 usage or no subject.
 
 set -uo pipefail
 
@@ -30,18 +36,17 @@ source "$PLUGIN_ROOT/skills/common/obsidian_helpers.sh"
 usage() {
     cat >&2 <<'USAGE'
 Usage: recap_launcher.sh --manual <subject_session_folder>
+       recap_launcher.sh --auto   <subject_session_folder>
 
 Starts a recap of that session in a session of its own. Inside Herdr it opens a
-pane; anywhere else it prints the command to paste into a terminal.
+pane; anywhere else --manual prints the command to paste into a terminal and
+--auto does nothing, leaving the start-of-session notice to ask.
 USAGE
     exit 2
 }
 
 MODE=""
 SUBJECT=""
-# Only --auto has a parent worth waiting for: it runs from the ending session's own hook,
-# so CLAUDE_PID is that session. Under --manual the invoking shell is not the subject.
-PARENT_PID=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --manual) MODE="manual" ;;
@@ -53,12 +58,6 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$MODE" ] && [ -n "$SUBJECT" ] || usage
-if [ "$MODE" = "auto" ]; then
-    # Stage 2 owns this path. Failing loudly now is better than a hook silently
-    # launching something this version has not tested.
-    printf 'recap_launcher.sh: --auto is not implemented in this version\n' >&2
-    exit 2
-fi
 
 # The notice prints folder paths with a trailing slash and a person may paste one.
 while [ "${SUBJECT%/}" != "$SUBJECT" ] && [ "$SUBJECT" != "/" ]; do SUBJECT="${SUBJECT%/}"; done
@@ -67,6 +66,36 @@ if [ ! -f "$SUBJECT/session.md" ]; then
     printf 'recap_launcher.sh: no session note at %s/session.md\n' "$SUBJECT" >&2
     exit 2
 fi
+
+# Under --auto there is no terminal to talk to. The hook that started this is already
+# gone, and this process is detached with its stdio closed, so anything printed would
+# vanish. The subject's recap.log is the record instead, and it is the same file the
+# child and the status writer append to, so one file tells the whole story of a recap.
+LOG="$SUBJECT/recap.log"
+say() {
+    if [ "$MODE" = "auto" ]; then
+        printf '%s launcher %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true
+    else
+        printf '%s\n' "$*"
+    fi
+}
+# A failure a person needs to see. Under --manual it goes to stderr with the paste-able
+# command; under --auto it is logged and the subject simply stays `requested`, which the
+# notice already lists, so a failed automatic launch degrades to the manual flow.
+fail() {
+    if [ "$MODE" = "auto" ]; then
+        printf '%s launcher failed: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true
+        exit 0
+    fi
+    printf 'recap_launcher.sh: %s\n' "$*" >&2
+    exit 2
+}
+
+# Only --auto has a parent worth waiting for: it runs from the ending session's own hook,
+# where CLAUDE_PID is that session's process (verified present in the hook environment).
+# Under --manual the invoking shell is not the subject, so there is nothing to wait for.
+PARENT_PID=""
+[ "$MODE" = "auto" ] && PARENT_PID="${CLAUDE_PID:-}"
 
 # One name for the pane, the Herdr agent, the session and its note, computed here so
 # every one of them agrees. An unnamed subject still yields something identifiable.
@@ -99,9 +128,15 @@ CMD=$(printf 'SECOND_BRAIN_RECAP_OF=%q SECOND_BRAIN_RECAP_NAME=%q SECOND_BRAIN_P
 
 HERDR_BIN=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
 
-# Outside Herdr there is no pane to open, so hand the command over rather than guess at
-# a terminal. The recap is identical either way; only who starts it differs.
+# Outside Herdr there is no pane to open. A person gets the command to run; the hook gets
+# nothing at all, deliberately, because `on` degrading to `notify` is the documented
+# behaviour and a half-started recap would be worse than none. The subject is already
+# stamped `requested` by this point, so the notice covers it either way.
 if [ "${HERDR_ENV:-}" != "1" ] || [ -z "${HERDR_PANE_ID:-}" ] || [ ! -x "$HERDR_BIN" ]; then
+    if [ "$MODE" = "auto" ]; then
+        say "not under Herdr, leaving the subject requested for the notice"
+        exit 0
+    fi
     KB_PATH=$(get_kb_path 2>/dev/null) || KB_PATH=""
     echo "Not running under Herdr. Run this in a new terminal:"
     echo ""
@@ -110,10 +145,7 @@ if [ "${HERDR_ENV:-}" != "1" ] || [ -z "${HERDR_PANE_ID:-}" ] || [ ! -x "$HERDR_
 fi
 
 KB_PATH=$(get_kb_path 2>/dev/null)
-if [ -z "$KB_PATH" ]; then
-    printf 'recap_launcher.sh: knowledge bank not configured\n' >&2
-    exit 2
-fi
+[ -n "$KB_PATH" ] || fail "knowledge bank not configured"
 
 # stdout and stderr are kept apart: the response is parsed as JSON, and one deprecation
 # notice or auth warning on stderr would otherwise prefix the document, make jq fail, and
@@ -126,14 +158,40 @@ NEW_PANE=$(printf '%s' "$PANE_JSON" \
     | jq -r '.result.pane.pane_id // .result.pane_id // empty' 2>/dev/null)
 
 if [ -z "$NEW_PANE" ]; then
-    printf 'recap_launcher.sh: could not open a pane; herdr said: %s %s\n' \
-        "$PANE_JSON" "$(cat "$PANE_ERR" 2>/dev/null)" >&2
+    PANE_STDERR=$(cat "$PANE_ERR" 2>/dev/null)
     rm -f "$PANE_ERR"
+    if [ "$MODE" = "auto" ]; then
+        fail "could not open a pane; herdr said: $PANE_JSON $PANE_STDERR"
+    fi
+    printf 'recap_launcher.sh: could not open a pane; herdr said: %s %s\n' \
+        "$PANE_JSON" "$PANE_STDERR" >&2
     echo "Run this in a new terminal instead:" >&2
     echo "  cd $(printf '%q' "$KB_PATH") && $CMD" >&2
     exit 2
 fi
 rm -f "$PANE_ERR"
+
+# The split returns as soon as the pane exists, which is before its shell can accept
+# text: `pane run` submits text plus Enter to that shell, and text sent too early is
+# simply lost, leaving a correctly labelled pane sitting at an empty prompt. Under --auto
+# nobody is watching to notice. `pane process-info` reports a shell_pid once the shell is
+# up, which is a fact about the pane rather than a guess at what a prompt looks like, so
+# it works whatever shell and theme the user has.
+#
+# This is off the hook's clock: the launcher is detached by now, so waiting costs nothing
+# that anyone is waiting on.
+READY=""
+i=0
+while [ "$i" -lt 60 ]; do
+    if [ -n "$("$HERDR_BIN" pane process-info --pane "$NEW_PANE" 2>/dev/null \
+                | jq -r '.result.process_info.shell_pid // empty' 2>/dev/null)" ]; then
+        READY=1
+        break
+    fi
+    sleep 0.1
+    i=$(( i + 1 ))
+done
+[ -n "$READY" ] || say "pane $NEW_PANE never reported a shell after 6 s, sending anyway"
 
 # Label the pane before anything runs in it, so a person watching sees what it is.
 # Never rename_terminal_window: under --auto this runs in the dying parent's
@@ -144,11 +202,18 @@ rm -f "$PANE_ERR"
 # leaves an empty pane open and the subject sitting at `requested`, with the notice
 # repeating the same row every session and nothing saying why.
 if ! "$HERDR_BIN" pane run "$NEW_PANE" "$CMD" >/dev/null 2>&1; then
+    if [ "$MODE" = "auto" ]; then
+        fail "opened pane $NEW_PANE but could not start the recap in it"
+    fi
     printf 'recap_launcher.sh: opened pane %s but could not start the recap in it\n' "$NEW_PANE" >&2
     echo "Run this in that pane, or in a new terminal:" >&2
     echo "  cd $(printf '%q' "$KB_PATH") && $CMD" >&2
     exit 2
 fi
 
-echo "Recapping $(basename "$SUBJECT") as $NAME in pane $NEW_PANE"
+if [ "$MODE" = "auto" ]; then
+    say "started $NAME in pane $NEW_PANE"
+else
+    echo "Recapping $(basename "$SUBJECT") as $NAME in pane $NEW_PANE"
+fi
 exit 0

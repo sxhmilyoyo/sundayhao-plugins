@@ -224,7 +224,7 @@ Set `auto_recap` and the plugin keeps track of which sessions still need one:
 |-------|----------------------------------|
 | `off` (default) | Nothing. No property is written and no notice appears |
 | `notify` | The session's note is stamped `recap_status: requested`, or `exempt` if the session was too small to hold knowledge. The next session you start shows what is waiting, with the command to run |
-| `on` | The same, and the recap is launched for you. Requires Herdr in this version; anywhere else it behaves as `notify` |
+| `on` | The same, and the recap starts itself: the ending session's Herdr pane splits and the recap runs beside it. Herdr only, and it needs the SessionEnd budget raised (see below); anywhere else it behaves as `notify` |
 
 The notice is shown to **you**, not added to Claude's context, because it carries a command to run and
 because a recap belongs in its own session rather than in the middle of your work. It lists recaps that
@@ -260,6 +260,15 @@ your own settings:
 Note that the budget is shared, so other plugins with SessionEnd hooks are drawing from it too, and
 `auto_recap: off` does not avoid the problem: measured on a real session, the hook was already at 1.5 to
 1.6 seconds with the recap work switched off entirely.
+
+**`on` mode depends on that budget.** Starting the recap is the last thing the end hook does, after it has
+written the note and stamped it, so a hook cancelled at its budget never reaches the launch. Nothing breaks
+when that happens: the session stays `requested` and the next session's notice offers you the command. But
+it does mean `on` only fires reliably once the budget is raised.
+
+Once it fires, the ending session's pane splits and the recap runs in the new half, labelled with the
+recap's name. You can watch it, interrupt it, or close the pane; closing it marks the subject `failed` so
+the notice picks it up rather than leaving it looking like a recap still in flight.
 
 ---
 
