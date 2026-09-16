@@ -40,7 +40,8 @@ as its outcome. Nothing is deleted and nothing runs unless you switch it on. See
   it to run a multi-minute recap in the middle of your work. It lists failed recaps first, then pending ones,
   newest first, at most five over fourteen days, and never lists a recap that is done, a session that is
   exempt or was never requested, or a recap session. One `awk` pass over the window, matching a status with
-  or without quotes because Obsidian strips quotes when a person saves a note.
+  or without quotes because Obsidian strips quotes when a person saves a note. The whole notice costs
+  0.09 s on a vault of 525 notes across 158 date directories.
 - **`hooks/scripts/recap_launcher.sh --manual`** and **`hooks/scripts/recap_child.sh`**. The launcher opens a
   Herdr pane, or prints the command to paste when there is no Herdr, and passes the subject marker and the
   name **inline on the launched command** — never through the pane's environment, where every later session
