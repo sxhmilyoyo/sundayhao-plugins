@@ -15,6 +15,31 @@ as its outcome. Nothing is deleted and nothing runs unless you switch it on. See
 `docs/adr/0002-recap-status-lives-on-the-session-note.md`,
 `docs/adr/0003-recap-sessions-are-registered-guarded-by-env.md` and
 `docs/adr/0006-the-description-is-written-after-the-session-ends.md`.
+### Performance
+
+The SessionEnd hook does not fit its budget on a large session, and did not before this release either.
+Claude Code gives all SessionEnd hooks **1.5 seconds together**, and on a session with a 4 MB transcript
+and an 80-file memory directory this hook measured **1.5 to 1.6 s at 2.12.0** — already at the limit — and
+**1.9 to 2.0 s** once this release's recap work was added. Past the budget the hook is cancelled, which
+reads as `SessionEnd hook ... failed: Hook cancelled` on exit even though the note has already been
+written and stamped, because the cancellation lands after the work.
+
+Three cuts bring it back to **1.7 s**, roughly where 2.12.0 was:
+
+- **`read_frontmatter_props`**, a batch reader: one pass for all fifteen scalars the hook needs instead of
+  one `sed | grep | sed` pipeline each. Forty-five processes become one, worth about 0.30 s. It returns one
+  line per property in the order asked, and applies the same quoted-versus-plain unescaping branch as the
+  single reader, which the suite checks value for value.
+- **One `jq` pass for the payload**, as `session_start.sh` already did, rather than three.
+- **The predicate reads `recap_status` and `recap_of` from that batch** rather than reopening the note.
+
+What this does not do is make the hook fit reliably. The remaining 1.7 s is a long tail of per-line process
+spawns across a 280-line script, with no single dominant cost, and the corpus holds transcripts ten times
+larger than the one measured. A plugin cannot raise the budget: timeouts on plugin-provided hooks are
+documented not to. Raising it is the user's to do, either with `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` in
+milliseconds or a per-hook `timeout` in a settings file, and `auto_recap: off` does **not** avoid the
+problem, since the hook was already at the limit without it.
+
 
 ### Added
 - **`auto_recap`**, off by default, with three values. `notify` stamps `recap_status` on a session's note as

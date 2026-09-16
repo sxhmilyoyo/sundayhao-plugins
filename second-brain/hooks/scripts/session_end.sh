@@ -6,13 +6,19 @@
 shopt -s nullglob
 
 INPUT=$(cat)
-TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
+# One jq pass for all three fields, as session_start.sh does: three separate calls cost
+# three processes, and this hook shares a 1.5-second budget with a memory copy, two
+# transcript scans and a full rewrite of the note.
+#
+# `reason` says why the session ended. `clear` and `resume` are not endings: /clear keeps
+# the same session id and resume switches away from a conversation that stays resumable,
+# so neither may stamp a recap request (1.3 of the recap plan).
+{
+    IFS= read -r TRANSCRIPT_PATH
+    IFS= read -r CWD_INPUT
+    IFS= read -r REASON_INPUT
+} < <(echo "$INPUT" | jq -r '.transcript_path // "", .cwd // "", .reason // ""')
 SESSION_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
-CWD_INPUT=$(echo "$INPUT" | jq -r '.cwd // empty')
-# Why the session ended. `clear` and `resume` are not endings: /clear keeps the same
-# session id and resume switches away from a conversation that stays resumable, so
-# neither may stamp a recap request (1.3 of the recap plan).
-REASON_INPUT=$(echo "$INPUT" | jq -r '.reason // empty')
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,25 +67,44 @@ if recap_lock_acquire "$SESSION_FOLDER" 3; then
 fi
 
 # ── 1. Read properties to preserve across overwrite ───────────────────
+# One pass for all thirteen scalars, in the order listed. Read one at a time this cost
+# three processes each, about 0.28 s of fork overhead, on a hook that shares a
+# 1.5-second budget with a memory copy, two transcript scans and a rewrite — enough on a
+# real session to have the whole hook cancelled after doing its work.
 SESSION_MD="$SESSION_FOLDER/session.md"
-SCHEMA_VERSION=$(read_frontmatter_prop "$SESSION_MD" "schema_version")
-STARTED_AT=$(read_frontmatter_prop "$SESSION_MD" "started_at")
-PROJECT=$(read_frontmatter_prop "$SESSION_MD" "project")
-CWD=$(read_frontmatter_prop "$SESSION_MD" "cwd")
-GIT_BRANCH=$(read_frontmatter_prop "$SESSION_MD" "git_branch")
-DOCS_PATH_PROP=$(read_frontmatter_prop "$SESSION_MD" "docs_path")
-DATE_PROP=$(read_frontmatter_prop "$SESSION_MD" "date")
-# Properties set mid-session by user (via session-manager skill)
+{
+    IFS= read -r SCHEMA_VERSION
+    IFS= read -r STARTED_AT
+    IFS= read -r PROJECT
+    IFS= read -r CWD
+    IFS= read -r GIT_BRANCH
+    IFS= read -r DOCS_PATH_PROP
+    IFS= read -r DATE_PROP
+    # Set mid-session by the user through the session-manager skill, and after the
+    # session ends by the recap, so they are preserved rather than recomputed.
+    IFS= read -r SUMMARY
+    IFS= read -r SESSION_NAME
+    IFS= read -r FORKED_FROM
+    IFS= read -r FORKED_FROM_NAME
+    IFS= read -r DELEGATED_BY
+    IFS= read -r DELEGATED_BY_NAME
+    # The two the predicate needs, read here with the rest rather than separately after
+    # the rewrite. Same values either way, since the rewrite preserves both through the
+    # unknown-property loop, and reading them under the lock with everything else is one
+    # fewer process and one fewer chance to see a half-written note.
+    IFS= read -r RECAP_STATUS
+    IFS= read -r RECAP_OF
+} < <(read_frontmatter_props "$SESSION_MD" \
+        schema_version started_at project cwd git_branch docs_path date \
+        summary session_name forked_from forked_from_name delegated_by delegated_by_name \
+        recap_status recap_of)
+
+# tags is a list, so it needs the list reader rather than the scalar batch.
 TAGS=$(read_frontmatter_list "$SESSION_MD" "tags")
-SUMMARY=$(read_frontmatter_prop "$SESSION_MD" "summary")
-SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
+
 # Lineage: the transcript is complete by now, so backfill what the fork-time scan
 # may have missed while the file was still being written asynchronously.
-FORKED_FROM=$(read_frontmatter_prop "$SESSION_MD" "forked_from")
 [ -n "$FORKED_FROM" ] || FORKED_FROM=$(transcript_forked_from "$TRANSCRIPT_PATH" "$SESSION_ID")
-FORKED_FROM_NAME=$(read_frontmatter_prop "$SESSION_MD" "forked_from_name")
-DELEGATED_BY=$(read_frontmatter_prop "$SESSION_MD" "delegated_by")
-DELEGATED_BY_NAME=$(read_frontmatter_prop "$SESSION_MD" "delegated_by_name")
 
 # A fork detected only now has an id but no name, so resolve the name here too.
 # Tags are deliberately not backfilled: inheritance belongs at registration,
@@ -254,19 +279,15 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
     # wait at all, and a contended one gives up in 0.1 s rather than queueing behind a
     # recap mid-write for a stamp the transition table would refuse anyway.
     export SECOND_BRAIN_LOCK_ATTEMPTS=2
-    CURRENT=$(read_frontmatter_prop "$SESSION_MD" "recap_status")
+    # Both came off the note in the batch read above, so this costs no processes.
+    CURRENT="$RECAP_STATUS"
     if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
-        # Read second, and only here, because a note already holding `requested`,
-        # `running`, `done` or `failed` is settled and every read costs a process on a
-        # hook with a fixed budget.
-        #
-        # The note decides whether this is a recap session, never
+        # RECAP_OF is what decides whether this is a recap session, never
         # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
         # note is the record. If registration ever failed to write it, one redundant
         # recap is wasted, whereas trusting a marker here would let any process that
         # inherited one stamp a working session `exempt` and lose its knowledge. The
         # cheaper failure wins.
-        RECAP_OF=$(read_frontmatter_prop "$SESSION_MD" "recap_of")
         if [ -n "$RECAP_OF" ]; then
             # A recap session: exempt for good, so a recap never recaps itself.
             [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1

@@ -58,6 +58,55 @@ read_frontmatter_prop() {
     esac
 }
 
+# Read many scalar frontmatter properties in one pass, in the order asked for.
+#
+# read_frontmatter_prop costs three processes per call — sed, grep, sed — and the end
+# hook made fourteen such calls, about 0.28 s of pure fork overhead on a hook that
+# shares a 1.5-second budget with everything else it has to do. This reads the
+# frontmatter once and prints one line per requested property, so the same fourteen
+# values cost one process rather than forty-two.
+#
+# Unescaping is done here in the loop rather than in awk, and it is free: both
+# yaml_unescape and printf are builtins, so no property costs a process. The framing is
+# one value per line, which is safe because every writer strips newlines from a scalar
+# before storing it, and unescaping only turns `\\` and `\"` back into `\` and `"`.
+#
+# Args: $1=absolute_file_path, then one or more property names
+# Returns: one value per line, in the order requested, empty for any that is absent
+read_frontmatter_props() {
+    local file="$1"; shift
+    local raw
+    if [ ! -f "$file" ]; then
+        for raw in "$@"; do printf '\n'; done
+        return 0
+    fi
+    while IFS= read -r raw; do
+        # The same branch read_frontmatter_prop makes, and for the same reason: a
+        # double-quoted value was escaped on the way in, a plain one was not, and YAML
+        # does no escape processing in a plain scalar.
+        case "$raw" in
+            '"'*'"')
+                raw="${raw#\"}"
+                yaml_unescape "${raw%\"}"
+                printf '\n'
+                ;;
+            *) printf '%s\n' "$raw" ;;
+        esac
+    done < <(SB_PROPS="$*" awk '
+        BEGIN { fm = 0; n = split(ENVIRON["SB_PROPS"], want, " ") }
+        /^---$/ { fm++; if (fm == 2) exit; next }
+        fm != 1 { next }
+        {
+            key = $0; sub(/:.*/, "", key)
+            val = $0; sub(/^[^:]*:[ \t]*/, "", val)
+            # First occurrence wins, matching the single readers `head -1`.
+            if (!(key in seen)) seen[key] = val
+        }
+        END { for (i = 1; i <= n; i++) print (want[i] in seen) ? seen[want[i]] : "" }
+    ' "$file")
+    return 0
+}
+
 # Read a YAML list property directly from a markdown file (no CLI).
 # Args: $1=absolute_file_path, $2=property_name
 # Returns: comma-separated string (e.g., "item1, item2")
@@ -543,6 +592,7 @@ tags:" "$body"
 export -f yaml_escape
 export -f yaml_unescape
 export -f read_frontmatter_prop
+export -f read_frontmatter_props
 export -f read_frontmatter_list
 export -f set_frontmatter_prop
 export -f write_session_md

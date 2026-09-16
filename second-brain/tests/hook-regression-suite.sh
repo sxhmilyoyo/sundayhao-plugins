@@ -662,6 +662,54 @@ chk "and still excludes done, exempt and running" \
     "$(awk -F'\t' '$7 == "done" || $7 == "exempt" || $7 == "running"' "$CC/ccfind/sessions.tsv" \
        | awk -F'\t' '$7 == "-" || $7 == "requested" || $7 == "failed"' | grep -c .)" "0"
 
+echo "== 33. the batched reader agrees with the single one, and the end hook uses it =="
+# The end hook shares a 1.5-second SessionEnd budget with a memory copy, two transcript
+# scans and a full rewrite. Read one at a time, its property reads cost three processes
+# each and the hook was cancelled mid-exit on a real session. This guards both halves of
+# the fix: that the batch reader returns exactly what the single reader would, and that
+# the hook keeps using it.
+B1="$ROOT/batch.md"
+printf -- '---\nschema_version: "2.1"\nsession_name: "fix the \\"auth\\" bug"\nproject: cc\nwindows_path: C:\\\\srv\\new\nquoted_empty: ""\nbare_key:\nsummary: "did it"\ntags:\n  - a\n  - has:colon\n---\n\n# body\n' > "$B1"
+BATCH_PROPS="schema_version session_name project windows_path quoted_empty bare_key summary absent_key"
+# Every value, compared against the reader it replaces. A quoted scalar must come back
+# unescaped exactly once; a plain one must keep its backslashes untouched.
+MISMATCH=$(bash -c '
+    source "$1" >/dev/null 2>&1
+    n=0
+    { for p in $3; do
+        IFS= read -r batched
+        single=$(read_frontmatter_prop "$2" "$p")
+        [ "$batched" = "$single" ] || { printf "%s " "$p"; n=$((n+1)); }
+      done; } < <(read_frontmatter_props "$2" $3)
+    exit 0' _ "$HELPL" "$B1" "$BATCH_PROPS")
+chk "every batched value matches the single reader" "${MISMATCH:-none}" "none"
+chk "a quoted scalar is unescaped once" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_props "$2" session_name' _ "$HELPL" "$B1")" \
+    'fix the "auth" bug'
+chk "a plain scalar keeps its backslashes" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_props "$2" windows_path' _ "$HELPL" "$B1")" \
+    'C:\\srv\new'
+# Order and arity are the contract: callers read the values back positionally, so a
+# missing or reordered line silently assigns one property's value to another.
+chk "one line per property, in order, absent ones empty" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_props "$2" absent_key project absent2 summary' _ "$HELPL" "$B1" | tr '\n' '|')" \
+    "|cc||did it|"
+chk "a missing file still yields one line per property" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_props /nope/none a b c' _ "$HELPL" | wc -l | tr -d ' ')" "3"
+# A list item carrying a colon must not be mistaken for a key of that name.
+chk "a list item is not read as a property" \
+    "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_props "$2" has' _ "$HELPL" "$B1")" ""
+# Structural, because a timing assertion would be flaky on a loaded machine while the
+# thing that actually regressed is the number of processes the hook spawns.
+chk "the end hook batches its property reads" \
+    "$(grep -c 'read_frontmatter_props' "$PLUGIN/hooks/scripts/session_end.sh")" "1"
+chk "and reads the payload in one jq pass" \
+    "$(grep -c 'echo "\$INPUT" | jq' "$PLUGIN/hooks/scripts/session_end.sh")" "1"
+# Two are legitimate: the folder rebuild path and nothing else. This goes red if
+# per-property reads creep back into the hook body.
+chk "no per-property reads remain in the end hook" \
+    "$(grep -c 'read_frontmatter_prop "' "$PLUGIN/hooks/scripts/session_end.sh")" "0"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are
