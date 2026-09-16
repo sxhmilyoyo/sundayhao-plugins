@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `recap_status.sh` is deliberately left alone. `EXIT` alone is correct there, and although an untrapped
   signal would leak its lock, that process is short-lived and the sixty-second staleness breaker covers it.
 
+  Worth being exact about what this covers, because it is narrower than it sounds. The traps are installed
+  after the recap stamp has already landed, so they govern the locked rewrite and nothing else. Everything
+  before that line runs with no trap at all, so a signal there takes the default action and terminates with
+  nothing stamped — which was equally true before this change, since the previous version cleared its traps
+  before the predicate ran. This commit neither opened that window nor closed it; what made it small was
+  moving the stamp to the top in 2.15.0, so it is now one batched property read and one bounded grep wide.
+  There is therefore no trade here: during the rewrite the new behaviour dominates the old one on every axis.
+
+  One question is left open next to the traps rather than guessed at: which signal Claude Code uses to cancel
+  a hook. If it is SIGKILL then no trap takes part in a cancellation at all, the lock is leaked and broken
+  later by the staleness rule, and the TERM path matters only for a closing terminal, a manual kill or a
+  supervisor. The double-fork result points that way, since a tree-walking kill is what defeated a bare
+  `setsid`.
+
   This defect and a wrong conclusion I drew were the same thing. The SIGTERM differential I ran to justify
   the previous commit's reordering showed no difference between the two orders, and I read that as "the
   ordering does not matter" when the truth was "my instrument is broken": the trap swallowed the signal, so

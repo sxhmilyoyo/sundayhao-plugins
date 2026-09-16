@@ -169,6 +169,23 @@ if recap_lock_acquire "$SESSION_FOLDER" 3; then
     # conventional 128 plus signal number. The EXIT trap then fires and releases again,
     # which is a harmless no-op because releasing a lock this process no longer holds is
     # one already-failed rmdir.
+    #
+    # What these traps do and do not cover. They are installed here, after the recap
+    # stamp above has already landed, so they govern the locked rewrite and nothing else.
+    # The stretch from the top of the script to this line runs with no trap at all, which
+    # means a signal there takes the default action and terminates with nothing stamped.
+    # That was equally true before these traps were split, because the previous version
+    # cleared its traps before the predicate ran. Nothing here opened that window and
+    # nothing here can close it: what made it small was moving the stamp to the top, so it
+    # is now one batched property read and one bounded grep wide.
+    #
+    # Open question, deliberately not answered here: which signal Claude Code uses to
+    # cancel a hook. If it is SIGKILL then no trap of ours ever takes part in a
+    # cancellation, the lock is simply leaked and broken later by the sixty-second
+    # staleness rule, and everything below only matters for other senders — a closing
+    # terminal, a manual kill, a supervisor. The double-fork measurement points that way,
+    # since what defeated a bare setsid was a kill that walks the process tree. Worth
+    # settling before anyone builds on the TERM path.
     trap 'recap_lock_release "$SESSION_FOLDER"' EXIT
     trap 'recap_lock_release "$SESSION_FOLDER"; exit 143' TERM
     trap 'recap_lock_release "$SESSION_FOLDER"; exit 130' INT
