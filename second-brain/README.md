@@ -243,6 +243,24 @@ Once a recap finishes it writes the subject's `project`, `tags` and `summary` as
 read the whole conversation. Nothing is ever deleted: a retry updates the documents from the first attempt
 in place. To turn it all off again, `--set auto_recap off`; the properties already written are inert.
 
+**If you see `SessionEnd hook ... failed: Hook cancelled` on exit**, the hook ran out of time rather than
+breaking. Claude Code gives *all* SessionEnd hooks 1.5 seconds together, and on a session with a large
+transcript this one needs about 1.7. The note is normally written and stamped before the cancellation
+lands, so the message is usually noise, but on a slower run the end time and transcript pointer can be
+lost.
+
+A plugin cannot raise that budget: timeouts on plugin-provided hooks are documented not to. You can, in
+your own settings:
+
+```json
+// ~/.claude/settings.json
+"env": { "CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS": "5000" }
+```
+
+Note that the budget is shared, so other plugins with SessionEnd hooks are drawing from it too, and
+`auto_recap: off` does not avoid the problem: measured on a real session, the hook was already at 1.5 to
+1.6 seconds with the recap work switched off entirely.
+
 ---
 
 ## Layer 3: Context Retrieval — `knowledge-bank-lookup`
