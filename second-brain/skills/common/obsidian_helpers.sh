@@ -35,10 +35,27 @@ read_frontmatter_prop() {
     [ -f "$file" ] || return 0
     raw=$(sed -n '/^---$/,/^---$/p' "$file" \
         | grep "^${prop}:" | head -1 \
-        | sed "s/^${prop}: *//" | sed 's/^"//;s/"$//')
-    # Unquoting is not enough: the value was escaped on the way in, so a caller
-    # that writes it back would escape it again.
-    yaml_unescape "$raw"
+        | sed "s/^${prop}: *//")
+    # Unquoting is not enough: a double-quoted value was escaped on the way in, so
+    # a caller that wrote it back would escape it again. A plain scalar is the
+    # opposite case — YAML does no escape processing there, so its backslashes are
+    # literal and unescaping one would corrupt it. Which form it is decides.
+    #
+    # Both forms are common here even though every writer in this plugin quotes.
+    # Obsidian drops quotes it does not need when a person edits a note, which is
+    # why 118 of 524 session notes hold an unquoted project and 94 an unquoted
+    # session_name. A single-quoted scalar is deliberately not handled: there are
+    # zero in this vault, and the one value that does contain a double quote is
+    # still double-quoted, so that is the form the emitter reaches for.
+    case "$raw" in
+        '"'*'"')
+            raw="${raw#\"}"
+            yaml_unescape "${raw%\"}"
+            ;;
+        *)
+            printf '%s' "$raw"
+            ;;
+    esac
 }
 
 # Read a YAML list property directly from a markdown file (no CLI).

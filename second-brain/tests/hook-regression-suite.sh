@@ -253,6 +253,14 @@ T16="$ROOT/nasty.md"
 printf -- '---\nsession_name: "%s"\nsummary: ""\ntags:\n---\n\n# body\n' "$(printf '%s' "$NASTY" | sed 's/"/\\"/g')" > "$T16"
 chk "reading a quoted scalar returns the plain value" \
     "$(bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_prop "$2" session_name' _ "$HELP" "$T16")" "$NASTY"
+# A plain scalar is not escaped in YAML, so its backslashes are literal. Reading
+# one must not unescape, or a value nothing wrote as an escape gets rewritten.
+T16B="$ROOT/plain.md"
+{ printf -- '---\n'; printf 'plain_prop: C:\\\\srv\\new\n'; printf 'quoted_prop: "C:\\\\\\\\srv"\n'; printf 'unquoted: requested\n---\n'; } > "$T16B"
+rfp(){ bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_prop "$2" "$3"' _ "$HELP" "$T16B" "$1"; }
+chk "a plain scalar keeps its backslashes" "$(rfp plain_prop)" 'C:\\srv\new'
+chk "a quoted scalar is unescaped once"    "$(rfp quoted_prop)" 'C:\\srv'
+chk "a bare word is untouched"             "$(rfp unquoted)"    "requested"
 # set_frontmatter_prop must not let awk re-interpret the value it is given.
 bash -c 'source "$1" >/dev/null 2>&1; set_frontmatter_prop "$2" summary "$3"' _ "$HELP" "$T16" "$NASTY"
 chk "set_frontmatter_prop round-trips a quote" \
