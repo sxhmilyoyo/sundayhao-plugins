@@ -7,6 +7,29 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.1] - 2026-09-16
+
+### Fixed
+- **The regression suite could open real Herdr panes.** It split the pane of the session running the tests,
+  twice, and pointed each new pane at the scratch vault the suite then deleted, so both arrived dead. Only
+  a test fault, never reachable in normal use, but it left debris in a real workspace.
+
+  Clearing `HERDR_PANE_ID` per invocation was not enough: the launcher resolves the binary itself with
+  `command -v herdr`, falling back to `$HOME/.local/bin/herdr`, so any call site that forgot to clear the
+  detection variables, or that reached the launcher through an `eval` of a printed command, picked up the
+  real binary and a real pane id from the ambient environment. The suite now makes the environment hostile
+  once at the top instead of per call site: a tripwire `herdr` first on `PATH` that records the attempt and
+  exits non-zero, so `command -v` can never resolve the real binary and the fallback is unreachable, and the
+  detection variables cleared for every child so the launcher's gate is shut unless a case opens it with a
+  stub of its own. Case 36 asserts the tripwire log is empty, so reaching the real Herdr is a test failure
+  rather than a surprise in someone's terminal.
+
+  The specific call site that leaked is not identified. With the guard in place nothing reaches Herdr, and a
+  diagnostic run with the gate forced open produced no tripwire entry either, so the reproduction is gone
+  along with the hole. What is known: the path in both panes was the suite's scratch vault, and the command
+  carried a real `SECOND_BRAIN_PARENT_PID`, which only `--auto` sets. The likely candidate is the one
+  `--auto` case that inherits the ambient `CLAUDE_PID`.
+
 ## [2.14.0] - 2026-09-16
 
 Stage 2 of the recap work: `auto_recap: on` starts the recap itself, in a session of its own, inside

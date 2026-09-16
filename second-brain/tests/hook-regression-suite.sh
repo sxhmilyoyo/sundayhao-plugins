@@ -33,6 +33,36 @@ cat > "$CFGF" << CFG
   }
 }
 CFG
+# ── The real Herdr is out of reach for the whole run ─────────────────────────────
+# This suite opened two real panes in the user's workspace before this guard existed,
+# splitting the pane of the session that ran the tests and pointing the new ones at a
+# scratch vault that the suite then deleted. Two panes, both dead on arrival.
+#
+# Clearing HERDR_PANE_ID per invocation was not enough, because the launcher resolves the
+# binary itself: `command -v herdr`, falling back to $HOME/.local/bin/herdr. Any case that
+# forgot to clear the variables, or that reached the launcher through an `eval` of a
+# printed command, got the real binary and a real pane id from the ambient environment.
+#
+# So the environment is made hostile once, here, rather than per call site:
+#   - a tripwire `herdr` first on PATH, which records the attempt and fails, so
+#     `command -v herdr` can never resolve to the real binary and the fallback is dead;
+#   - the Herdr detection variables cleared for every child, so the launcher's gate is
+#     shut unless a case deliberately opens it with a stub of its own.
+# A case that wants the Herdr path puts its own stub earlier on PATH (see case 34).
+# The tripwire log is asserted empty at the end: reaching the real Herdr is a test
+# failure, not a surprise in someone's terminal.
+mkdir -p "$ROOT/bin"
+TRIPWIRE="$ROOT/herdr-tripwire.log"
+cat > "$ROOT/bin/herdr" << TRIP
+#!/bin/bash
+printf 'REAL HERDR REACHED: %s\n' "\$*" >> "$TRIPWIRE"
+echo "herdr: the regression suite must never call the real binary" >&2
+exit 1
+TRIP
+chmod +x "$ROOT/bin/herdr"
+export PATH="$ROOT/bin:$PATH"
+export HERDR_ENV= HERDR_PANE_ID= HERDR_TAB_ID= HERDR_WORKSPACE_ID= TMUX_PANE=
+
 TODAY=$(date +%Y-%m-%d)
 PASS=0; FAIL=0
 ok(){ PASS=$((PASS+1)); echo "  PASS  $1"; }
@@ -811,6 +841,21 @@ i=0; while [ ! -f "$SDR/forked" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); 
 kill -9 $SDP 2>/dev/null; wait $SDP 2>/dev/null || true
 sleep 5
 chk "a detached child outlives a killed parent" "$([ -f "$SDR/survived" ] && echo survived || echo killed)" "survived"
+
+echo "== 36. the suite never touches the real Herdr =="
+# Load-bearing, not hygiene. Before this guard the suite split the pane of the session
+# running it, twice, and pointed the new panes at a scratch vault it then deleted. Any
+# entry here names a call site that resolved the real binary from the ambient environment.
+if [ -s "$TRIPWIRE" ]; then
+    no "no call site reached the real herdr"
+    echo "         attempts:"; sed 's/^/           /' "$TRIPWIRE"
+else
+    ok "no call site reached the real herdr"
+fi
+# The gate the launcher itself checks, so a case that opens the Herdr path has to say so.
+# `${VAR-x}` not `${VAR:-x}`: these are set-but-empty on purpose, and the colon form
+# reports an empty value as unset, which made this assertion fail against itself.
+chk "Herdr detection is off by default"  "${HERDR_ENV-MISSING}${HERDR_PANE_ID-MISSING}" ""
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
