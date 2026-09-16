@@ -31,6 +31,13 @@ Creating a session's folder and note at the moment the session begins, so later 
 to update rather than invent.
 _Avoid_: init, bootstrap, provisioning
 
+**Description**:
+The part of a session note that says what the work was about: its project, its tags and its summary.
+Registration records what is visible at launch; the description records what the work turned out to
+be, so it is written by a person while the session runs or filled once the conversation can be read
+whole.
+_Avoid_: session metadata, derived metadata, model-derived fields, tags and summary
+
 ### Session lineage
 
 **Fork session**:

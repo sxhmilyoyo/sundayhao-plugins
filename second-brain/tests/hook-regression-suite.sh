@@ -39,7 +39,6 @@ ok(){ PASS=$((PASS+1)); echo "  PASS  $1"; }
 no(){ FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 chk(){ [ "$2" = "$3" ] && ok "$1" || no "$1 (expected '$3', got '$2')"; }
 prop(){ sed -n '/^---$/,/^---$/p' "$1" 2>/dev/null | grep "^$2:" | head -1 | sed "s/^$2: *//; s/^\"//; s/\"$//"; }
-has(){ [ -n "$1" ] && echo yes || echo no; }
 # HERDR_PANE_ID/TMUX_PANE cleared so the rename helper cannot touch the real terminal
 run(){ local s="$1"; shift; printf '%s' "$1" | env HOME="$H" HERDR_PANE_ID= TMUX_PANE= "$PLUGIN/hooks/scripts/$s" >/dev/null 2>&1; }
 ins_after(){ awk -v p="$2" '{print} $0==p{print "  - kepttag"}' "$1" > "$1.t" && mv "$1.t" "$1"; }
@@ -171,22 +170,20 @@ chk "--configure preserves the map"     "$(jq -r '.project_domains["/tmp/mapped"
 chk "config reader returns a value"     "$(gv auto_recap off)" "notify"
 chk "config reader falls back"           "$(gv nonesuch off)"   "off"
 
-echo "== 11. the injection gate: only a named, unstamped, lineage-free startup =="
+echo "== 11. registration writes what it can see and asks for nothing =="
+# A name and a domain are facts at launch; a description is not. The start hook no
+# longer asks the model for one and no longer stamps the note (ADR-0006), because the
+# request was measured to be ignored. The inverted assertion is the guard: re-adding an
+# injection fails here. The description is now written by the recap, after the session
+# ends, which is prose in the recap skill rather than shell, so its coverage is the
+# plan's acceptance run and not this suite.
 S9=99999999-9999-9999-9999-999999999991
 O=$(start $S9 startup named-one /tmp/mapped); M9="$KB/_sessions/$TODAY/$S9/session.md"
-chk "a named startup is asked to derive"     "$(inj "$O")" yes
-chk "the request is stamped on the note"     "$(has "$(prop "$M9" metadata_requested_at)")" yes
+chk "a named startup is asked for nothing"   "$(inj "$O")" no
 chk "session_name comes from stdin"          "$(prop "$M9" session_name)" "named-one"
 chk "project comes from the map"             "$(prop "$M9" project)" "cc"
-chk "the instruction names the domain hint"  "$(case "$O" in *"cc"*) echo yes ;; *) echo no ;; esac)" yes
-O=$(start $S9 startup named-one /tmp/mapped)
-chk "a stamped session is not re-asked"      "$(inj "$O")" no
-SA=99999999-9999-9999-9999-999999999992
-O=$(start $SA clear named-two /tmp/mapped)
-chk "/clear is never asked"                  "$(inj "$O")" no
 SB=99999999-9999-9999-9999-999999999993
 O=$(start $SB startup "" /tmp/mapped)
-chk "an unnamed session is not asked"        "$(inj "$O")" no
 chk "but its project is still resolved"      "$(prop "$KB/_sessions/$TODAY/$SB/session.md" project)" "cc"
 
 echo "== 12. a delegation marker is honoured only at startup =="
@@ -196,7 +193,6 @@ O=$(start $SC startup named-four /tmp/work SECOND_BRAIN_DELEGATED_BY=$S9 SECOND_
 MC="$KB/_sessions/$TODAY/$SC/session.md"
 chk "delegated_by is recorded"           "$(prop "$MC" delegated_by)" "$S9"
 chk "delegated_by_name is recorded"      "$(prop "$MC" delegated_by_name)" "named-one"
-chk "a delegate is never asked to derive" "$(inj "$O")" no
 chk "a delegate copies the launcher tags" "$(grep -c 'kepttag' "$MC")" "1"
 chk "a delegate inherits the domain"     "$(prop "$MC" project)" "cc"
 chk "the body carries a Lineage section" "$(grep -c '^## Lineage' "$MC")" "1"
@@ -235,9 +231,13 @@ sed -i '' 's/^forked_from_name: .*/forked_from_name: ""/' "$MH"
 run session_end.sh "{\"transcript_path\":\"$H/.claude/projects/proj/$SH.jsonl\",\"cwd\":\"/tmp/mapped\",\"reason\":\"other\"}"
 chk "forked_from_name backfilled at exit" "$(prop "$MH" forked_from_name)" "named-one"
 chk "Lineage regenerated at exit"         "$(grep -c '^## Lineage' "$MH")" "1"
-STAMP9=$(prop "$M9" metadata_requested_at)
+# The property is planted rather than written: nothing stamps it since ADR-0006 removed
+# the start-time request. The assertion stays because it is load-bearing for recap_status,
+# which reaches the note through the same unknown-property preserve loop, and because the
+# notes already carrying a stamp must keep it.
+awk '$0=="tags:"{print "metadata_requested_at: \"2026-09-15T00:00:00\""} {print}' "$M9" > "$M9.t" && mv "$M9.t" "$M9"
 run session_end.sh "{\"transcript_path\":\"$H/.claude/projects/proj/$S9.jsonl\",\"cwd\":\"/tmp/mapped\",\"reason\":\"other\"}"
-chk "the stamp survives the end rewrite"  "$(prop "$M9" metadata_requested_at)" "$STAMP9"
+chk "a planted stamp survives the end rewrite" "$(prop "$M9" metadata_requested_at)" "2026-09-15T00:00:00"
 run session_end.sh "{\"transcript_path\":\"$H/.claude/projects/proj/$SC.jsonl\",\"cwd\":\"/tmp/work\",\"reason\":\"other\"}"
 chk "delegated_by survives the end rewrite"      "$(prop "$MC" delegated_by)" "$S9"
 chk "delegated_by_name survives the end rewrite" "$(prop "$MC" delegated_by_name)" "named-one"
@@ -313,19 +313,6 @@ SK20 --set knowledge_bank_path /nonexistent && no "--set refuses the kb path" ||
 chk "the kb path is untouched"   "$(jq -r '.knowledge_bank_path' "$C20")" "$KB"
 SK20 --set project_domains oops && no "--set refuses the domain map" || ok "--set refuses the domain map"
 chk "the domain map is still an object" "$(jq -r '.project_domains|type' "$C20")" "object"
-
-echo "== 21. the one-shot request is not consumed unless it was made =="
-S21=77777777-7777-7777-7777-777777777771
-O=$(start $S21 startup named-21 /tmp/mapped); M21="$KB/_sessions/$TODAY/$S21/session.md"
-chk "the request was emitted"        "$(inj "$O")" yes
-chk "and only then stamped"          "$(has "$(prop "$M21" metadata_requested_at)")" yes
-# A session that already carries tags has nothing to derive.
-S22=77777777-7777-7777-7777-777777777772
-start $S22 startup named-22 /tmp/mapped >/dev/null
-M22="$KB/_sessions/$TODAY/$S22/session.md"
-sed -i '' 's/^metadata_requested_at: .*//' "$M22"; ins_after "$M22" "tags:"
-O=$(start $S22 startup named-22 /tmp/mapped)
-chk "an already-tagged session is not asked" "$(inj "$O")" no
 
 echo "== 22. a named session is still collectable as a ghost =="
 GL="$PLUGIN/skills/kb-lint/scripts/lint_ghost_folders.sh"

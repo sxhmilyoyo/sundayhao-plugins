@@ -7,6 +7,49 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] - 2026-09-15
+
+The description of a session — its project, tags and summary — is no longer asked for when the session
+starts. See `docs/adr/0006-the-description-is-written-after-the-session-ends.md`. This entry covers the
+first commit of the series; the recap machinery that takes over the writing follows in the next.
+
+### Removed
+- **The start-time derivation request and its stamp.** 2.12.0 had `session_start.sh` inject an
+  instruction asking the model to run the session-manager skill in automatic mode, and stamp
+  `metadata_requested_at` so it asked only once. Measured on the first real session to carry it, the
+  instruction was ignored: five user prompts and thirty-nine assistant turns produced no tags, no
+  property write and no skill invocation, while the stamp recorded a request that was never carried out.
+  A hook's `additionalContext` places text in the model's context and compels nothing, so a request made
+  that way cannot be relied on. The recap, which runs after a session ends and reads the whole
+  conversation, writes the description instead (ADR-0006).
+- `metadata_requested_at` is no longer written by anything. It stays on the notes that already carry it,
+  travelling through the end hook's unknown-property preserve loop as before: it is inert, it records
+  that a request was made on a day when one was, and removing it would be a delete for tidiness
+  (ADR-0001). It is deliberately still absent from `KNOWN_PROPS`.
+
+### Changed
+- `skills/session-manager/SKILL.md` states ownership by stage rather than by writer: the hooks seed at
+  registration and never overwrite, the skill is the only writer while a session runs, and the recap
+  writes the description once the session has ended. The automatic-mode paragraph, which existed only to
+  respond to the removed instruction, is gone.
+- `skills/session-manager/tag-canonicalization.md` gives each mode exactly one writer. Its step 4 opened
+  with the Obsidian CLI `property:set` command before the modes split, so a recap following it literally
+  would have written tags through the vault, outside the lock the status writer holds, and either
+  duplicated or contradicted the write inside it. The CLI command now belongs to interactive mode;
+  automatic mode produces the canonical list and hands it to `recap_status.sh --tags`, writing nothing
+  itself. Automatic mode is triggered by a recap describing an ended session, and may coin a tag the
+  vault has never seen only on repeated evidence in the conversation, recording it as a proposal
+  otherwise.
+- Registration keeps every mechanical seed it had: the domain from the directory map, fork and delegate
+  lineage and inheritance, the naming of an unnamed delegate, and the Herdr pane and agent rename.
+
+### Fixed
+- `tests/hook-regression-suite.sh` asserts the absence: case 11 now checks that a named startup is asked
+  for nothing, which fails if an injection is ever re-added, and case 15 plants
+  `metadata_requested_at` by hand so the unknown-property survival assertion still guards the preserve
+  loop that `recap_status` depends on. Nine assertions that tested the removed mechanism are gone, 98
+  remain green.
+
 ## [2.12.0] - 2026-09-15
 
 Session metadata is now seeded when a session starts instead of waiting to be asked for. See

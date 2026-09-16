@@ -42,8 +42,14 @@ takes its subject's domain rather than the bank's own, since the bank is not a d
 
 Every consumer validates the value against the configured domain set before acting on it. A value
 outside the set is treated exactly like an empty one: unresolved. Nothing files knowledge under it, and
-nothing launches unattended work for it; the need for a decision is surfaced to a person instead. This is
-what makes leaving old notes alone safe, because a legacy basename is non-empty but is not a domain.
+the need for a decision is surfaced to a person instead. This is what makes leaving old notes alone safe,
+because a legacy basename is non-empty but is not a domain.
+
+Launching a recap is the one exception, added by
+[ADR-0006](0006-the-description-is-written-after-the-session-ends.md). The recap is where the domain for
+work in an unmapped directory is decided, so refusing to launch without one would block the value on the
+only thing that can supply it. A recap that still cannot place the work writes what needs no domain,
+leaves the property empty, and marks the subject failed, which is how the decision reaches a person.
 
 Existing notes keep their basenames. They are not migrated, because a basename cannot be turned into a
 domain without knowing what the session was about, and guessing that retroactively is how the wrong

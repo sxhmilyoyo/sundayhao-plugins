@@ -27,6 +27,11 @@ The read-only rule is narrowed, not dropped: recap writes `recap_`-prefixed prop
 hooks own everything else, and the session-manager skill leaves `recap_` properties alone. The
 SessionEnd rewrite must preserve properties it does not know about, which it now does.
 
+Narrowed again by [ADR-0006](0006-the-description-is-written-after-the-session-ends.md): the recap also
+writes the subject session's `project`, `tags` and `summary`, which no longer have a writer at session
+start. Ownership now reads by stage rather than by writer. Hooks seed at registration, the
+session-manager skill writes while a session runs, and the recap writes once it has ended.
+
 `recap_status` takes one of `requested`, `running`, `done`, `failed`, `exempt`, and each value has exactly
 one writer: the SessionEnd hook, the launcher once the recap session starts, the recap skill's final
 phase, the launcher's exit check, and the SessionEnd hook again for sessions that are never recapped.

@@ -3,11 +3,11 @@
 # metadata a session can be recognised by later: its name, its knowledge-bank
 # domain, and for a fork or a delegate the lineage and tags it inherits.
 #
-# Ownership. This hook seeds a note at registration; the session-manager skill is
-# the only mid-session writer; nothing here overwrites a non-empty value. What
-# cannot be derived mechanically — the tags of an ordinary named session — is not
-# guessed: the hook asks the model to run the skill and stamps the note, so the
-# request is made once rather than on every later start.
+# Ownership reads by stage (ADR-0002 as amended by ADR-0006). This hook seeds what
+# registration can see and never overwrites a value that is already there. The
+# session-manager skill is the only writer while the session runs. The recap writes the
+# session's description — its project, tags and summary — once the session has ended,
+# reading the whole conversation rather than guessing from a name at launch.
 
 INPUT=$(cat)
 # One jq pass for all five fields. `source` distinguishes a genuine launch from a
@@ -129,10 +129,9 @@ if [ ! -f "$SESSION_MD" ]; then
     FORKED_FROM=$(transcript_forked_from "$TRANSCRIPT_PATH" "$SESSION_ID")
 
     # A fork continues a conversation and a delegate carries out work for one, so
-    # both begin from the metadata of the session they came from. An untagged
-    # source leaves them untagged rather than falling through to the model: a
-    # derivation request would land in the middle of a fork's conversation or on
-    # top of a delegate's first instruction.
+    # both begin from the metadata of the session they came from. An untagged source
+    # leaves them untagged: nothing here invents a description, and the recap writes
+    # one for the source and for this session after each has ended (ADR-0006).
     # A session can be both forked and declared-delegated, so both names are
     # resolved; the fork's parent is the one metadata is inherited from, being the
     # conversation this one continues.
@@ -222,44 +221,9 @@ SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 # away from the session still using it.
 [ "$SOURCE" = "startup" ] && rename_terminal_window "$SESSION_NAME"
 
-# ââ Ask the model for what cannot be derived mechanically âââââââââââââââââââââ
-# Tags describe the work, which the name only hints at, so they are the model's to
-# choose. The gate is narrow on purpose: a genuine launch, no declared launcher, no
-# parent, a name to reason from, no tags already, and no stamp from a previous
-# start. The tags check matters for a session restarted under its own id, whose
-# note already carries inherited tags the instruction would otherwise contradict.
-INSTRUCTION=""
-STAMP_NOW=no
-if [ "$SOURCE" = "startup" ] \
-   && [ -z "$DELEGATED_BY" ] \
-   && [ -z "$(read_frontmatter_prop "$SESSION_MD" "forked_from")" ] \
-   && [ -n "$SESSION_NAME" ] \
-   && [ -z "$(read_frontmatter_list "$SESSION_MD" "tags")" ] \
-   && [ -z "$(read_frontmatter_prop "$SESSION_MD" "metadata_requested_at")" ]; then
-    STAMP_NOW=yes
-    PROJECT_NOW=$(read_frontmatter_prop "$SESSION_MD" "project")
-    TAG_HINTS=$(project_default_tags "$CWD")
-
-    INSTRUCTION="
-
-Automatic session-metadata derivation: this session's note carries a name but no tags. Once you have answered the first request, run the second-brain:session-manager skill in automatic mode to set them.
-- Session name: $SESSION_NAME
-- Resolved project: ${PROJECT_NOW:-none, leave it empty unless the work clearly belongs to one domain}
-- Tag hints for this directory: ${TAG_HINTS:-none}
-Automatic mode writes tags that already have a canonical form in the vault without asking, reports any tag it could not match to an existing one, and never interrupts with a prompt."
-fi
-
 # Inject system prompt with docs path
 emit_output "Session folder created: $SESSION_FOLDER
 
 Session docs path: $DOCS_PATH
 
-$DOCS_GUIDANCE$INSTRUCTION" "$EMIT_TITLE"
-
-# Stamped only after the request has been written out. Stamping first spent the
-# one-shot on any later failure — a timeout, a jq error, a full disk — and since
-# startup fires once per session id, the request could then never be made again.
-if [ "$STAMP_NOW" = "yes" ]; then
-    set_frontmatter_prop "$SESSION_MD" "metadata_requested_at" \
-        "$(date -u +%Y-%m-%dT%H:%M:%S)"
-fi
+$DOCS_GUIDANCE" "$EMIT_TITLE"

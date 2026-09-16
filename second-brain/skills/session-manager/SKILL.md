@@ -6,8 +6,12 @@ description: Set the current session's name, project, tags, or summary on its se
 # Session Manager
 
 You **own** four properties on the current session's note: `session_name`, `project`, `tags` and
-`summary`. The hooks seed a note when the session starts and never overwrite a value that is already
-there; from then on you are the only writer. Everything else on the note is theirs.
+`summary`. Ownership reads by stage. The hooks seed a note when the session starts and never overwrite a
+value that is already there. You are the only writer **while the session runs**. Once it has ended, the
+recap writes the session's description — its `project`, `tags` and `summary` — from the whole
+conversation, overwriting what is there, because by then it has more context than anyone had during the
+session ([ADR-0006](../../../docs/adr/0006-the-description-is-written-after-the-session-ends.md)).
+Everything else on the note belongs to the hooks.
 
 | Property | Type | Holds |
 |----------|------|-------|
@@ -20,10 +24,6 @@ there; from then on you are the only writer. Everything else on the note is thei
 set is unresolved, which is what a note written before this rule holds, so treat it as empty and set it
 properly rather than leaving it to be read as a domain.
 
-When the start hook's injected instruction names **automatic mode**, it is asking you to derive tags
-for a session it could name but not describe. Run the preflight, then set tags in the automatic mode of
-[tag-canonicalization.md](tag-canonicalization.md), which writes without prompting. Do it after you
-have answered the user's first request, never instead of it.
 
 ## Preflight
 
