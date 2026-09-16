@@ -7,6 +7,33 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.1] - 2026-09-16
+
+### Fixed
+- **A signal trap released the recap lock and then carried on holding nothing.** The end hook installed one
+  bare handler on `EXIT HUP INT TERM`. Bash runs a signal handler and then *resumes* the script, so on TERM
+  the hook released the lock and continued straight through the read-rebuild-write with nothing held. That is
+  precisely the lost-update window the lock exists to close: a `done` written by a recap in that gap would be
+  read, discarded and overwritten by the rewrite. It also made the hook ignore TERM outright, which is
+  surprising for anything a harness may signal before escalating.
+
+  Only `EXIT` wants a handler that returns. The three signals now exit, with the conventional 128 plus
+  signal number, so a TERM leaves exit 143, no lock, an intact note, and no unlocked rewrite. Verified in
+  isolation first, because the semantics are the whole bug: with a bare handler the line after the work
+  still runs, and with an exiting handler it does not.
+
+  `recap_status.sh` is deliberately left alone. `EXIT` alone is correct there, and although an untrapped
+  signal would leak its lock, that process is short-lived and the sixty-second staleness breaker covers it.
+
+  This defect and a wrong conclusion I drew were the same thing. The SIGTERM differential I ran to justify
+  the previous commit's reordering showed no difference between the two orders, and I read that as "the
+  ordering does not matter" when the truth was "my instrument is broken": the trap swallowed the signal, so
+  the hook completed either way. SIGKILL was the only instrument that could see it. The rule worth keeping
+  is that a hook under test must be killed with a signal it cannot trap, or the test measures the trap.
+
+- Three assertions guard the shape: no bare handler on a signal, every signal trap exits, and `EXIT` keeps
+  the one that returns. 228 pass.
+
 ## [2.15.0] - 2026-09-16
 
 Two rulings from the planning session, and a correctness fix its ordering argument uncovered.

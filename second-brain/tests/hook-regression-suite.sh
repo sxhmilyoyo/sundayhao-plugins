@@ -759,6 +759,18 @@ chk "the recap stamp precedes the lock" \
 chk "and precedes the note rewrite" \
     "$(awk '/^    STATUS=/{s=NR} /^write_session_md "\$SESSION_FOLDER/{w=NR} END{print (s>0 && w>0 && s<w) ? "yes" : "no"}' \
        "$PLUGIN/hooks/scripts/session_end.sh")" "yes"
+# Bash runs a signal handler and then resumes, so a handler that only releases the lock
+# leaves the rest of the read-rebuild-write running with nothing held — the exact
+# lost-update window the lock exists to close. A signal trap here must exit.
+chk "no bare handler on a signal" \
+    "$(grep -c "trap 'recap_lock_release \"\$SESSION_FOLDER\"' EXIT HUP INT TERM" \
+       "$PLUGIN/hooks/scripts/session_end.sh")" "0"
+chk "every signal trap exits" \
+    "$(awk '/^ *trap .*recap_lock_release/ && /TERM|INT|HUP/ { if ($0 !~ /exit /) bad++ } END{print bad+0}' \
+       "$PLUGIN/hooks/scripts/session_end.sh")" "0"
+chk "and EXIT still has one that returns" \
+    "$(grep -c "trap 'recap_lock_release \"\$SESSION_FOLDER\"' EXIT$" \
+       "$PLUGIN/hooks/scripts/session_end.sh")" "1"
 chk "and reads the payload in one jq pass" \
     "$(grep -c 'echo "\$INPUT" | jq' "$PLUGIN/hooks/scripts/session_end.sh")" "1"
 # Two are legitimate: the folder rebuild path and nothing else. This goes red if

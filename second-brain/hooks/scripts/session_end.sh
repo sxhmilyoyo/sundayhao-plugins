@@ -158,7 +158,21 @@ fi
 LOCKED=""
 if recap_lock_acquire "$SESSION_FOLDER" 3; then
     LOCKED=1
-    trap 'recap_lock_release "$SESSION_FOLDER"' EXIT HUP INT TERM
+    # Four traps, not one on four conditions. Bash runs a signal handler and then
+    # *resumes* the script, so a bare handler on TERM released the lock and carried
+    # straight on through the read-rebuild-write with nothing held — which is exactly
+    # the lost-update window the lock exists to close, since a `done` written by a recap
+    # in that gap would be read, discarded and overwritten by the rewrite. It also made
+    # the hook ignore TERM outright.
+    #
+    # Only EXIT wants a handler that returns. The signals have to exit, with the
+    # conventional 128 plus signal number. The EXIT trap then fires and releases again,
+    # which is a harmless no-op because releasing a lock this process no longer holds is
+    # one already-failed rmdir.
+    trap 'recap_lock_release "$SESSION_FOLDER"' EXIT
+    trap 'recap_lock_release "$SESSION_FOLDER"; exit 143' TERM
+    trap 'recap_lock_release "$SESSION_FOLDER"; exit 130' INT
+    trap 'recap_lock_release "$SESSION_FOLDER"; exit 129' HUP
 fi
 
 # One pass for all thirteen scalars, in the order listed. Read one at a time this cost
