@@ -25,6 +25,7 @@ INPUT=$(cat)
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/../../skills/common/get_kb_path.sh"
 source "$SCRIPT_DIR/../../skills/common/resolve_project.sh"
 source "$SCRIPT_DIR/../../skills/common/obsidian_helpers.sh"
@@ -37,21 +38,135 @@ DOCS_GUIDANCE="When generating working documents (designs, plans, reviews, SOPs,
 - docs/sops/       — standard operating procedures
 - docs/            — anything else (handoffs, quick-start guides, etc.)"
 
-# Emit the hook payload. Built with jq rather than a heredoc because two of the
-# strings it carries are chosen by a person: one quote in a session name would
-# otherwise produce invalid JSON and silence this hook for every consumer of it.
-# Args: $1=additionalContext, $2=sessionTitle (optional)
+# Emit the hook payload. Built with jq rather than a heredoc because three of the
+# strings it carries are chosen by a person or read off a note: one quote in a session
+# name would otherwise produce invalid JSON and silence this hook for every consumer.
+#
+# systemMessage sits beside hookSpecificOutput because it is a universal field, and it
+# carries anything meant for the user rather than for Claude: additionalContext is
+# delivered to Claude as a system reminder, so a retry command placed there would be
+# read by the one party that cannot run it.
+# Args: $1=additionalContext, $2=sessionTitle (optional), $3=systemMessage (optional)
 emit_output() {
-    local ctx="$1" title="${2:-}"
-    if [ -n "$title" ]; then
-        jq -n --arg ctx "$ctx" --arg title "$title" \
-            '{hookSpecificOutput: {hookEventName: "SessionStart",
-                                   additionalContext: $ctx,
-                                   sessionTitle: $title}}'
+    local ctx="$1" title="${2:-}" note="${3:-}"
+    jq -n --arg ctx "$ctx" --arg title "$title" --arg note "$note" '
+        {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}
+        | if $title != "" then .hookSpecificOutput.sessionTitle = $title else . end
+        | if $note  != "" then .systemMessage = $note else . end'
+}
+
+# ── Recap notice — shown to the user, never handed to Claude ─────────────────
+# What needs a person's attention: a recap that failed, and, once the hook launches
+# them itself, one that should have started and did not. Nothing here lists a recap
+# that is done, one that is exempt, a session never requested, or a recap session,
+# because a nudge is for work that stalled and the never-requested backlog is a batch
+# job for another day.
+#
+# One awk pass over a bounded window rather than read_frontmatter_prop per note:
+# measured at 0.25 s for the pass against 2.8 s for the helper over 54 notes, and this
+# hook shares its budget with registration. The scan accepts a status with or without
+# quotes, because the setter writes them quoted and Obsidian strips quotes it does not
+# need whenever a person saves a note, which has already happened to a fifth of the
+# values in this vault.
+# Args: $1=mode (notify|on)
+# Returns: the notice on stdout; empty when nothing needs attention
+recap_notice() {
+    local mode="$1" launcher now cands st nm folder label date_dir
+    local mtime age reason body="" count=0
+    [ -d "$KB_PATH/_sessions" ] || return 0
+    launcher="$PLUGIN_ROOT/hooks/scripts/recap_launcher.sh"
+    now=$(date +%s)
+
+    # Fourteen date directories, newest first, so the ordering inside each kind below
+    # is already newest-first and needs no second sort.
+    cands=$(find "$KB_PATH/_sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+        | sort -r | head -14 \
+        | while IFS= read -r d; do
+              find "$d" -mindepth 2 -maxdepth 2 -name session.md 2>/dev/null | sort -r
+          done \
+        | tr '\n' '\0' \
+        | xargs -0 awk '
+            function val(s) { sub(/^[a-z_]+:[[:space:]]*/, "", s); gsub(/^"|"$/, "", s); return s }
+            # The folder comes before the name because the name may be empty, and a
+            # run of tabs collapses into one separator when IFS is a tab: an unnamed
+            # session emitted as status, name, folder arrived as two fields and its
+            # folder read as its name, so the whole row was dropped. The only field
+            # allowed to be empty is the last one.
+            function emit() {
+                if (f == "" || ro != "") return
+                if (st == "failed" || st == "requested" || st == "running")
+                    print st "\t" f "\t" nm
+            }
+            FNR == 1 { emit(); fm = 0; st = ""; ro = ""; nm = ""; f = FILENAME }
+            /^---$/  { fm++; next }
+            fm != 1  { next }
+            /^recap_status:/ { st = val($0); next }
+            /^recap_of:/     { ro = val($0); next }
+            /^session_name:/ { nm = val($0); next }
+            END { emit() }
+        ' 2>/dev/null)
+    [ -n "$cands" ] || return 0
+
+    # A duration a person reads, not a number of seconds.
+    _ago() {
+        local s="$1"
+        if   [ "$s" -ge 86400 ]; then printf '%dd' $(( s / 86400 ))
+        elif [ "$s" -ge 3600 ];  then printf '%dh' $(( s / 3600 ))
+        else printf '%dm' $(( s / 60 )); fi
+    }
+
+    while IFS="$(printf '\t')" read -r st folder nm; do
+        [ -n "$folder" ] || continue
+        [ "$count" -lt 5 ] || break
+        folder="${folder%/session.md}"
+        date_dir=$(basename "$(dirname "$folder")")
+        # An unnamed session is still identifiable, and the first eight characters of
+        # the id are what the rest of this plugin shows for one.
+        label="${nm:-$(basename "$folder" | cut -c1-8)}"
+        mtime=$(stat -f %m "$folder/session.md" 2>/dev/null || echo "$now")
+        age=$(( now - mtime ))
+        case "$st" in
+            failed)
+                # The reason is the recap's, written to recap.log as `reason=<text>`
+                # before it marked the subject failed.
+                reason=$(grep 'reason=' "$folder/recap.log" 2>/dev/null | tail -1 | sed 's/.*reason=//')
+                body="$body
+- $date_dir $label — failed${reason:+: $reason} (see recap.log) — retry: $launcher --manual $folder"
+                count=$(( count + 1 )) ;;
+            requested)
+                # In notify mode nothing ever starts a recap, so a request is a pending
+                # to-do rather than a stall and needs no clock on it.
+                if [ "$mode" = "notify" ]; then
+                    body="$body
+- $date_dir $label — requested, not started — run: $launcher --manual $folder"
+                    count=$(( count + 1 ))
+                elif [ "$age" -ge 600 ]; then
+                    body="$body
+- $date_dir $label — requested $(_ago "$age") ago, never started — run: $launcher --manual $folder"
+                    count=$(( count + 1 ))
+                fi ;;
+            running)
+                # Only in `on` mode, and only when the note has not changed in two
+                # hours: the writer rewrites the file on every transition, so an
+                # untouched note means nothing has advanced. A stalled recap is a
+                # judgement from elapsed time, never a stored state.
+                if [ "$mode" = "on" ] && [ "$age" -ge 7200 ]; then
+                    body="$body
+- $date_dir $label — running $(_ago "$age") with no change — check its pane, or retry: $launcher --manual $folder"
+                    count=$(( count + 1 ))
+                fi ;;
+        esac
+    done < <(
+        printf '%s\n' "$cands" | grep '^failed	'    || true
+        printf '%s\n' "$cands" | grep '^requested	' || true
+        printf '%s\n' "$cands" | grep '^running	'   || true
+    )
+
+    [ "$count" -gt 0 ] || return 0
+    if [ "$count" -eq 1 ]; then
+        printf 'Second Brain: 1 recap needs attention%s' "$body"
     else
-        jq -n --arg ctx "$ctx" \
-            '{hookSpecificOutput: {hookEventName: "SessionStart",
-                                   additionalContext: $ctx}}'
+        printf 'Second Brain: %d recaps need attention%s' "$count" "$body"
     fi
 }
 
@@ -93,6 +208,17 @@ DELEGATED_BY_NAME=""
 if [ "$SOURCE" = "startup" ]; then
     DELEGATED_BY="${SECOND_BRAIN_DELEGATED_BY:-}"
     DELEGATED_BY_NAME="${SECOND_BRAIN_DELEGATED_BY_NAME:-}"
+fi
+
+# A recap session carries its subject the same way, inline on the launched command
+# (ADR-0003), and for the same reason: a marker in a pane's environment would make
+# every later session opened there register as a recap of something it never read.
+# The marker's job ends here. At exit, session_end.sh reads `recap_of` off the note
+# and never looks at this variable, so a stray one cannot exempt real work.
+RECAP_OF=""
+if [ "$SOURCE" = "startup" ]; then
+    RECAP_OF="${SECOND_BRAIN_RECAP_OF:-}"
+    while [ "${RECAP_OF%/}" != "$RECAP_OF" ] && [ "$RECAP_OF" != "/" ]; do RECAP_OF="${RECAP_OF%/}"; done
 fi
 
 # Resolved here rather than inside the note-creation branch below, because the
@@ -155,11 +281,34 @@ if [ ! -f "$SESSION_MD" ]; then
         [ -n "$INHERITED_PROJECT" ] && PROJECT="$INHERITED_PROJECT"
     fi
 
+    # A recap session takes its subject's domain, or its emptiness, and never the
+    # bank's own name: it runs with the vault as its working directory, which maps to
+    # no domain, while the work being described belongs wherever the subject filed it
+    # (ADR-0004). Validated, so a subject holding a legacy basename yields empty here
+    # rather than passing one on.
+    if [ -n "$RECAP_OF" ]; then
+        PROJECT=$(validate_project "$(read_frontmatter_prop \
+            "$RECAP_OF/session.md" "project")" "$KB_PATH")
+    fi
+
     TAGS_YAML=""
     if [ -n "$INHERITED_TAGS" ]; then
         TAGS_YAML=$(echo "$INHERITED_TAGS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' \
             | while read -r tag; do [ -n "$tag" ] && echo "  - $tag"; done)
     fi
+    # The one tag a hook writes, and the canonical spelling in this vault. A recap
+    # session is recognisable as one from its tags as well as from `recap_of`.
+    if [ -n "$RECAP_OF" ]; then
+        if [ -n "$TAGS_YAML" ]; then TAGS_YAML="$TAGS_YAML
+  - session-recap"; else TAGS_YAML="  - session-recap"; fi
+    fi
+
+    # Written only for a recap session, so an ordinary note gains no empty property.
+    # It is what makes a recap session identifiable after its marker is gone: the
+    # notice never lists one, and the end hook stamps it exempt for good.
+    RECAP_YAML=""
+    [ -n "$RECAP_OF" ] && RECAP_YAML="recap_of: \"$(yaml_escape "$RECAP_OF")\"
+"
 
     # Create session.md with full frontmatter in one atomic filesystem write.
     # Bypasses Obsidian CLI for reliability — CLI create can fail silently.
@@ -175,7 +324,7 @@ forked_from: \"$(yaml_escape "$FORKED_FROM")\"
 forked_from_name: \"$(yaml_escape "$FORKED_FROM_NAME")\"
 delegated_by: \"$(yaml_escape "$DELEGATED_BY")\"
 delegated_by_name: \"$(yaml_escape "$DELEGATED_BY_NAME")\"
-transcript_source:
+${RECAP_YAML}transcript_source:
 session_name: \"$(yaml_escape "$SESSION_TITLE")\"
 ended_at:
 duration_seconds:
@@ -204,13 +353,18 @@ if [ -n "$DELEGATED_BY" ] \
     set_frontmatter_prop "$SESSION_MD" "delegated_by_name" "$DELEGATED_BY_NAME"
 fi
 
-# A delegate whose launcher passed no name is named here, which is its only
-# chance: no later event carries a name for a session that never had one.
+# A delegate or a recap whose launcher passed no name is named here, which is its only
+# chance: no later event carries a name for a session that never had one. The launcher
+# normally passes one with -n; this covers the hand-run case.
 EMIT_TITLE=""
-if [ -z "$SESSION_TITLE" ] && [ -n "$DELEGATED_BY" ] \
+if [ -z "$SESSION_TITLE" ] \
    && [ -z "$(read_frontmatter_prop "$SESSION_MD" "session_name")" ]; then
-    EMIT_TITLE="delegate-${DELEGATED_BY_NAME:-${DELEGATED_BY:0:8}}"
-    set_frontmatter_prop "$SESSION_MD" "session_name" "$EMIT_TITLE"
+    if [ -n "$DELEGATED_BY" ]; then
+        EMIT_TITLE="delegate-${DELEGATED_BY_NAME:-${DELEGATED_BY:0:8}}"
+    elif [ -n "$RECAP_OF" ]; then
+        EMIT_TITLE="recap-$(basename "$RECAP_OF" | cut -c1-8)"
+    fi
+    [ -n "$EMIT_TITLE" ] && set_frontmatter_prop "$SESSION_MD" "session_name" "$EMIT_TITLE"
 fi
 
 SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
@@ -221,9 +375,15 @@ SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 # away from the session still using it.
 [ "$SOURCE" = "startup" ] && rename_terminal_window "$SESSION_NAME"
 
+# The notice is built only when the feature is on, so a switched-off plugin pays
+# nothing for it, and a broken config reads as off rather than as on.
+NOTICE=""
+RECAP_MODE=$(get_plugin_config_value auto_recap off)
+[ "$RECAP_MODE" != "off" ] && NOTICE=$(recap_notice "$RECAP_MODE")
+
 # Inject system prompt with docs path
 emit_output "Session folder created: $SESSION_FOLDER
 
 Session docs path: $DOCS_PATH
 
-$DOCS_GUIDANCE" "$EMIT_TITLE"
+$DOCS_GUIDANCE" "$EMIT_TITLE" "$NOTICE"

@@ -114,7 +114,6 @@ session-recap/
 ├── scripts/                          # Utility scripts
 │   ├── search_cross_references.sh   # Cross-reference discovery (multi-project)
 │   ├── count_wikilinks.sh           # WikiLink validation
-│   ├── detect_project.sh            # Project detection from paths
 │   ├── verify_quality.sh            # Quality verification
 │   ├── detect_external_docs.sh      # Investigation document detection
 │   ├── analyze_for_distillation.sh  # Distillation candidate analysis
@@ -259,14 +258,21 @@ Verify WikiLink count and categorization.
 - Target 15 WikiLinks for excellence
 - Categorizes by type (components, concepts, practices, sessions, MOCs)
 
-### detect_project.sh
-Detect project from file paths.
+### Project resolution (`../common/resolve_project.sh`)
 
-**Usage**:
+`project` names a knowledge-bank **domain**, one of the folders under `projects/`, never the directory the
+session ran in ([ADR-0004](../../../docs/adr/0004-project-names-a-knowledge-bank-domain.md)).
+
 ```bash
-./scripts/detect_project.sh /path/to/file.java
-# Output: [project-a] | [project-b] | cc | [project-c] | unknown
+source ../common/resolve_project.sh
+resolve_project "/path/to/cwd"    # a domain, or empty when the directory maps to none
+validate_project "$stored_value"  # the value, or empty when it is not a domain
+list_project_domains              # the whole set, one per line
 ```
+
+Empty is a real answer and means unresolved. The recap decides the domain in SKILL.md Phase 1.2 from three
+sources — the note, the directory map, then the conversation — and when none fits it files what needs no
+domain and marks the subject `failed` rather than inventing one.
 
 ### parse_transcript.sh (v2.4.0)
 Extract structured data from transcript.jsonl files.
@@ -515,8 +521,9 @@ Run these tests after any updates:
 ```bash
 cd "${CLAUDE_PLUGIN_ROOT}/skills/session-recap"
 
-# Test 1: Project detection
-./scripts/detect_project.sh /path/to/your/project/File.java
+# Test 1: Domain resolution for a working directory
+../common/resolve_project.sh >/dev/null && \
+  bash -c 'source ../common/resolve_project.sh; resolve_project "/path/to/your/project"'
 
 # Test 2: Single project search
 ./scripts/search_cross_references.sh "filter" [project-a]
@@ -573,9 +580,10 @@ See `CHANGELOG.md` for complete version history.
 - Try broader search terms
 - Check category directories exist
 
-**Issue: Project detection returns "unknown"**
-- Verify file path matches patterns in `detect_project.sh`
-- Add new patterns if needed (see SOP Section 4.3.2)
+**Issue: no knowledge-bank domain fits the session**
+- `project` names a domain from the vault's `projects/` folders, never a directory name (ADR-0004)
+- Map the directory: `skills/common/setup_kb_path.sh --set-domain /path/to/tree <domain>`
+- Or set `project` on the session note by hand, then retry the recap
 
 **Issue: Script permission denied**
 - Make scripts executable: `chmod +x scripts/*.sh`

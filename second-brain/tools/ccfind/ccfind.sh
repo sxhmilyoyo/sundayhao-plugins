@@ -21,6 +21,7 @@ MODE="search"
 case "${1:-}" in
     --by-name)     MODE="by_name" ;;
     --by-tag)      MODE="by_tag" ;;
+    --not-recapped) MODE="not_recapped" ;;
     --tags)        MODE="list_tags" ;;
     --refresh)     MODE="refresh" ;;
     --refresh-and-search) MODE="refresh_and_search" ;;
@@ -34,6 +35,7 @@ Options:
   (none)          Search all sessions interactively
   --by-name       Show only named sessions (have session_name)
   --by-tag        Pick a tag, then browse matching sessions
+  --not-recapped  Sessions with no recap yet, or whose recap failed
   --tags          List all unique tags
   --refresh       Force cache refresh
   -h, --help      Show this help
@@ -122,6 +124,15 @@ filter_by_tag() {
     }'
 }
 
+
+# Sessions whose knowledge has not been distilled yet: never requested, waiting, or
+# failed. Deliberately excludes `exempt` (decided too small to recap), `done`, and
+# `running` (someone holds it), and excludes recap sessions themselves, which have a
+# status of their own but nothing to distil. This is the full backlog the
+# start-of-session notice deliberately does not show, since a nudge is for what stalled.
+filter_not_recapped() {
+    get_sessions | awk -F'\t' '$7 == "-" || $7 == "requested" || $7 == "failed"'
+}
 filter_named() {
     get_sessions | awk -F'\t' '$6 != "-"'
 }
@@ -211,6 +222,9 @@ case "$MODE" in
         ;;
     by_name)
         filter_named | pick_session_from " ccfind: named sessions "
+        ;;
+    not_recapped)
+        filter_not_recapped | pick_session_from " ccfind: not recapped "
         ;;
     by_tag)
         tag=$(get_unique_tags | fzf \

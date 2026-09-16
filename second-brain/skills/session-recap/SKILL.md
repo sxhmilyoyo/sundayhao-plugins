@@ -18,23 +18,24 @@ Systematically document Claude Code sessions into the knowledge bank.
 
 ### Recommended Workflow
 
-**Important**: Session recap should run in a **new session** after the work session ends. This ensures the full transcript is captured.
+**Important**: a recap runs in a **dedicated recap session**, started by the launcher. Not in the session
+being recapped, and not in whatever session you happen to have open. Phase 1.0 stops it otherwise.
 
-1. **Exit the work session**: The SessionEnd hook automatically saves transcript segments and builds `session.md` as a hub note with links to all artifacts.
+1. **Exit the work session.** The SessionEnd hook finishes `session.md` and, when `auto_recap` is not
+   `off`, stamps `recap_status: requested` on it.
 
-2. **Start a new session**: Begin fresh to run the recap
+2. **Start the recap through the launcher**, which is also the command the start-of-session notice prints:
+   ```bash
+   <plugin root>/hooks/scripts/recap_launcher.sh --manual {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/
    ```
-   claude
-   ```
+   Inside Herdr this opens a pane and runs the recap there. Anywhere else it prints a command to paste
+   into a new terminal. Either way the recap session carries `SECOND_BRAIN_RECAP_OF`, which is what makes
+   its own hooks register it as a recap and never recap it in turn
+   ([ADR-0003](../../../docs/adr/0003-recap-sessions-are-registered-guarded-by-env.md)).
 
-3. **Invoke session-recap with the session folder**:
-   ```
-   Recap the session at {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/
-   ```
-   Or:
-   ```
-   /second-brain:session-recap {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/
-   ```
+Typing `/second-brain:session-recap <folder>` into an ordinary session stops at the gate on purpose. That
+session has no `recap_of`, so finishing the recap there would either write the subject's description onto
+the wrong note or leave this session to be recapped as if it had done the work.
 
 ### Legacy: Raw Transcript Path
 
@@ -43,12 +44,18 @@ If no session folder exists (e.g., hooks were not configured), you can still pro
 Recap the session at /path/to/session-id.jsonl
 ```
 
-### Why a New Session?
+### Why a Dedicated Session?
 
-Running session-recap in the same session would miss the final conversation context. The transcript must be fully saved before knowledge extraction can begin.
+Two reasons, and the second is why a merely *new* session is not enough. Running inside the subject would
+miss the end of its own conversation, since the transcript has to be fully written before knowledge can be
+extracted from it. And the recap now writes the subject's `project`, `tags` and `summary` as well as its
+status, so it has to be unambiguous which note is the subject's and which is its own. `recap_of`, set at
+registration from the launcher's marker, is that answer.
 
 ### Manual Invocation
-- **Slash command**: `/second-brain:session-recap`
+- **Launcher** (the supported path): `recap_launcher.sh --manual <subject folder>`
+- **Slash command**: `/second-brain:session-recap <subject folder>` — only inside a recap session; it stops
+  at the Phase 1.0 gate anywhere else
 - **Skill tool**: `Skill({ skill: "second-brain:session-recap" })`
 
 ### Visibility Settings
@@ -79,7 +86,20 @@ Even when processing many sessions, each session gets its own full Phase 2.1 ref
 When recapping multiple sessions (e.g., "recap all sessions since March 29"):
 
 1. **Discover** — list all sessions in date range, read each session.md for metadata
-2. **Triage** — skip sessions with no transcript, trivial (<5 user messages), or already recapped
+2. **Triage** — by `recap_status` on each subject's note, which is the recorded answer rather than a guess:
+
+   | `recap_status` | Meaning | Action |
+   |---|---|---|
+   | `done` | already recapped | skip; only a person's `--force requested` reopens it |
+   | `exempt` | deliberately never recapped | skip |
+   | `running` | another recap holds the claim | skip |
+   | `requested` or `failed` | waiting, or stalled | candidate |
+   | empty | never requested | candidate if it has a transcript |
+
+   Also skip a session with no transcript, and one that is trivial: **fewer than five assistant records**
+   (`grep -c -m5 '"type":"assistant"'`), the same test the end hook applies. Not a count of user messages:
+   sessions here are long autonomous runs on a handful of prompts, and that test exempted a third of the
+   real ones. Every candidate gets Phases 1.2 and 5.5 in full — a batch describes every session it recaps.
 3. **Process chronologically** — full 5-phase workflow per session, each gets its own daily log + extracted docs
 4. **Parallelize when independent** — different projects/topics can use parallel agents; same investigation thread should be sequential for cross-references
 5. **Integrate once at end** — index regeneration and log append after all sessions, not per session
@@ -91,6 +111,51 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
 ### Phase 1: ANALYZE
 
 **Goal**: Load session data and extract facts.
+
+#### 1.0 Gate, Claim, Inventory (MUST complete first, in this order)
+
+**Never prompt anywhere in this skill.** A recap session is launched, not attended: it runs in a pane
+nobody is looking at, so a question stalls forever. Where something is missing, do what needs nothing,
+record the gap, and mark the subject `failed` with the reason. The start-of-session notice asks a person.
+
+**(1) Dedicated-session gate.** Read your own session's note — its folder is in the SessionStart context
+you were given — and require its `recap_of` to equal the subject folder you were asked to recap:
+
+```bash
+source "$PLUGIN_ROOT/skills/common/obsidian_helpers.sh"
+OWN_RECAP_OF=$(read_frontmatter_prop "$OWN_SESSION_FOLDER/session.md" "recap_of")
+```
+
+If it does not match, **stop**. Print exactly this and do nothing else:
+
+```
+This session is not a recap session, so recapping here would misfile both sessions.
+Run:  <plugin root>/hooks/scripts/recap_launcher.sh --manual <subject folder>
+```
+
+Two failures this prevents. A recap run inside a working session would either mark that session's note
+with the subject's outcome, or leave it unmarked so that it is itself recapped afterwards; and this skill
+writes the subject's `project`, `tags` and `summary`, which in the wrong session overwrites the
+description of real work with someone else's.
+
+**(2) Claim the subject.** One call, and it is a compare-and-set:
+
+```bash
+"$PLUGIN_ROOT/skills/common/recap_status.sh" "$SUBJECT" running
+```
+
+On exit 3 the claim was refused. Report the subject's current status and **stop**: `running` means another
+recap holds it, `done` means it is already recapped and only a person's `--force requested` reopens it.
+
+**(3) Prior recap inventory.** A retry resumes rather than starts over, and recap never deletes a
+document:
+
+```bash
+grep -rl "^session-folder: _sessions/<date>/<id>" "$KB_PATH" \
+    --include="*.md" daily-log/ projects/ reflections/
+```
+
+Record the list. Non-empty means this is a resumed recap, which changes Phase 3.
 
 #### 1.1 Load Session Data
 
@@ -130,25 +195,49 @@ fi
 
 **If no folder (current conversation mode)**: Skip session.md reading. Analyze current conversation context.
 
-#### 1.2 Detect Project
+#### 1.2 Decide the Project — three sources, never ask
 
 `project` names a knowledge-bank domain, one of the folders under `projects/`
 ([ADR-0004](../../../docs/adr/0004-project-names-a-knowledge-bank-domain.md)). Non-empty is not the
 same as resolved: notes written before that decision hold a directory basename, and hundreds of them
-exist. Validate, never trust:
+exist. Validate, never trust. Try three sources in order and stop at the first that resolves:
 
 ```bash
 source ../common/resolve_project.sh
+# 1. what the note already says, but only if it names a real domain
 PROJECT=$(validate_project "$(read_frontmatter_prop "$SESSION_FOLDER/session.md" project)")
+# 2. the directory the subject ran in, through the shared map
 [ -n "$PROJECT" ] || PROJECT=$(resolve_project "$CWD")
+# 3. the conversation itself — choose only from this set, never invent a name
+[ -n "$PROJECT" ] || list_project_domains
 ```
 
-If that leaves `PROJECT` empty, **stop and ask which domain the work belongs to.** Do not fall back to
-`./scripts/parse_transcript.sh project`: it returns `unknown` when nothing matches, and filing under
-`projects/unknown/` invents the domain ADR-0004 exists to keep visibly missing. A basename like `data`
-or `src` would do the same, one directory at a time.
+The third source is yours to judge: read what the session was actually about and pick the domain it
+belongs to, drawn only from `list_project_domains`. You are the first reader with the whole conversation,
+which is why this decision is here and not at session start
+([ADR-0006](../../../docs/adr/0006-the-description-is-written-after-the-session-ends.md)).
 
-`list_project_domains` prints the valid set when you need to offer choices.
+Phase 5.5 writes the result. Because the note's own valid value is the first source, writing it back
+overwrites only a value that is **not** a domain, which is exactly the legacy-basename case.
+
+**When no domain fits, carry on without one.** Do not ask, and do not invent. Write the daily log and any
+reflections, which need no domain; list in the daily log the concepts and components that could not be
+filed and why; then at Phase 5.5 write the tags and summary, leave `project` empty, and mark the subject
+failed with the reason, which the notice shows to a person:
+
+```bash
+printf '%s failed reason=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "no knowledge-bank domain fits, set project on its note" >> "$SUBJECT/recap.log"
+"$PLUGIN_ROOT/skills/common/recap_status.sh" "$SUBJECT" failed --tags "$TAGS" --summary "$SUMMARY"
+```
+
+Write the reason as `reason=<text>` on its own line in `recap.log`: the notice reads the last such line
+and shows it, so anything else leaves a person with "failed" and nowhere to look. A retry resumes in place
+through the Phase 1.0 inventory once the project is set.
+
+Never fall back to `./scripts/parse_transcript.sh project` for a decision: it reports the working
+directory and the domain that directory maps to, and nothing more. Filing under a name no domain matches
+invents the very thing ADR-0004 exists to keep visibly missing.
 
 #### 1.3 Extract Session Facts
 
@@ -268,6 +357,14 @@ If insights were extracted in Phase 1.3, classify each:
 ### Phase 3: CREATE
 
 **Goal**: Write documentation in priority order.
+
+#### 3.0 A Resumed Recap Updates, Never Duplicates (MUST when Phase 1.0's inventory was non-empty)
+
+When the inventory found documents already carrying this subject's `session-folder`, this is a retry of a
+recap that got part-way. You **MUST** update those documents in place and reuse the existing daily-log
+filename rather than choosing a new topic; create only what is missing. Recap never deletes a
+knowledge-bank document ([ADR-0001](../../../docs/adr/0001-hooks-never-delete-session-folders.md)), and a
+second daily log for one session is how a retry turns into a duplicate that nobody reconciles.
 
 #### Priority Order
 
@@ -402,6 +499,9 @@ This ensures proper Obsidian Flavored Markdown syntax for:
 - [ ] Operation log entry appended (`_meta/log.md`)
 - [ ] MOC Canvas updated (if MOC modified)
 
+**Subject Note** (MUST verify):
+- [ ] Phase 5.5 will describe the subject and set `recap_status` to `done`, in one call
+
 #### 4.4 MOC Updates (conditional)
 
 **If new categories or significant content**: Add links to relevant MOC.
@@ -446,15 +546,50 @@ append_kb_log "$KB_PATH" "ingest" "session-recap" "Created: [list created docs].
 
 Creates visual JSON Canvas representation of knowledge relationships.
 
+#### 5.5 Describe the Subject, Then Mark It Done (MUST complete, only after 4.1 passed)
+
+One call, one lock, one order: `project`, `tags`, `summary`, then the status.
+
+```bash
+"$PLUGIN_ROOT/skills/common/recap_status.sh" "$SUBJECT" done "$OWN_SESSION_FOLDER" \
+    --project "$PROJECT" --tags "$TAGS" --summary "$SUMMARY"
+```
+
+**All three overwrite what is on the note, deliberately.** By now you have read the whole conversation and
+nothing else ever will, so the values already there were inputs to your decision, not limits on it
+([ADR-0006](../../../docs/adr/0006-the-description-is-written-after-the-session-ends.md)). They travel
+through this one script because it holds a per-folder lock and writes all four inside it, which is what
+keeps a concurrent SessionEnd rewrite from reading a half-written description.
+
+| Value | What it is |
+|---|---|
+| `--project` | The domain from Phase 1.2. Omit it when nothing fits, and mark `failed` instead of `done` |
+| `--tags` | Canonical tags for the work, from `tag-canonicalization.md` **automatic** mode |
+| `--summary` | One line on what the session accomplished |
+
+Tags follow [tag-canonicalization.md](../session-manager/tag-canonicalization.md), whose automatic mode is
+yours now: load the vault's tags, write every tag that has a canonical form, and coin a tag the vault has
+never seen **only** when the conversation gives repeated evidence for it, such as a tool, component or
+technique that recurs. Otherwise record it as a proposed tag in the daily log and in `recap.log` and write
+nothing for it. Do not call the Obsidian CLI for tags: that writes outside the lock and would duplicate or
+contradict the write above. An empty `--tags` writes nothing rather than clearing the note, so a subject
+that inherited tags from a fork keeps them when you matched none. `project_default_tags` from the subject
+directory's map entry is a hint to weigh, never a value to pass through unexamined.
+
+**Write nothing on your own session's note.** Registration already recorded what it is, from the marker
+the launcher passed. A skill that reclassified the session it runs in is the hazard Phase 1.0 exists to
+prevent.
+
 ---
 
 ## Scripts Reference
 
 | Script | Purpose | Phase |
 |--------|---------|-------|
-| `parse_transcript.sh` | Extract data from session transcript | 1.2, 1.3 |
+| `recap_status.sh` | Claim the subject, describe it, set its status (the only writer) | 1.0, 1.2, 5.5 |
+| `parse_transcript.sh` | Extract data from session transcript | 1.3 |
 | `detect_session_sources.sh` | Detect ingestible references and artifacts | 1.4 |
-| `detect_project.sh` | Auto-detect project from path | 1.2 (internal) |
+| `resolve_project.sh` | Resolve and validate a knowledge-bank domain | 1.2 |
 | `search_cross_references.sh` | Find cross-reference targets | 2.2 |
 | `detect_external_docs.sh` | Scan for investigation documents | 2.3 |
 | `analyze_for_distillation.sh` | Analyze docs for distillation | 2.3 |
@@ -481,6 +616,8 @@ Session recap is complete when:
 5. ✅ No broken WikiLinks
 6. ✅ Obsidian syntax validation passes
 7. ✅ Knowledge bank indices updated (if new docs created)
+8. ✅ The subject's `recap_status` is `done`, with its `project`, `tags` and `summary` written by 5.5 —
+   or `failed` with the reason in `recap.log` when no domain fit
 
 **Only then declare**: "✅ Session Recap Complete"
 

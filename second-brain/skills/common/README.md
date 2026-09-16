@@ -65,6 +65,48 @@ the note was written.
 would leave every mapped session already tagged, and the trigger that asks Claude to describe a new
 session would never fire.
 
+### recap_status.sh
+
+**Purpose**: the only writer of a subject session's recap status, and of the description a recap decides
+for it (`docs/adr/0002-recap-status-lives-on-the-session-note.md`,
+`docs/adr/0006-the-description-is-written-after-the-session-ends.md`).
+
+```bash
+recap_status.sh <session_folder> <state> [recap_session_folder] \
+                [--project P] [--tags "a, b"] [--summary S] [--force]
+```
+
+`state` is one of `requested running done failed exempt`. It is **compare-and-set**, not a setter: a
+transition the table in `_meta/schema.md` does not allow changes nothing and exits 3, which is what makes
+`requested -> running` succeed exactly once when two recaps race for the same subject. A per-folder
+`.recap.lock` directory is the transaction, and `session_end.sh` takes the same lock around its
+read-rebuild-write so a `done` cannot vanish under a later exit. `--project`, `--tags` and `--summary` are
+accepted on `done` and `failed`, and overwrite what is on the note: after a session ends the recap is the
+only thing that knows what the work was. Refusals and transitions are appended to the session folder's
+`recap.log`.
+
+Exit codes: 0 written, 2 usage or no note, 3 transition refused.
+
+### Frontmatter helpers in obsidian_helpers.sh
+
+Two writers, and choosing the wrong one corrupts a note:
+
+```bash
+set_frontmatter_prop "$note" summary "one line"      # a quoted scalar, never a list
+set_frontmatter_list "$note" tags    "alpha, beta"   # a YAML list block, never a scalar
+```
+
+`set_frontmatter_list` has three rules worth knowing, all of them shapes this vault produces. Empty input
+writes **nothing**, because matching no canonical tag is not a decision to erase the tags a session
+inherited. An item that is not a slug is refused and named on stderr rather than quoted around, since a
+colon or a space breaks the block and `yaml_escape` is for scalars. And `tags:` with no items under it, the
+shape of every freshly registered note, is a replace rather than an insert. Both writers keep `tags` last
+in the frontmatter, which every other writer here depends on.
+
+`count_user_messages "$transcript"` counts prompt-shaped user records for display only. It is deliberately
+not what decides whether a session is worth recapping: sessions here are long autonomous runs on a handful
+of prompts, so that test exempted a third of the real ones. The end hook counts assistant records instead.
+
 ### launch_delegate.sh
 
 **Purpose**: Start a session that records which session launched it.
@@ -193,7 +235,7 @@ Common utilities follow semantic versioning:
 - **Minor**: New utilities or non-breaking enhancements
 - **Patch**: Bug fixes
 
-Current version: **2.1.0**
+Current version: **2.2.0**
 
 ## Best Practices
 

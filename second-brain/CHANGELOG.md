@@ -9,10 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.13.0] - 2026-09-15
 
-The description of a session — its project, tags and summary — is no longer asked for when the session
-starts. See `docs/adr/0006-the-description-is-written-after-the-session-ends.md`. This entry covers the
-first commit of the series; the recap machinery that takes over the writing follows in the next.
+Sessions now keep track of whether their knowledge has been distilled. When a session ends the hook records
+whether it needs a recap; a recap runs in a session of its own and writes the subject's description as well
+as its outcome. Nothing is deleted and nothing runs unless you switch it on. See
+`docs/adr/0002-recap-status-lives-on-the-session-note.md`,
+`docs/adr/0003-recap-sessions-are-registered-guarded-by-env.md` and
+`docs/adr/0006-the-description-is-written-after-the-session-ends.md`.
 
+### Added
+- **`auto_recap`**, off by default, with three values. `notify` stamps `recap_status` on a session's note as
+  it ends and shows the pending ones the next time you start a session. `on` also launches the recap, and
+  needs Herdr in this version. `off` writes nothing and shows nothing. A config that cannot be read reads as
+  `off`, so a broken config disables the feature rather than enabling it.
+- **`skills/common/recap_status.sh`**, the only writer of `recap_*` and, after a session ends, of its
+  description. It is compare-and-set rather than a setter: each transition has one legitimate writer, and
+  anything outside the table changes nothing, exits 3 and is logged to the session folder's `recap.log`.
+  Twenty concurrent claims on one subject yield exactly one winner, which is what stops a hand-run retry and
+  a launched recap from both producing a daily log for the same session.
+- **A per-folder lock**, `mkdir`-based because macOS has no `flock`, shared with `session_end.sh` through
+  `recap_lock_acquire`/`recap_lock_release`. The end hook holds it across its whole read-rebuild-write, so a
+  `done` written by a recap while that rewrite is in flight can no longer be read, discarded and overwritten.
+  It releases before stamping, since the stamp takes the same lock and nesting would deadlock the hook
+  against itself; each half is atomic and the transition table refuses whatever slipped into the gap.
+- **The SessionEnd predicate.** On a true ending it stamps `requested`, or `exempt` for a session too small
+  to carry knowledge, and it touches nothing that is already `requested`, `running`, `done` or `failed`. A
+  `/clear` or a resume stamps nothing, because neither ends the work. `exempt` is re-evaluated on every
+  later exit, so a session resumed after a small start becomes `requested` once it has done real work.
+- **The start-of-session notice**, in `systemMessage` so it reaches you rather than Claude's context: a
+  retry command Claude can see and you cannot is useless, and a recap instruction in Claude's context invites
+  it to run a multi-minute recap in the middle of your work. It lists failed recaps first, then pending ones,
+  newest first, at most five over fourteen days, and never lists a recap that is done, a session that is
+  exempt or was never requested, or a recap session. One `awk` pass over the window, matching a status with
+  or without quotes because Obsidian strips quotes when a person saves a note.
+- **`hooks/scripts/recap_launcher.sh --manual`** and **`hooks/scripts/recap_child.sh`**. The launcher opens a
+  Herdr pane, or prints the command to paste when there is no Herdr, and passes the subject marker and the
+  name **inline on the launched command** — never through the pane's environment, where every later session
+  in that pane would inherit it, register as a recap and be stamped exempt at its own exit. The child claims
+  the subject, runs the recap in the foreground so you can watch it, and marks `failed` on the way out if the
+  recap never reached `done`, so a closed pane surfaces in the notice instead of looking like work in flight.
+- **A recap session is registered as one.** With the marker set on a genuine startup, its note records
+  `recap_of`, takes its subject's domain rather than the vault's own directory, and carries the single tag
+  `session-recap`. Its own exit stamps it `exempt`, decided by the note and never by the marker: honouring an
+  inherited variable there would let any process that picked one up write off a working session's knowledge.
+- **`set_frontmatter_list`**, the list counterpart of the scalar setter, needed because the recap writes the
+  subject's tags under the status lock. Empty input writes nothing, since matching no canonical tag is not a
+  decision to erase the tags a session inherited; a non-slug item is refused and logged rather than quoted
+  around; and a bare `tags:` with no items, the shape of every fresh note, is a replace rather than an insert.
+- **`tools/ccfind/`**: `recap_status` as a seventh field, and `--not-recapped` for the full backlog the
+  notice deliberately does not show.
+- **Regression cases 24 to 29**, 69 new assertions: the list setter's three rules, every legal and illegal
+  status transition, twenty-way concurrency, stale-lock recovery, the predicate across nine transcript and
+  reason shapes, the notice's contents and its placement, the launcher's inline markers, and recap-session
+  registration. 167 assertions pass.
 ### Removed
 - **The start-time derivation request and its stamp.** 2.12.0 had `session_start.sh` inject an
   instruction asking the model to run the session-manager skill in automatic mode, and stamp
@@ -42,13 +90,36 @@ first commit of the series; the recap machinery that takes over the writing foll
   otherwise.
 - Registration keeps every mechanical seed it had: the domain from the directory map, fork and delegate
   lineage and inheritance, the naming of an unnamed delegate, and the Herdr pane and agent rename.
+- **The knowledge bank's schema documents the session note.** `_meta/schema.md` gains a Session Note
+  Properties section: every property, who writes it, and the full `recap_status` transition table. The
+  generator was updated so a new vault gets it; the live vault was hand-edited to match, because
+  `generate_schema.sh` does not produce that file's study, source-type and stub sections and running it
+  against a real vault would erase them. A generator that overwrites hand-written content is a delete in
+  disguise (ADR-0001).
+- **The recap decides a session's domain**, from the note, then the directory map, then the conversation,
+  and it never prompts. See the session-recap changelog for the phase-by-phase detail.
+- `skills/session-recap/SKILL.md` documents the launcher as the way in, since a slash command typed into an
+  ordinary session now stops at the Phase 1.0 gate by design.
 
 ### Fixed
+- **A session's prompts were counted with its tool results.** Both carry `"type":"user"`, so the recap's
+  statistics read 1080 where the session had 42 prompts. `count_user_messages` counts prompt-shaped records
+  and is reported as "User prompts (approx.)", with the raw number kept beside it under its own name. It is
+  deliberately not what the predicate uses: measured across the vault, a five-prompt rule would have
+  exempted a third of real sessions, several above a thousand lines, because sessions here are long
+  autonomous runs on a handful of prompts. The predicate counts assistant records instead, which separate
+  trivial from real with an empty band between four and ten, and it reads the head of the file rather than
+  all of it.
+- **The recap's project fallback could invent a domain.** `parse_transcript.sh project` called a detector
+  that matched the working directory against project directory names and printed `unknown` when nothing
+  matched, which is exactly the invented domain ADR-0004 exists to keep visibly missing. That script is
+  removed and the command now reports the directory and the domain it maps to, as information rather than a
+  decision.
 - `tests/hook-regression-suite.sh` asserts the absence: case 11 now checks that a named startup is asked
   for nothing, which fails if an injection is ever re-added, and case 15 plants
   `metadata_requested_at` by hand so the unknown-property survival assertion still guards the preserve
   loop that `recap_status` depends on. Nine assertions that tested the removed mechanism are gone, 98
-  remain green.
+  remain, and the suite ends the release at 167.
 
 ## [2.12.0] - 2026-09-15
 

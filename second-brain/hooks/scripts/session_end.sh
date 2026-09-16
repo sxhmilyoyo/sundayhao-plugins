@@ -9,6 +9,10 @@ INPUT=$(cat)
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
 SESSION_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
 CWD_INPUT=$(echo "$INPUT" | jq -r '.cwd // empty')
+# Why the session ended. `clear` and `resume` are not endings: /clear keeps the same
+# session id and resume switches away from a conversation that stays resumable, so
+# neither may stamp a recap request (1.3 of the recap plan).
+REASON_INPUT=$(echo "$INPUT" | jq -r '.reason // empty')
 
 # Source common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,6 +38,14 @@ SESSION_FOLDER=$(resolve_session_folder "$KB_PATH" "$SESSION_ID")
 if [ -z "$SESSION_FOLDER" ] || [ ! -f "$SESSION_FOLDER/session.md" ]; then
     SESSION_FOLDER=$(rebuild_session_md "$KB_PATH" "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD_INPUT")
 fi
+
+# Everything from the property reads to the rewrite below is one transaction, because
+# a recap marking this subject `done` in between would have its write read, discarded
+# and overwritten. recap_lock_acquire is best-effort on purpose: if the lock cannot be
+# taken within two seconds the note is still written, since losing a concurrent
+# property is a smaller failure than losing the whole note.
+LOCKED=""
+recap_lock_acquire "$SESSION_FOLDER" && LOCKED=1
 
 # ── 1. Read properties to preserve across overwrite ───────────────────
 SESSION_MD="$SESSION_FOLDER/session.md"
@@ -205,6 +217,75 @@ RESOLVED_BODY="# Session: $SESSION_ID"
 $LINEAGE"
 RESOLVED_BODY="$RESOLVED_BODY$(printf '%b' "$BODY")"
 write_session_md "$SESSION_FOLDER/session.md" "$FRONTMATTER" "$RESOLVED_BODY"
+
+# Released before the predicate runs: recap_status.sh takes this same lock, so
+# stamping while holding it would deadlock the hook against itself. Each half is
+# atomic on its own, and the transition table refuses whatever a writer slipped into
+# the gap, which is why splitting the transaction here is safe.
+[ -n "$LOCKED" ] && recap_lock_release "$SESSION_FOLDER"
+
+# ── 6. Request a recap, or record that this session never needs one ────
+# Every stamp goes through recap_status.sh, so each is compare-and-set: this hook can
+# only move a note from no status, or from `exempt`, and can never disturb a recap in
+# flight (ADR-0002). Output is discarded because a hook's stdout carries the protocol.
+MODE=$(get_plugin_config_value auto_recap off)
+case "$REASON_INPUT" in clear|resume) ENDING="" ;; *) ENDING=1 ;; esac
+if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
+    STATUS="$SCRIPT_DIR/../../skills/common/recap_status.sh"
+    CURRENT=$(read_frontmatter_prop "$SESSION_MD" "recap_status")
+    if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
+        # Read second, and only here, because a note already holding `requested`,
+        # `running`, `done` or `failed` is settled and every read costs a process on a
+        # hook with a fixed budget.
+        #
+        # The note decides whether this is a recap session, never
+        # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
+        # note is the record. If registration ever failed to write it, one redundant
+        # recap is wasted, whereas trusting a marker here would let any process that
+        # inherited one stamp a working session `exempt` and lose its knowledge. The
+        # cheaper failure wins.
+        RECAP_OF=$(read_frontmatter_prop "$SESSION_MD" "recap_of")
+        if [ -n "$RECAP_OF" ]; then
+            # A recap session: exempt for good, so a recap never recaps itself.
+            [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+        elif [ ! -f "$TRANSCRIPT_PATH" ]; then
+            # Nothing to recap, ever. A permanent `requested` would nag forever.
+            [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+        else
+            # Assistant records, not messages typed and not lines. Measured over every
+            # vault session with a live transcript, they separate trivial from real
+            # with an empty band from five to nine, while a prompt count exempted a
+            # third of real sessions here (long autonomous runs driven by one slash
+            # command) and a line count loses a 35-line session with fourteen model
+            # turns while being fooled by a 15-line launch carrying 34 KB of injected
+            # context and no reply at all. The bounded grep stops at the fifth match,
+            # so it reads the head of the file and stays robust to the documented
+            # transcript lag. An unreadable transcript yields no number and stamps
+            # nothing, which is the safe answer whenever the evidence is missing.
+            #
+            # Two things to know before anyone makes this precise. It counts matching
+            # lines, so a session that reads or quotes a transcript can match on
+            # content rather than on its own model turns; that biases towards
+            # recapping, which is the safe direction, and a recap session is already
+            # excluded by recap_of above. And no match is an answer of zero, not a
+            # failure: grep exits 1 there, so this must never be wrapped in `|| echo 0`
+            # (which appends a second line and breaks the numeric test) nor guarded by
+            # `|| exit`, which would abort on exactly the sessions that need `exempt`.
+            TURNS=$(grep -c -m5 '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
+            case "$TURNS" in
+                ''|*[!0-9]*) : ;;
+                *) if [ "$TURNS" -ge 5 ]; then
+                       # empty→requested, or exempt→requested for a session that was
+                       # resumed after a small start and then did real work.
+                       "$STATUS" "$SESSION_FOLDER" requested >/dev/null 2>&1
+                       # Stage 2 launches the recap here, guarded by MODE = on.
+                   elif [ -z "$CURRENT" ]; then
+                       "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+                   fi ;;
+            esac
+        fi
+    fi
+fi
 
 # ── Output ──────────────────────────────────────────────────────────────
 

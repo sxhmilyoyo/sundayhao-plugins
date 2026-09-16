@@ -204,12 +204,44 @@ Takes the raw session data that Layer 1 captured and distills it into actionable
 
 **Usage:**
 ```bash
-# Start a NEW session, then:
-/session-recap /path/to/session-folder
-
-# Or natural language:
-"Recap the session at /path/to/session-folder"
+# Recap the session you just left, in a session of its own:
+<plugin-path>/hooks/scripts/recap_launcher.sh --manual /path/to/session-folder
 ```
+
+A recap runs in a **dedicated recap session**, not in whatever session you have open. That session's note
+records which session it recapped, so it is never recapped in turn, and the recap can write the subject's
+description without any doubt about which note is which.
+
+### Automatic recap on session end
+
+Set `auto_recap` and the plugin keeps track of which sessions still need one:
+
+```bash
+<plugin-path>/skills/common/setup_kb_path.sh --set auto_recap notify
+```
+
+| Value | What happens when a session ends |
+|-------|----------------------------------|
+| `off` (default) | Nothing. No property is written and no notice appears |
+| `notify` | The session's note is stamped `recap_status: requested`, or `exempt` if the session was too small to hold knowledge. The next session you start shows what is waiting, with the command to run |
+| `on` | The same, and the recap is launched for you. Requires Herdr in this version; anywhere else it behaves as `notify` |
+
+The notice is shown to **you**, not added to Claude's context, because it carries a command to run and
+because a recap belongs in its own session rather than in the middle of your work. It lists recaps that
+failed and recaps that are waiting, newest first, at most five, and never mentions a session that is done,
+one that is exempt, or one that was never requested.
+
+The status lives on the session's own note, next to everything else you already look at:
+
+| Property | Holds |
+|----------|-------|
+| `recap_status` | `requested`, `running`, `done`, `failed`, or `exempt` |
+| `recapped_at`, `recap_session` | When the recap finished, and which session did it |
+| `recap_of` | On a recap session, the session it describes |
+
+Once a recap finishes it writes the subject's `project`, `tags` and `summary` as well, since by then it has
+read the whole conversation. Nothing is ever deleted: a retry updates the documents from the first attempt
+in place. To turn it all off again, `--set auto_recap off`; the properties already written are inert.
 
 ---
 

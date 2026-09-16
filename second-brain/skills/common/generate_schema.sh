@@ -157,6 +157,40 @@ Distribute WikiLinks across categories:
 | **Index Rebuild** | generate_index.sh | After any write operation | _meta/index.md |
 | **Log** | append_kb_log() | After any operation | _meta/log.md |
 
+## Session Note Properties
+
+One note per session at `_sessions/YYYY-MM-DD/{session_id}/session.md`. Ownership reads by stage: the
+hooks seed what registration can see and never overwrite a value already there, the session-manager skill
+is the only writer while a session runs, and the recap writes the session's description once it has ended
+(ADR-0002, ADR-0006).
+
+| Property | Written by | Holds |
+|---|---|---|
+| `session_id`, `date`, `started_at`, `ended_at`, `duration_seconds` | hooks | identity and timing |
+| `cwd`, `git_branch`, `docs_path`, `transcript_source` | hooks | where the work happened |
+| `forked_from`, `forked_from_name`, `delegated_by`, `delegated_by_name` | hooks | lineage |
+| `session_name` | hooks at launch, session-manager after | the session's name |
+| `project`, `tags`, `summary` | session-manager during, the recap after | the description |
+| `recap_of` | the start hook, for a recap session only | the subject folder this session recaps |
+| `recap_status` | `recap_status.sh`, nothing else | `requested`, `running`, `done`, `failed`, `exempt` |
+| `recapped_at`, `recap_session` | `recap_status.sh` on `done` | when it was recapped, and by which session |
+
+`recap_status` has one writer per transition, serialised by a per-folder lock. Anything not in this table
+is refused and logged to the session folder's `recap.log`:
+
+| From | To | Written by |
+|---|---|---|
+| empty | `requested`, `exempt` | the SessionEnd hook |
+| `exempt` | `requested` | the SessionEnd hook, when the session has since grown |
+| `exempt` | `running` | a manual launch, so a person can always recap a small session |
+| `requested` | `running`, `failed` | a recap claiming it; its wrapper on exit |
+| `running` | `done`, `failed` | the recap's last phase; its wrapper on exit |
+| `failed` | `running` | a retry |
+| `done` | none | terminal; a deliberate `--force requested` is the only exit |
+
+A recap session is never itself recapped: `recap_of` on its note identifies it, and its own exit stamps it
+`exempt`. A session too small to carry knowledge is `exempt` too, so it is never mistaken for a missed one.
+
 ## Quality Standards
 
 See `session-recap/references/quality-standards.md` for full details.

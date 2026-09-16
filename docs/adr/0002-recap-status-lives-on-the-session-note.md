@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-09-14
-implementation: pending
+implementation: 2.13.0
 ---
 
 # Recap status lives on the session note

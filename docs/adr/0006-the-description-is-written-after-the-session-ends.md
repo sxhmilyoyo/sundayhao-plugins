@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-09-15
-implementation: pending
+implementation: 2.13.0
 ---
 
 # A session's description is written after it ends, not asked for when it starts

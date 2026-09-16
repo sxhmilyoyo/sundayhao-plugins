@@ -356,6 +356,254 @@ chk "a fork renames nothing"     "$(grep -c 'rename' "$H/herdr-calls.log")" "0"
 hstart 66666666-6666-6666-6666-66666666aaa1 clear launch-named
 chk "a /clear renames nothing"   "$(grep -c 'rename' "$H/herdr-calls.log")" "0"
 
+echo "== 24. the list setter writes a block, or deliberately nothing =="
+# The tags block is the one list the hooks and the recap both touch, and every rule
+# here is a shape this vault really produces.
+HELPL="$PLUGIN/skills/common/obsidian_helpers.sh"
+sfl(){ bash -c 'source "$1" >/dev/null 2>&1; set_frontmatter_list "$2" "$3" "$4"' _ "$HELPL" "$@"; }
+rfl(){ bash -c 'source "$1" >/dev/null 2>&1; read_frontmatter_list "$2" "$3"' _ "$HELPL" "$@"; }
+L1="$ROOT/list-a.md"
+# `tags:` then a blank line then the delimiter is exactly what session_end.sh writes.
+printf -- '---\nsession_name: "n"\nsummary: ""\ntags:\n\n---\n\n# body\nkeepline\n' > "$L1"
+sfl "$L1" tags "alpha, beta, gamma"
+# Three items, not two: a missing terminator on the last field used to drop it, which
+# for a one-tag list meant the write was skipped and the note looked untouched.
+chk "every item is written"            "$(rfl "$L1" tags)" "alpha, beta, gamma"
+chk "the body is untouched"            "$(grep -c '^keepline$' "$L1")" "1"
+sfl "$L1" tags "solo"
+chk "a populated block is replaced"    "$(rfl "$L1" tags)" "solo"
+chk "and leaves one item behind"       "$(grep -c '^  - ' "$L1")" "1"
+cp "$L1" "$L1.snap"
+sfl "$L1" tags ""
+sfl "$L1" tags "  ,  , "
+chk "empty input writes nothing"       "$(cmp -s "$L1.snap" "$L1" && echo same || echo changed)" "same"
+L2="$ROOT/list-b.md"
+printf -- '---\nn: "x"\ntags:\n  - old\n---\n\n# body\n' > "$L2"
+REFUSED=$(sfl "$L2" tags 'good-one, bad: colon, has space, -leading, nested/ok' 2>&1 >/dev/null)
+chk "non-slug items are refused"       "$(printf '%s' "$REFUSED" | grep -c 'refused')" "3"
+chk "the slugs are still written"      "$(rfl "$L2" tags)" "good-one, nested/ok"
+chk "the frontmatter stays one block"  "$(grep -c '^---$' "$L2")" "2"
+# tags has to stay last, because the scalar setter inserts above it and this setter
+# ends a block by scanning to the end of its items. Delimiter, n, aliases, two items,
+# then tags on line 6.
+chk "a non-tags list goes above tags" \
+    "$(printf -- '---\nn: "x"\ntags:\n  - t\n---\n\n# b\n' > "$L2"; sfl "$L2" aliases "one, two"; \
+       sed -n '/^---$/,/^---$/p' "$L2" | grep -n '^tags:$' | cut -d: -f1)" "6"
+
+echo "== 25. recap status is compare-and-set, and single-flight =="
+ST="$PLUGIN/skills/common/recap_status.sh"
+SUBJ="$ROOT/subject"; mkdir -p "$SUBJ"
+subjnote(){ printf -- '---\nsession_id: "s"\nproject: "data"\nsummary: ""\ntags:\n  - inherited\n---\n\n# body\nkeepline\n' > "$SUBJ/session.md"; }
+st(){ env HOME="$H" "$ST" "$@" >/dev/null 2>&1; }
+subjnote
+st "$SUBJ" requested
+chk "empty to requested lands"         "$(prop "$SUBJ/session.md" recap_status)" "requested"
+st "$SUBJ" done
+chk "requested to done is refused"     "$(prop "$SUBJ/session.md" recap_status)" "requested"
+st "$SUBJ" running
+st "$SUBJ" done "$ROOT/recapsess" --project cc --tags "plugin-second-brain, session-hooks" --summary "did the thing"
+chk "running to done lands"            "$(prop "$SUBJ/session.md" recap_status)" "done"
+# ADR-0006: the recap owns the description once the session has ended, and overwrites.
+chk "the recap replaces a basename"    "$(prop "$SUBJ/session.md" project)" "cc"
+chk "the recap writes the summary"     "$(prop "$SUBJ/session.md" summary)" "did the thing"
+chk "the recap writes the tags"        "$(rfl "$SUBJ/session.md" tags)" "plugin-second-brain, session-hooks"
+[ -n "$(prop "$SUBJ/session.md" recapped_at)" ] && ok "recapped_at is stamped" || no "recapped_at is stamped"
+chk "recap_session points at the recap" "$(prop "$SUBJ/session.md" recap_session)" "$ROOT/recapsess"
+chk "the body survives every write"    "$(grep -c '^keepline$' "$SUBJ/session.md")" "1"
+cp "$SUBJ/session.md" "$SUBJ/snap"
+st "$SUBJ" requested
+chk "done is terminal"                 "$(cmp -s "$SUBJ/snap" "$SUBJ/session.md" && echo same || echo changed)" "same"
+st "$SUBJ" requested --force
+chk "and --force is its only exit"     "$(prop "$SUBJ/session.md" recap_status)" "requested"
+# T14: twenty writers race for one claim. Exactly one may win, or two recaps run and
+# the subject gets two daily logs. Refusals are counted as a delta, because the
+# refused transition asserted above is already in this log.
+REFUSED_BEFORE=$(grep -c 'refused' "$SUBJ/recap.log")
+CLAIMS=$(seq 20 | xargs -P20 -I{} sh -c 'env HOME="$4" "$1" "$2" running >/dev/null 2>&1 && echo won' _ "$ST" "$SUBJ" "$H" | grep -c won)
+chk "exactly one claim wins"           "$CLAIMS" "1"
+chk "the nineteen losers are refused"  "$(( $(grep -c 'refused' "$SUBJ/recap.log") - REFUSED_BEFORE ))" "19"
+chk "the note keeps one status line"   "$(grep -c '^recap_status:' "$SUBJ/session.md")" "1"
+chk "no lock is left behind"           "$([ -d "$SUBJ/.recap.lock" ] && echo leaked || echo clean)" "clean"
+mkdir -p "$SUBJ/.recap.lock"; touch -t 202601010000 "$SUBJ/.recap.lock"
+st "$SUBJ" done
+chk "a stale lock is broken"           "$(grep -c 'broke stale lock' "$SUBJ/recap.log")" "1"
+chk "and the write goes through"       "$(prop "$SUBJ/session.md" recap_status)" "done"
+# A description on any other state is a mistake, not a silent write.
+st "$SUBJ" requested --force --summary "nope"
+chk "a description needs done or failed" "$(prop "$SUBJ/session.md" summary)" "did the thing"
+
+echo "== 26. the end hook requests a recap, or records that one is never needed =="
+env HOME="$H" "$SK" --set auto_recap notify >/dev/null 2>&1
+# Assistant records are the test, not prompts and not lines: a prompt count exempted a
+# third of real sessions here, and a line count loses a short session with many turns.
+turns(){ local f="$1" n="$2" i=0; : > "$f"
+    printf '{"type":"user","cwd":"/tmp/mapped"}\n' >> "$f"
+    while [ "$i" -lt "$n" ]; do printf '{"type":"assistant","message":{"content":[]}}\n' >> "$f"; i=$((i+1)); done; }
+endrun(){ printf '{"transcript_path":"%s","cwd":"/tmp/mapped","reason":"%s"}' "$2" "$3" \
+    | env HOME="$H" HERDR_PANE_ID= TMUX_PANE= "${@:4}" "$PLUGIN/hooks/scripts/session_end.sh" >/dev/null 2>&1; }
+P1=aaaaaaaa-0000-0000-0000-000000000001; TP1="$H/.claude/projects/proj/$P1.jsonl"
+turns "$TP1" 9; start $P1 startup real-work /tmp/mapped >/dev/null
+MP1="$KB/_sessions/$TODAY/$P1/session.md"
+endrun x "$TP1" prompt_input_exit
+chk "a real session is requested"      "$(prop "$MP1" recap_status)" "requested"
+endrun x "$TP1" prompt_input_exit
+chk "a second exit changes nothing"    "$(prop "$MP1" recap_status)" "requested"
+# T15: a small session that was resumed and then did real work is re-evaluated.
+P2=aaaaaaaa-0000-0000-0000-000000000002; TP2="$H/.claude/projects/proj/$P2.jsonl"
+turns "$TP2" 2; start $P2 startup small /tmp/mapped >/dev/null
+MP2="$KB/_sessions/$TODAY/$P2/session.md"
+endrun x "$TP2" prompt_input_exit
+chk "two turns is exempt"              "$(prop "$MP2" recap_status)" "exempt"
+turns "$TP2" 5
+endrun x "$TP2" prompt_input_exit
+chk "exempt is re-evaluated on growth" "$(prop "$MP2" recap_status)" "requested"
+# clear and resume are not endings.
+P3=aaaaaaaa-0000-0000-0000-000000000003; TP3="$H/.claude/projects/proj/$P3.jsonl"
+turns "$TP3" 9; start $P3 startup cleared /tmp/mapped >/dev/null
+MP3="$KB/_sessions/$TODAY/$P3/session.md"
+endrun x "$TP3" clear
+chk "/clear stamps nothing"            "$(prop "$MP3" recap_status)" ""
+endrun x "$TP3" resume
+chk "resume stamps nothing"            "$(prop "$MP3" recap_status)" ""
+# T16: no evidence means no stamp, but a transcript with no reply at all is exempt.
+P4=aaaaaaaa-0000-0000-0000-000000000004; TP4="$H/.claude/projects/proj/$P4.jsonl"
+turns "$TP4" 9; start $P4 startup unreadable /tmp/mapped >/dev/null
+MP4="$KB/_sessions/$TODAY/$P4/session.md"
+chmod 000 "$TP4"
+endrun x "$TP4" prompt_input_exit
+chk "an unreadable transcript stamps nothing" "$(prop "$MP4" recap_status)" ""
+chmod 644 "$TP4"
+P5=aaaaaaaa-0000-0000-0000-000000000005; TP5="$H/.claude/projects/proj/$P5.jsonl"
+turns "$TP5" 0; start $P5 startup noreply /tmp/mapped >/dev/null
+endrun x "$TP5" prompt_input_exit
+chk "a launch that got no reply is exempt" "$(prop "$KB/_sessions/$TODAY/$P5/session.md" recap_status)" "exempt"
+# A recap session is exempt for good, decided by its note and never by the marker.
+P6=aaaaaaaa-0000-0000-0000-000000000006; TP6="$H/.claude/projects/proj/$P6.jsonl"
+turns "$TP6" 9; start $P6 startup a-recap /tmp/mapped >/dev/null
+MP6="$KB/_sessions/$TODAY/$P6/session.md"
+awk '$0=="tags:"{print "recap_of: \"/somewhere/subject\""} {print}' "$MP6" > "$MP6.t" && mv "$MP6.t" "$MP6"
+endrun x "$TP6" prompt_input_exit
+chk "a recap session is exempt"         "$(prop "$MP6" recap_status)" "exempt"
+endrun x "$TP6" prompt_input_exit
+chk "and stays exempt on a later exit"  "$(prop "$MP6" recap_status)" "exempt"
+# T17: the stray marker. An inherited environment variable must not exempt real work.
+P7=aaaaaaaa-0000-0000-0000-000000000007; TP7="$H/.claude/projects/proj/$P7.jsonl"
+turns "$TP7" 9; start $P7 startup stray-marker /tmp/mapped >/dev/null
+endrun x "$TP7" prompt_input_exit SECOND_BRAIN_RECAP_OF=/somewhere/subject
+chk "a stray marker cannot exempt work" "$(prop "$KB/_sessions/$TODAY/$P7/session.md" recap_status)" "requested"
+# The feature is off unless it is configured on, and a broken config reads as off.
+CFG26="$ROOT/cfg26"; mkdir -p "$CFG26/.claude/plugins/config/second-brain"
+jq -n --arg kb "$KB" '{knowledge_bank_path:$kb}' > "$CFG26/.claude/plugins/config/second-brain/config.json"
+P8=aaaaaaaa-0000-0000-0000-000000000008; TP8="$H/.claude/projects/proj/$P8.jsonl"
+turns "$TP8" 9; start $P8 startup unconfigured /tmp/mapped >/dev/null
+printf '{"transcript_path":"%s","cwd":"/tmp/mapped","reason":"prompt_input_exit"}' "$TP8" \
+    | env HOME="$CFG26" HERDR_PANE_ID= TMUX_PANE= "$PLUGIN/hooks/scripts/session_end.sh" >/dev/null 2>&1
+chk "auto_recap absent stamps nothing" "$(prop "$KB/_sessions/$TODAY/$P8/session.md" recap_status)" ""
+# The rewrite and the stamp must both survive a concurrent done (T14, hook side).
+P9=aaaaaaaa-0000-0000-0000-000000000009; TP9="$H/.claude/projects/proj/$P9.jsonl"
+turns "$TP9" 9; start $P9 startup racer /tmp/mapped >/dev/null
+MP9="$KB/_sessions/$TODAY/$P9/session.md"
+endrun x "$TP9" prompt_input_exit
+env HOME="$H" "$ST" "$KB/_sessions/$TODAY/$P9" running >/dev/null 2>&1
+( sleep 0.1; env HOME="$H" "$ST" "$KB/_sessions/$TODAY/$P9" done >/dev/null 2>&1 ) &
+endrun x "$TP9" prompt_input_exit
+wait
+chk "a done written under the rewrite survives" "$(prop "$MP9" recap_status)" "done"
+
+echo "== 27. the notice reaches the user, and lists only what stalled =="
+# Its own vault, so the notes the earlier cases stamped do not leak into the listing.
+NKB="$ROOT/nkb"; NH="$ROOT/nhome"
+mkdir -p "$NH/.claude/plugins/config/second-brain" "$NKB/_sessions" "$NH/.claude/projects/proj" "$NKB/projects/cc"
+ncfg(){ jq -n --arg kb "$NKB" --arg m "$1" '{knowledge_bank_path:$kb,auto_recap:$m}' \
+    > "$NH/.claude/plugins/config/second-brain/config.json"; }
+nmk(){ # $1=date $2=id $3=name $4=status(quoted or bare, may be empty) $5=extra line
+    mkdir -p "$NKB/_sessions/$1/$2"
+    { printf -- '---\nsession_id: "%s"\nsession_name: "%s"\n' "$2" "$3"
+      [ -n "$5" ] && printf '%s\n' "$5"
+      [ -n "$4" ] && printf 'recap_status: %s\n' "$4"
+      printf 'tags:\n---\n\n# body\n'; } > "$NKB/_sessions/$1/$2/session.md"; }
+nstart(){ local id="$1"
+    local t="$NH/.claude/projects/proj/$id.jsonl"
+    printf '{"type":"user","cwd":"/tmp/mapped"}\n' > "$t"
+    printf '{"session_id":"%s","cwd":"/tmp/mapped","transcript_path":"%s","source":"startup","session_title":"observer"}' "$id" "$t" \
+      | env HOME="$NH" HERDR_PANE_ID= TMUX_PANE= "$PLUGIN/hooks/scripts/session_start.sh" 2>/dev/null; }
+nmk 2026-09-13 f1111111-1111-1111-1111-111111111111 inv-recap-hook '"failed"'
+printf 'x failed reason=no knowledge-bank domain fits\n' > "$NKB/_sessions/2026-09-13/f1111111-1111-1111-1111-111111111111/recap.log"
+# Deliberately unnamed: an empty name used to collapse the scan's tab-separated fields
+# and drop the whole row, so this asserts the row survives and falls back to the id.
+nmk 2026-09-12 r2222222-2222-2222-2222-222222222222 "" 'requested'
+nmk 2026-09-11 d3333333-3333-3333-3333-333333333333 done-one '"done"'
+nmk 2026-09-11 e4444444-4444-4444-4444-444444444444 tiny '"exempt"'
+nmk 2026-09-11 n5555555-5555-5555-5555-555555555555 never-asked ''
+nmk 2026-09-10 c6666666-6666-6666-6666-666666666666 the-recap '"requested"' 'recap_of: "/somewhere/subj"'
+ncfg notify
+NOUT=$(nstart 12121212-1111-1111-1111-111111111111)
+NMSG=$(printf '%s' "$NOUT" | jq -r '.systemMessage // ""')
+NCTX=$(printf '%s' "$NOUT" | jq -r '.hookSpecificOutput.additionalContext // ""')
+chk "the hook still emits valid JSON"   "$(printf '%s' "$NOUT" | jq -e . >/dev/null 2>&1 && echo yes || echo no)" "yes"
+chk "the notice goes to the user"       "$(printf '%s' "$NMSG" | grep -c 'need attention')" "1"
+chk "and never into Claude's context"   "$(printf '%s' "$NCTX" | grep -c 'need attention')" "0"
+chk "it counts what it lists"           "$(printf '%s' "$NMSG" | grep -c '^- ')" "2"
+chk "a failed recap is listed first"    "$(printf '%s' "$NMSG" | sed -n '2p' | grep -c 'failed')" "1"
+chk "with the reason from recap.log"    "$(printf '%s' "$NMSG" | grep -c 'no knowledge-bank domain fits')" "1"
+chk "an unnamed session is not dropped" "$(printf '%s' "$NMSG" | grep -c 'r2222222')" "1"
+chk "the retry command is the launcher" "$(printf '%s' "$NMSG" | grep -c 'recap_launcher.sh --manual')" "2"
+for pair in "done-one:a done recap" "tiny:an exempt session" "never-asked:a never-requested session" "the-recap:a recap session"; do
+    chk "${pair#*:} is not listed" "$(printf '%s' "$NMSG" | grep -c "${pair%%:*}")" "0"
+done
+ncfg off
+chk "off produces no notice at all" \
+    "$(printf '%s' "$(nstart 12121212-2222-2222-2222-222222222222)" | jq -r '.systemMessage // "none"')" "none"
+
+echo "== 28. the launcher hands over a command that carries the markers inline =="
+LSUBJ="$NKB/_sessions/2026-09-13/f1111111-1111-1111-1111-111111111111"
+LOUT=$(env HOME="$NH" HERDR_ENV= HERDR_PANE_ID= "$PLUGIN/hooks/scripts/recap_launcher.sh" --manual "$LSUBJ/" 2>&1)
+chk "the subject marker is inline"     "$(printf '%s' "$LOUT" | grep -c "SECOND_BRAIN_RECAP_OF=")" "1"
+chk "the name travels with it"         "$(printf '%s' "$LOUT" | grep -c 'SECOND_BRAIN_RECAP_NAME=recap-inv-recap-hook')" "1"
+chk "it runs the child, not claude"    "$(printf '%s' "$LOUT" | grep -c 'recap_child.sh')" "1"
+# --env would put the marker in the pane's root shell, where every later session in that
+# pane would inherit it, register as a recap and be stamped exempt at its own exit.
+chk "never through the pane's env"     "$(printf '%s' "$LOUT" | grep -c -- '--env')" "0"
+chk "a trailing slash is normalised"   "$(printf '%s' "$LOUT" | grep -c 'f1111111-1111-1111-1111-111111111111 ')" "1"
+env HOME="$NH" "$PLUGIN/hooks/scripts/recap_launcher.sh" --manual /nope/nothing >/dev/null 2>&1 \
+    && no "a missing subject is refused" || ok "a missing subject is refused"
+env HOME="$NH" "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$LSUBJ" >/dev/null 2>&1 \
+    && no "--auto is not implemented yet" || ok "--auto is not implemented yet"
+
+echo "== 29. a recap session registers as one, only at startup =="
+# The marker is honoured on a genuine launch and nowhere else, and it decides three
+# things on the new note: what it recaps, whose domain it belongs to, and its one tag.
+RSUB="$KB/_sessions/$TODAY/aaaaaaaa-0000-0000-0000-000000000001"   # from case 26, project cc
+RS1=bbbbbbbb-0000-0000-0000-000000000001
+start $RS1 startup recap-real-work /tmp/work SECOND_BRAIN_RECAP_OF="$RSUB" >/dev/null
+MR1="$KB/_sessions/$TODAY/$RS1/session.md"
+chk "recap_of names the subject"        "$(prop "$MR1" recap_of)" "$RSUB"
+# The vault is the recap's cwd and maps to no domain, so without this the note would
+# either be empty or take the bank's own name; ADR-0004 says it takes the subject's.
+chk "it takes the subject's domain"     "$(prop "$MR1" project)" "cc"
+chk "and carries the one hook-written tag" "$(rfl "$MR1" tags)" "session-recap"
+# Its own exit must leave it exempt for good, decided by the note, not the marker.
+endrun x "$H/.claude/projects/proj/$RS1.jsonl" prompt_input_exit
+chk "a recap session exempts itself"    "$(prop "$MR1" recap_status)" "exempt"
+chk "and keeps recap_of through the rewrite" "$(prop "$MR1" recap_of)" "$RSUB"
+# A subject holding a legacy basename yields no domain rather than passing one on.
+RSUB2="$ROOT/legacy"; mkdir -p "$RSUB2"
+printf -- '---\nsession_id: "l"\nproject: "data"\ntags:\n---\n\n# b\n' > "$RSUB2/session.md"
+RS2=bbbbbbbb-0000-0000-0000-000000000002
+start $RS2 startup recap-legacy /tmp/work SECOND_BRAIN_RECAP_OF="$RSUB2" >/dev/null
+chk "a legacy basename is not inherited" "$(prop "$KB/_sessions/$TODAY/$RS2/session.md" project)" ""
+# An unnamed hand-run recap gets its only chance at a name here.
+RS3=bbbbbbbb-0000-0000-0000-000000000003
+RO=$(start $RS3 startup "" /tmp/work SECOND_BRAIN_RECAP_OF="$RSUB")
+chk "an unnamed recap is named for its subject" \
+    "$(printf '%s' "$RO" | jq -r '.hookSpecificOutput.sessionTitle // ""')" "recap-aaaaaaaa"
+# A stray marker on a resume must not turn an ordinary session into a recap session.
+RS4=bbbbbbbb-0000-0000-0000-000000000004
+start $RS4 resume stray /tmp/mapped SECOND_BRAIN_RECAP_OF="$RSUB" >/dev/null
+chk "a marker on resume is ignored"     "$(prop "$KB/_sessions/$TODAY/$RS4/session.md" recap_of)" ""
+chk "an ordinary note gains no empty recap_of" \
+    "$(grep -c '^recap_of:' "$KB/_sessions/$TODAY/$RS4/session.md")" "0"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are

@@ -107,28 +107,46 @@ extract_insights() {
     grep -v '^$'
 }
 
-# Auto-detect project from cwd
+# Report the working directory and the domain it maps to. This is information, never a
+# decision: `project` names a knowledge-bank domain (ADR-0004) and the recap decides it
+# from three sources in SKILL.md Phase 1.2. The old helper here matched the cwd against
+# project directory names and printed `unknown` when nothing matched, which is exactly
+# the invented domain ADR-0004 exists to keep visibly missing.
 extract_project() {
     CWD=$(jq -r 'select(.type == "user") | .cwd' "$TRANSCRIPT" 2>/dev/null | head -1)
-    if [ -n "$CWD" ]; then
-        SCRIPT_DIR="$(dirname "$0")"
-        if [ -x "$SCRIPT_DIR/detect_project.sh" ]; then
-            PROJECT=$("$SCRIPT_DIR/detect_project.sh" "$CWD")
-            echo "Project: $PROJECT"
-            echo "CWD: $CWD"
-        else
-            echo "CWD: $CWD"
-            echo "(detect_project.sh not found)"
-        fi
-    else
+    if [ -z "$CWD" ]; then
         echo "Could not extract cwd from transcript"
+        return 0
+    fi
+    echo "CWD: $CWD"
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ -f "$SCRIPT_DIR/../../common/resolve_project.sh" ]; then
+        source "$SCRIPT_DIR/../../common/resolve_project.sh"
+        RESOLVED=$(resolve_project "$CWD")
+        echo "Project: ${RESOLVED:-(this directory maps to no domain; see SKILL.md Phase 1.2)}"
+    else
+        echo "Project: (resolver unavailable)"
     fi
 }
 
 # Session statistics
 extract_stats() {
     echo "=== Session Statistics ==="
-    echo "User messages: $(jq -s '[.[] | select(.type == "user")] | length' "$TRANSCRIPT" 2>/dev/null)"
+    # Two numbers, because they are two different things and the old single line said
+    # "User messages" while counting both. Tool results carry `"type":"user"` too, so on
+    # a real transcript the raw count runs an order of magnitude high: 1080 records
+    # against 42 actual prompts on the session that found this.
+    #
+    # The prompt figure is approximate on purpose and labelled so. It counts a typed
+    # slash command as the input it is, and it also counts messages from other sessions
+    # and the compaction preamble, which is fine for a sense of scale and would be wrong
+    # to present as "messages the human typed".
+    STATS_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ -f "$STATS_DIR/../../common/obsidian_helpers.sh" ]; then
+        source "$STATS_DIR/../../common/obsidian_helpers.sh" >/dev/null 2>&1
+        echo "User prompts (approx.): $(count_user_messages "$TRANSCRIPT")"
+    fi
+    echo "User records (incl. tool results): $(jq -s '[.[] | select(.type == "user")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Assistant messages: $(jq -s '[.[] | select(.type == "assistant")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Tool uses: $(jq -s '[.[] | .message.content[]? | select(.type == "tool_use")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Summaries: $(jq -s '[.[] | select(.type == "summary")] | length' "$TRANSCRIPT" 2>/dev/null)"

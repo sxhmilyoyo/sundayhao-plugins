@@ -101,6 +101,70 @@ set_frontmatter_prop() {
     return 0
 }
 
+# Set one list frontmatter property in place: the list counterpart of
+# set_frontmatter_prop, which writes a quoted scalar and must never be used for a
+# list. Replaces the block when the property is present, otherwise inserts it above
+# the tags block, or at the end of the frontmatter when the property IS tags.
+# Keeping tags last is a convention every writer here depends on, including the
+# replace below, which ends an existing block by scanning to the end of its items.
+#
+# Three rules the tags block really reaches in this vault:
+#   - Empty input writes nothing at all. A recap that matched no canonical tag has
+#     made no decision, and ADR-0006 authorises overwriting a value the recap
+#     decided, not erasing the tags a fork inherited when it decided nothing.
+#   - An item that is not a slug is refused and named on stderr, never quoted
+#     around: a colon, a quote, a leading dash or a space breaks the block, and
+#     yaml_escape is a scalar escaper. The caller records it as a proposal instead.
+#   - Zero items is the common case, `tags:` with nothing under it being the shape
+#     of every freshly registered note, so the replace has to cope with an empty run
+#     of items rather than assuming there is one to consume.
+# Args: $1=absolute_file_path, $2=property_name, $3=comma-separated items
+# Returns: always 0; refused items are named on stderr for the caller to log
+set_frontmatter_list() {
+    local file="$1" prop="$2" raw="$3" item block="" tmp
+    [ -f "$file" ] || return 0
+
+    while IFS= read -r item; do
+        item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        [ -n "$item" ] || continue
+        # A canonical tag is a slug. Anything else is a proposal, not a value.
+        case "$item" in
+            -*|*[!A-Za-z0-9_/-]*)
+                printf 'set_frontmatter_list: refused non-slug item: %s\n' "$item" >&2
+                continue ;;
+        esac
+        if [ -z "$block" ]; then block="  - $item"; else block="$block
+  - $item"; fi
+    # printf '%s\n', not '%s': without the terminator the last field arrives as an
+    # unterminated line, read returns non-zero on it, and the loop body never runs
+    # for it. That silently dropped the last tag, which for a single-tag list meant
+    # the write was skipped altogether and the note looked unchanged.
+    done < <(printf '%s\n' "$raw" | tr ',' '\n')
+
+    [ -n "$block" ] || return 0
+
+    tmp="${file}.setlist.$$"
+    # The block travels through the environment for the same reason the scalar
+    # setter's value does: awk -v processes escape sequences in its assignments.
+    SB_PROP="$prop" SB_BLOCK="$block" \
+    awk '
+        BEGIN { fm = 0; done = 0; skip = 0; p = ENVIRON["SB_PROP"]; b = ENVIRON["SB_BLOCK"] }
+        /^---$/ {
+            fm++
+            if (fm == 2 && !done) { print p ":"; print b; done = 1 }
+            print; next
+        }
+        fm == 1 && skip { if ($0 ~ /^[ \t]*-[ \t]/) next; skip = 0 }
+        fm == 1 && !done && index($0, p ":") == 1 {
+            print p ":"; print b; done = 1; skip = 1; next
+        }
+        fm == 1 && !done && $0 == "tags:" { print p ":"; print b; done = 1 }
+        { print }
+    ' "$file" > "$tmp" && mv "$tmp" "$file"
+    rm -f "$tmp"
+    return 0
+}
+
 # Write session.md atomically — YAML frontmatter + body in one filesystem write.
 # Bypasses Obsidian CLI for reliability; Obsidian's file watcher indexes it.
 # Args: $1=absolute_file_path, $2=frontmatter (no --- delimiters), $3=body
@@ -158,6 +222,82 @@ read_custom_title() {
     tail -r "$transcript" 2>/dev/null \
         | grep -m1 '"type":"custom-title"' \
         | jq -r '.customTitle // empty' 2>/dev/null
+}
+
+# The per-folder recap lock, shared by recap_status.sh and session_end.sh so there is
+# one implementation of the protocol rather than two that can drift apart.
+#
+# mkdir is atomic on every filesystem this runs on, and macOS has no flock. The lock
+# serialises two writers that would otherwise lose each other's work: the end hook,
+# which reads a note's properties and rewrites the whole file, and a recap marking its
+# subject done in between those two steps.
+#
+# A holder must release before invoking recap_status.sh, which takes the lock itself.
+# Nesting would deadlock the hook against its own stamp. That is safe to do because
+# each part is atomic on its own and the transition table refuses anything a writer
+# slipped into the gap.
+# Args: $1=session_folder
+# Returns: 0 when held, 1 when it timed out (callers proceed unlocked rather than
+#          abandon a write; the note matters more than the serialisation)
+recap_lock_acquire() {
+    local folder="$1" lock="$1/.recap.lock" i=0 broke=0 mtime now
+    [ -d "$folder" ] || return 1
+    while [ "$i" -lt 40 ]; do          # 40 x 50 ms = 2 s, far longer than any hold
+        mkdir "$lock" 2>/dev/null && return 0
+        # A lock older than a minute belongs to a writer that crashed. Break it once
+        # only: a lock nothing can remove must not spin here forever.
+        if [ "$broke" -eq 0 ]; then
+            mtime=$(stat -f %m "$lock" 2>/dev/null || echo 0)
+            now=$(date +%s)
+            if [ "$mtime" -gt 0 ] && [ $(( now - mtime )) -gt 60 ]; then
+                rm -rf "$lock" 2>/dev/null || true
+                broke=1
+                printf '%s broke stale lock pid=%s\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" >> "$folder/recap.log" 2>/dev/null || true
+                continue
+            fi
+        fi
+        sleep 0.05
+        i=$(( i + 1 ))
+    done
+    return 1
+}
+
+# Args: $1=session_folder
+# Returns: always 0; releasing a lock this process does not hold is a no-op worth
+#          tolerating, because the alternative is a hook that exits holding one.
+recap_lock_release() {
+    rmdir "$1/.recap.lock" 2>/dev/null || rm -rf "$1/.recap.lock" 2>/dev/null || true
+    return 0
+}
+
+# Count prompt-shaped user records in a transcript, for the recap's statistics only.
+# The SessionEnd predicate deliberately does not call this: measured over 245 vault
+# sessions, a "fewer than five messages" test exempted 129 of them, several above a
+# thousand lines, because sessions here are long autonomous runs driven by a slash
+# command and a handful of prompts. The predicate tests transcript length instead,
+# which also keeps a jq pass out of the hook's budget.
+#
+# A slash command the user typed arrives as a <command-name> record and counts as the
+# human input it is; only the echo shapes <local-command-stdout> and
+# <local-command-caveat> are excluded. The number also includes messages from other
+# sessions and the compaction preamble, which is why callers label it "User prompts
+# (approx.)" rather than claiming it counts human-typed messages. A malformed record
+# ends the jq pass, so a truncated transcript undercounts rather than failing.
+# Args: $1=transcript_path
+# Returns: a count on stdout; 0 when the file is missing
+count_user_messages() {
+    local transcript="$1"
+    [ -f "$transcript" ] || { echo 0; return 0; }
+    jq -r 'select(.type == "user" and .isMeta != true)
+           | (.message.content // empty) as $c
+           | if ($c | type) == "string" then
+                 (if ($c | startswith("<local-command")) then empty else 1 end)
+             elif ($c | type) == "array" then
+                 (if ([$c[] | select(.type == "text")] | length) > 0 then 1 else empty end)
+             else empty end' "$transcript" 2>/dev/null \
+        | wc -l | tr -d ' '
+    return 0
 }
 
 # Rename the enclosing terminal container to the session name.
@@ -395,3 +535,7 @@ export -f rename_herdr_agent
 export -f resolve_session_folder
 export -f transcript_forked_from
 export -f rebuild_session_md
+export -f set_frontmatter_list
+export -f count_user_messages
+export -f recap_lock_acquire
+export -f recap_lock_release

@@ -5,6 +5,58 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-09-15
+
+The recap now owns the subject's outcome and its description. See
+`docs/adr/0002-recap-status-lives-on-the-session-note.md` and
+`docs/adr/0006-the-description-is-written-after-the-session-ends.md`.
+
+### Added
+- **Phase 1.0 — gate, claim, inventory**, before anything else. The *gate* requires this session's own note
+  to carry `recap_of` matching the subject, so a recap cannot run inside an ordinary session: doing so would
+  either write the subject's description onto the wrong note or leave the working session to be recapped as
+  if it had done the work. The *claim* is `recap_status.sh <subject> running`, a compare-and-set, so two
+  recaps racing for one subject cannot both proceed. The *inventory* greps for documents already carrying the
+  subject's `session-folder`, which is how a retry resumes.
+- **Phase 5.5 — describe the subject, then mark it done.** One call writes `project`, `tags`, `summary` and
+  the status inside a single lock. All three overwrite what is on the note: by then the recap has read the
+  whole conversation and nothing else ever will, so values already there were inputs to the decision rather
+  than limits on it. It writes nothing on the recap's own note.
+- **Phase 3.0** — a resumed recap MUST update the inventoried documents in place and reuse the existing
+  daily-log filename. A second daily log for one session is how a retry becomes a duplicate.
+- **Completion criterion 8**: the subject reads `done` with its description written, or `failed` with the
+  reason in `recap.log`.
+
+### Changed
+- **Phase 1.2 infers the domain from the conversation, and never prompts.** Three sources in order: the
+  note's own value through `validate_project`, then `resolve_project` on the subject's cwd, then the
+  conversation itself choosing only from `list_project_domains`. A recap session is launched, not attended,
+  so a prompt in an unfocused pane stalls forever. When no domain fits it writes the daily log and
+  reflections, which need none, lists what could not be filed, writes tags and summary, leaves `project`
+  empty and marks the subject `failed` with `reason=` in `recap.log` for the notice to show.
+- **Batch triage reads `recap_status`** rather than guessing: `done`, `exempt` and `running` are skipped,
+  `requested`, `failed` and empty are candidates. Trivial now means fewer than five assistant records, the
+  same test the end hook applies. Every candidate gets Phases 1.2 and 5.5 in full.
+- **Invocation is through `recap_launcher.sh --manual`**, which is what gives the recap a session of its own
+  carrying the marker its hooks need. The old instruction to start a new session and type the slash command
+  is exactly what the Phase 1.0 gate now refuses.
+- `parse_transcript.sh` statistics report **"User prompts (approx.)"** from `count_user_messages` alongside
+  "User records (incl. tool results)" for the old number, so neither figure silently changes meaning.
+
+### Fixed
+- **The user-message count included tool results.** They carry `"type":"user"` too, so the old single line
+  read 1080 where the session had 42 prompts. The new figure is labelled approximate because it also counts
+  messages from other sessions and the compaction preamble.
+- **The project fallback could invent a domain.** `parse_transcript.sh project` called a detector that
+  matched the working directory against project directory names and printed `unknown` when nothing matched,
+  which is the invented domain ADR-0004 exists to keep visibly missing. It now reports the directory and the
+  domain that directory maps to, as information rather than a decision.
+
+### Removed
+- `scripts/detect_project.sh`. Its `unknown` path was the last place a domain could be conjured from a path,
+  and nothing else called it. Domain resolution is `skills/common/resolve_project.sh` for every caller.
+
+
 ## [3.2.0] - 2026-04-05
 
 ### Added - Source Detection & Ingest Integration

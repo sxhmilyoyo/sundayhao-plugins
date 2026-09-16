@@ -5,7 +5,7 @@
 #   parse_sessions.sh <sessions_dir>
 #
 # Output: tab-delimited lines (one per session, newest first)
-#   display_line\tsession_id\tcwd\tsession_path\traw_tags\traw_session_name
+#   display_line\tsession_id\tcwd\tsession_path\traw_tags\traw_session_name\traw_recap_status
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ FNR == 1 {
     }
     in_fm = 0; fm_count = 0; in_tags = 0
     session_id = ""; date_val = ""; project = ""; cwd = ""
-    git_branch = ""; session_name = ""; summary = ""
+    git_branch = ""; session_name = ""; summary = ""; recap_status = ""
     tags = ""; current_file = FILENAME
 }
 
@@ -74,6 +74,7 @@ in_fm && !in_tags && /^[a-z_]+:/ {
     else if (key == "git_branch") git_branch = val
     else if (key == "session_name") session_name = val
     else if (key == "summary") summary = val
+    else if (key == "recap_status") recap_status = val
 }
 
 function output_line() {
@@ -103,8 +104,11 @@ function output_line() {
     raw_tags = (tags == "") ? "-" : tags
     raw_cwd = (cwd == "") ? "-" : cwd
     raw_name = (session_name == "") ? "-" : session_name
+    # Placeholders, not empty fields: a run of tabs collapses into one separator on the
+    # reading side, so an empty field would shift every field after it.
+    raw_recap = (recap_status == "") ? "-" : recap_status
 
-    print display, session_id, raw_cwd, current_file, raw_tags, raw_name
+    print display, session_id, raw_cwd, current_file, raw_tags, raw_name, raw_recap
 }
 
 END {
