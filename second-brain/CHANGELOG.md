@@ -7,6 +7,128 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0] - 2026-09-16
+
+### Changed
+- **A recap reuses the subject's pane when it is at a shell prompt, splits otherwise; manual launches run
+  inline at a prompt.** One rule covers both ways in: run where the shell is free, otherwise beside it. A
+  person leaves a pane sitting at its prompt after exiting a session, so that pane is the natural home for
+  that session's recap, and a new pane for every recap was clutter. A `--manual` launch typed at a prompt now
+  takes over that pane directly, with no Herdr call at all, and hands the prompt back when the recap ends; run
+  from inside a Claude session's Bash tool it still splits, because that pane is busy.
+
+  "Free" is Herdr's own definition of an available shell pane, read from `pane process-info` rather than
+  guessed from a prompt pattern: `foreground_process_group_id` is the process group that owns the pane's
+  terminal, `shell_pid` is its root shell, and `foreground_processes` lists what is in that group. `agent
+  start` decides availability from the same fact but cannot be used here, having no way to carry the child
+  wrapper's inline markers, so reuse is a `pane run` after the check.
+
+  Freeness has two halves under `--auto`, and the second is not redundant. A shell hands each job its own
+  process group, so a shell that owns the foreground normally owns it alone — an idle pane reports one
+  process, `zsh`, while this pane with Claude in it reports a different group id and twenty-one. A second
+  process inside the shell's own group is therefore something running without a group of its own, and the
+  pane is busy however the ids compare. The count is read with `-le 1` rather than `-eq 1` so that a Herdr
+  build which does not report the list at all answers zero and cannot quietly switch reuse off. It does not
+  transfer to `--manual`, where the group is ours and holds us, so counting would only count ourselves.
+
+  Two things about that check were wrong on paper and are worth recording, because both were measured rather
+  than reasoned about and both would have shipped a feature that did nothing.
+
+  *The comparison is not the same in both modes.* The rule was specified as `foreground_process_group_id`
+  equals `shell_pid`. That is right for `--auto`, which is detached and outside the pane, and structurally
+  wrong for `--manual`, which is running *inside* it: a script typed at a shell prompt becomes the pane's
+  foreground process group itself, so the shell's own group is precisely what a free pane does not report.
+  Measured — a script at a zsh prompt has pgid equal to the tty's foreground group, while the same script
+  under a Claude session's Bash tool sits in its own group beneath `claude`, which holds the foreground.
+  Comparing against `shell_pid` would have called every manual launch busy and left the inline path
+  unreachable. So the question is the same in both modes, "is anything except us holding this pane", and only
+  the vantage point differs: the shell under `--auto`, our own process group under `--manual`.
+
+  *The launcher has to wait, and it was not waiting.* The design assumed this process already waits for the
+  ending session to exit before it decides. It does not; `recap_child.sh` does, and that runs after the pane
+  decision. Since the launcher is spawned by the ending session's own SessionEnd hook it is a descendant of
+  that session's `claude`, so `claude` is necessarily still alive and still owns the pane's terminal at that
+  instant. Measured directly: `CLAUDE_PID` in the hook environment is the very number `pane process-info`
+  returns as `foreground_process_group_id`, with `shell_pid` its parent. A single check would therefore have
+  read `busy` every single time and reuse would never once have engaged. The launcher now waits for the pane
+  itself to come free, which is the condition the decision actually needs, bounded at ten seconds so that a
+  pane claimed for something else cannot hold a recap up — when the window closes on a busy pane the split
+  runs, exactly as before. The wait costs nothing anyone is waiting on: this process is detached and off the
+  hook's clock. A pane that has been closed answers nothing and is not waited on at all, since it will not
+  come free and the split will fail against it too, which is what leaves the subject `requested` for the
+  notice.
+
+  This is the sort of defect a test can hide rather than catch. The first version of the new cases used a
+  stub that answered "free" on its first read, so they passed whether or not the launcher waited — validating
+  the code against the design's assumption instead of against the machine. The stub now reports busy twice
+  and then free, the real sequence, and a differential run with the wait disabled turns six assertions red.
+
+  Reuse adds one risk a fresh pane did not carry, and it is left standing on purpose. `pane run` submits text
+  to a shell, and several situations a person would call busy read as free here, because `process-info` reads
+  processes rather than the line editor or the job table: a prompt with something typed at it but not yet
+  entered, a job suspended with Ctrl-Z (which hands the terminal back, so the foreground group is the shell
+  again and holds only the shell), and anything the shell runs inside its own group instead of a job of its
+  own — a shell function, a compound command, a `read` prompt. In each case the recap command lands somewhere
+  it does nothing. The shell then reports a command it cannot find,
+  the subject stays `requested`, and the next notice offers it — visible, and costing a recap rather than any
+  data. Clearing the line first would buy the recap by discarding what someone was in the middle of typing,
+  which is the worse trade.
+
+- **`recap_child.sh` changes into the vault before starting `claude`.** Reuse brings no `--cwd`, and the
+  split passed the vault for a reason: it keeps the work repo's own project settings and instructions out of
+  the recap's context. Doing it in the child instead makes it hold however the recap was started — reused
+  pane, fresh split, or a command pasted into some other terminal. `get_kb_path` was already in scope through
+  `obsidian_helpers` and `resolve_project`, so this needed no new dependency.
+
+  Nothing renames the reused pane. It still carries the subject's name, and the recap session's own
+  SessionStart renames pane and agent to the recap name just as it does for a split; claiming the label
+  before anything had run would tell a watcher the wrong thing if the hand-off failed. After the recap the
+  pane returns to a prompt carrying the recap's label, and the next session started there renames it.
+
+### Added
+- Case 38 of the regression suite: twenty-five assertions over the documented reuse scenarios — an idle
+  pane hosting the recap with no new pane and no rename of ours, a busy pane getting a split beside it, a
+  manual launch at a prompt running inline with the vault as its working directory and Herdr only read and
+  never told, a manual launch from inside a Claude session splitting, and a closed pane leaving the subject
+  `requested` for the notice, plus a pane whose ids agree but whose foreground group holds a second process.
+  Three of them exist only to pin down the wait: that `--auto` polls a busy pane, that it gives up rather
+  than queue, and that `--manual` asks once, since a person standing at that prompt is not going to change
+  their mind by being polled.
+- `SECOND_BRAIN_PANE_WAIT_ATTEMPTS` overrides the pane wait's twenty half-second attempts, following
+  `SECOND_BRAIN_LOCK_ATTEMPTS`. It exists so the suite can assert the give-up path without spending ten
+  seconds on it.
+
+### Fixed
+- **The subject folder is made absolute before anything is built from it.** The string outlives the directory
+  it was typed in, and the child now changes into the vault before using it, so a relative path handed to
+  `--manual` would afterwards resolve `recap.log`, the note the exit check reads, and the folder given to the
+  status writer against the vault instead. The silent case is the one that matters: a relative path that also
+  exists under the vault writes to a different session's note with no error. The split and paste paths already
+  had this exposure through their own `cd`; one line at the top covers all three.
+- **Case 34's stub was answering as a pane that no longer exists.** It reported `shell_pid` with no
+  `foreground_process_group_id`, which `pane_state` reads as `gone`. Its "it splits the ending session's pane"
+  assertions kept passing, but through the closed-pane branch rather than the busy one they were written for —
+  the split looks identical from the outside, which is exactly what hid it. The stub now reports the ending
+  session's claude holding the pane, and a new assertion pins the read count at two so the case cannot drift
+  back to the wrong branch unnoticed.
+- **The no-poll assertion was in the one case that could not fail it.** It sat under a free pane, where the
+  wait loop is skipped whether or not it is scoped to `--auto`; deleting the mode guard left the count at one
+  and the assertion still passed. Moved to the busy `--manual` case, where removing the guard now turns it
+  red at three reads.
+- **The pane wait's attempt count is validated rather than trusted.** An unusable value made `-lt` fail with
+  "integer expression expected", so the loop body never ran and the wait collapsed to exactly the single
+  check it exists to avoid — with the complaint going to the `/dev/null` this process is detached onto, so
+  nothing recorded it. The machine-supplied process count was already guarded this way; the one a person can
+  set was not.
+- **Nothing pinned the rule that the launcher never writes the subject's status.** Found by mutation: a status
+  write inserted into the reuse branch left all twenty-five reuse assertions green. Only the end hook, before
+  the launch, and the child, after it, may move a subject; the launcher hands over and records to `recap.log`.
+  Both reuse and split now assert the subject is still `requested` when the launcher is done.
+- **The reuse failure branch was unreachable in the suite.** The stub had no `pane run` case, so every reuse
+  succeeded and the two `--auto` contracts — never print, never exit non-zero — were pinned on the happy path
+  alone. A new state makes a free pane refuse the hand-off, and asserts all four contracts on it: exit 0,
+  silence, the reason in `recap.log`, and the subject left `requested` for the notice.
+
 ## [2.15.1] - 2026-09-16
 
 ### Fixed

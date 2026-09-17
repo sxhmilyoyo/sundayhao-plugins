@@ -781,12 +781,20 @@ chk "no per-property reads remain in the end hook" \
 echo "== 34. on mode launches the recap in a pane of its own =="
 # A stub herdr records every call, so the Herdr flow is asserted without touching a real
 # workspace. process-info answers with a shell_pid, which is what the launcher waits for.
+#
+# The old pane must answer as *busy*, not merely exist: this case is the ending session's
+# own pane, and at that moment the session's claude still owns the pane's terminal. Omitting
+# foreground_process_group_id made pane_state read `gone` instead, and the split assertions
+# below went on passing through the closed-pane branch rather than the busy one they were
+# written for — the split is the same either way, which is exactly what hid it.
 mkdir -p "$NH/.local/bin"
 cat > "$NH/.local/bin/herdr" << 'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "$HOME/herdr-calls.log"
 case "$*" in
     *"pane split"*)        echo '{"result":{"pane":{"pane_id":"w9:pNEW"}}}' ;;
+    *"pane process-info --pane w9:pOLD"*)
+        echo '{"result":{"process_info":{"shell_pid":4242,"foreground_process_group_id":31337,"foreground_processes":[{"name":"claude","pid":31337},{"name":"zsh","pid":4242}]}}}' ;;
     *"pane process-info"*) echo '{"result":{"process_info":{"shell_pid":4242}}}' ;;
 esac
 exit 0
@@ -795,10 +803,16 @@ chmod +x "$NH/.local/bin/herdr"
 ASUBJ="$NKB/_sessions/2026-09-13/f1111111-1111-1111-1111-111111111111"
 : > "$NH/herdr-calls.log"; : > "$ASUBJ/recap.log"
 AOUT2=$(env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD \
+    SECOND_BRAIN_PANE_WAIT_ATTEMPTS=1 \
     CLAUDE_PID=31337 "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$ASUBJ" 2>&1)
 chk "--auto prints nothing even on success" "${AOUT2:-empty}" "empty"
 chk "it splits the ending session's pane" \
     "$(grep -c 'pane split --pane w9:pOLD --direction right --no-focus --cwd' "$NH/herdr-calls.log")" "1"
+# Two reads, not one: the split above has to be reached through the busy branch. A pane that
+# answers nothing reads `gone`, takes one look and splits too, so the assertion above cannot
+# tell the two apart on its own — and for a while it was silently taking the wrong one.
+chk "and it got there by finding it busy" \
+    "$(grep -c 'pane process-info --pane w9:pOLD' "$NH/herdr-calls.log")" "2"
 # --env would put the marker in the pane's root shell, where every later claude in that
 # pane inherits it, registers as a recap and is stamped exempt at its own exit.
 chk "never through the pane environment"    "$(grep -c -- '--env' "$NH/herdr-calls.log")" "0"
@@ -821,6 +835,7 @@ STUB2
 chmod +x "$NH/.local/bin/herdr"
 : > "$ASUBJ/recap.log"
 env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD \
+    SECOND_BRAIN_PANE_WAIT_ATTEMPTS=1 \
     "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$ASUBJ" >/dev/null 2>&1
 chk "a failed split exits 0 under --auto"   "$?" "0"
 chk "and is logged as a failure"            "$(grep -c 'launcher failed: could not open a pane' "$ASUBJ/recap.log")" "1"
@@ -923,6 +938,167 @@ cnote running
 cst "$CSUBJ" done --force
 chk "--force still only serves requested and clear" "$(prop "$CSUBJ/session.md" recap_status)" "running"
 chk "and every reset is in the log"    "$(grep -c 'reset .*->empty' "$CSUBJ/recap.log")" "5"
+
+echo "== 38. a recap reuses the pane it was launched from when that pane is free =="
+# One sentence covers both paths — run where the shell is free, otherwise beside it — but
+# "free" is a different comparison in each, and that difference is the whole subtlety.
+# Herdr's `pane process-info` reports `foreground_process_group_id`, the process group that
+# owns the pane's terminal right now, and `shell_pid`, the pane's root shell.
+#
+#   --auto   is detached, so nothing of ours is in that pane. Free means the foreground
+#            group is the pane's own shell: nothing is running, the shell is at a prompt.
+#   --manual runs IN that pane, so the shell's own group is precisely what a free pane does
+#            NOT report — we are holding the foreground ourselves. Free means the
+#            foreground group is ours.
+#
+# Measured on this machine before the rule was written: an idle pane reports
+# fg group == shell_pid with one foreground process, zsh; a script typed at a zsh prompt is
+# the tty's foreground group leader (pgid == tpgid); the same script run through a Claude
+# session's Bash tool sits in its own group under claude, and claude holds the foreground.
+# Comparing against shell_pid in both modes would leave the inline path unreachable, so
+# these cases pin the two comparisons apart.
+RH="$NH/.local/bin/herdr"
+PINFO="$NH/paneinfo"
+# One stub for every case below: it answers process-info for the old pane from a file, so a
+# case sets the pane's state by writing a word.
+#
+#   settles  busy for two reads, then free — the real --auto sequence, because this launcher
+#            is a descendant of the ending session's own claude and so cannot see a free
+#            pane on its first read. A stub that answered `free` at once would pass whether
+#            or not the launcher waits at all, which is the trap this state exists to close.
+#   mine     reports the caller's own process group, which IS the launcher's (a command
+#            substitution in a non-interactive shell keeps the group), so the manual
+#            comparison is exercised for real rather than against a constant.
+cat > "$RH" << 'STUB4'
+#!/bin/bash
+printf '%s\n' "$*" >> "$HOME/herdr-calls.log"
+zsh='{"name":"zsh","pid":5555}'
+busy="{\"result\":{\"process_info\":{\"shell_pid\":5555,\"foreground_process_group_id\":45612,\"foreground_processes\":[{\"name\":\"claude\",\"pid\":45612},$zsh]}}}"
+free="{\"result\":{\"process_info\":{\"shell_pid\":5555,\"foreground_process_group_id\":5555,\"foreground_processes\":[$zsh]}}}"
+# Group ids agree, but something is running in the shell's own group: busy all the same.
+crowded="{\"result\":{\"process_info\":{\"shell_pid\":5555,\"foreground_process_group_id\":5555,\"foreground_processes\":[$zsh,{\"name\":\"sleep\",\"pid\":5556}]}}}"
+case "$*" in
+    *"pane process-info --pane w9:pOLD"*)
+        case "$(cat "$HOME/paneinfo" 2>/dev/null)" in
+            free|refuses) printf '%s\n' "$free" ;;
+            busy) printf '%s\n' "$busy" ;;
+            crowded) printf '%s\n' "$crowded" ;;
+            settles)
+                n=$(cat "$HOME/panecalls" 2>/dev/null); n=$(( ${n:-0} + 1 ))
+                printf '%s' "$n" > "$HOME/panecalls"
+                [ "$n" -ge 3 ] && printf '%s\n' "$free" || printf '%s\n' "$busy" ;;
+            mine) printf '{"result":{"process_info":{"shell_pid":5555,"foreground_process_group_id":%s}}}\n' \
+                      "$(ps -o pgid= -p $$ | tr -d ' ')" ;;
+            *)    echo "herdr: no such pane" >&2; exit 1 ;;
+        esac ;;
+    *"pane process-info"*) printf '%s\n' '{"result":{"process_info":{"shell_pid":4242}}}' ;;
+    *"pane run"*)
+        # `refuses` reaches the one branch no other state can: the pane was free a moment ago
+        # and the hand-off into it still failed.
+        if [ "$(cat "$HOME/paneinfo" 2>/dev/null)" = refuses ]; then
+            echo "herdr: pane went away" >&2; exit 1
+        fi ;;
+    *"pane split"*)
+        if [ "$(cat "$HOME/paneinfo" 2>/dev/null)" = gone ]; then
+            echo "herdr: no such pane" >&2; exit 1
+        fi
+        printf '%s\n' '{"result":{"pane":{"pane_id":"w9:pNEW"}}}' ;;
+esac
+exit 0
+STUB4
+chmod +x "$RH"
+# A stub claude, so the inline path can be asserted end to end without a model: it records
+# the working directory, which is the other half of reuse. A reused pane brings no
+# `--cwd`, and a recap that runs in the work repo picks up that repo's settings and
+# instructions instead of the vault's.
+cat > "$NH/.local/bin/claude" << 'CSTUB'
+#!/bin/bash
+printf 'claude cwd=%s args=%s\n' "$PWD" "$*" >> "$HOME/claude-calls.log"
+CSTUB
+chmod +x "$NH/.local/bin/claude"
+RSUBJ="$NKB/_sessions/2026-09-13/f1111111-1111-1111-1111-111111111111"
+RST="$PLUGIN/skills/common/recap_status.sh"
+rset(){ printf '%s' "$1" > "$PINFO"; printf '0' > "$NH/panecalls"
+    env HOME="$NH" "$RST" "$RSUBJ" clear --force >/dev/null 2>&1
+    env HOME="$NH" "$RST" "$RSUBJ" requested >/dev/null 2>&1
+    : > "$NH/herdr-calls.log"; : > "$NH/claude-calls.log"; : > "$RSUBJ/recap.log"; }
+rlaunch(){ env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD \
+    SECOND_BRAIN_PANE_WAIT_ATTEMPTS=2 "$@"; }
+LAUNCH="$PLUGIN/hooks/scripts/recap_launcher.sh"
+pireads(){ grep -c 'pane process-info --pane w9:pOLD' "$NH/herdr-calls.log"; }
+
+rset settles
+ROUT=$(rlaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" 2>&1)
+chk "T18 an idle pane hosts the recap itself" "$(grep -c 'pane run w9:pOLD .*recap_child.sh' "$NH/herdr-calls.log")" "1"
+chk "T18 and no new pane appears"             "$(grep -c 'pane split' "$NH/herdr-calls.log")" "0"
+# The wait is the whole feature on this path: a hook-spawned launcher is a descendant of
+# the session's own claude, so its first read of the pane always says busy. Without the
+# wait, reuse would never once engage and every recap would still get a new pane.
+chk "T18 it waits for claude to let go"       "$(pireads)" "3"
+# The recap session's own SessionStart renames pane and agent; renaming here as well would
+# claim the pane before anything ran in it and tell a watcher the wrong thing on a failure.
+chk "T18 registration relabels it, not us"    "$(grep -c 'pane rename' "$NH/herdr-calls.log")" "0"
+chk "T18 the markers still travel inline"     "$(grep -c 'SECOND_BRAIN_RECAP_OF=' "$NH/herdr-calls.log")" "1"
+chk "T18 never through the pane environment"  "$(grep -c -- '--env' "$NH/herdr-calls.log")" "0"
+chk "T18 --auto still prints nothing"         "${ROUT:-empty}" "empty"
+chk "T18 and the reuse is logged"             "$(grep -c 'reusing pane w9:pOLD' "$RSUBJ/recap.log")" "1"
+# The launcher hands a recap over; it never records the outcome of one. Only the status writer
+# does, called by the end hook before this and by the child after it. A status write inserted
+# into the reuse branch went unnoticed by every other assertion here, so this pins it: the
+# subject was `requested` going in and nothing on this path may move it.
+chk "T18 and the launcher records nothing"    "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+
+rset busy
+rlaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" >/dev/null 2>&1
+chk "T19 a busy pane gets a split beside it"  "$(grep -c 'pane split --pane w9:pOLD' "$NH/herdr-calls.log")" "1"
+chk "T19 and the child runs in the new pane"  "$(grep -c 'pane run w9:pNEW .*recap_child.sh' "$NH/herdr-calls.log")" "1"
+chk "T19 nothing is sent to the busy pane"    "$(grep -c 'pane run w9:pOLD' "$NH/herdr-calls.log")" "0"
+chk "T19 and the launcher records nothing"    "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+# Bounded, so a pane the user claimed for something else cannot hold the recap up forever.
+chk "T19 it gives up rather than queue"       "$(pireads)" "3"
+
+# The rule has two halves and the group ids are only the first. A shell gives each job its
+# own process group, so a shell holding the foreground normally holds it alone; a second
+# process in that group is something running without a group of its own, and the pane is
+# busy however the ids compare.
+rset crowded
+rlaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" >/dev/null 2>&1
+chk "T19b a second process in the group is busy" "$(grep -c 'pane split --pane w9:pOLD' "$NH/herdr-calls.log")" "1"
+chk "T19b and the pane is left alone"            "$(grep -c 'pane run w9:pOLD' "$NH/herdr-calls.log")" "0"
+
+rset mine
+rlaunch "$LAUNCH" --manual "$RSUBJ" >/dev/null 2>&1
+chk "T20 a prompt runs the recap inline"      "$(grep -c '^claude cwd=' "$NH/claude-calls.log")" "1"
+chk "T20 in the vault, not the work repo"     "$(sed -n '1s/^claude cwd=\([^ ]*\) .*/\1/p' "$NH/claude-calls.log")" "$NKB"
+chk "T20 under the recap's own session name"  "$(grep -c -- '-n recap-inv-recap-hook' "$NH/claude-calls.log")" "1"
+chk "T20 and Herdr is read, never told"       "$(grep -cE 'pane (split|run|rename)' "$NH/herdr-calls.log")" "0"
+
+rset busy
+rlaunch "$LAUNCH" --manual "$RSUBJ" >/dev/null 2>&1
+chk "T21 a Claude session's Bash tool splits" "$(grep -c 'pane split --pane w9:pOLD' "$NH/herdr-calls.log")" "1"
+chk "T21 and nothing runs inline"             "$(grep -c '^claude cwd=' "$NH/claude-calls.log")" "0"
+# Asked once, not polled. This is the case that can tell the difference: a person is standing
+# at that prompt and whatever holds it will not release it because we waited. Asserting the
+# read count on a free pane proves nothing, since a free pane skips the loop either way.
+chk "T21 and it does not wait on a person"    "$(pireads)" "1"
+
+# A free pane whose hand-off fails anyway. Until this state existed the branch was dead code:
+# the stub had no `pane run` case, so every reuse succeeded and the --auto contracts were
+# pinned on the happy path alone.
+rset refuses
+RFOUT=$(rlaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" 2>&1); RFRC=$?
+chk "T18b a refused hand-off exits 0"         "$RFRC" "0"
+chk "T18b and stays silent"                   "${RFOUT:-empty}" "empty"
+chk "T18b and says why in the log"            "$(grep -c 'launcher failed: could not start the recap' "$RSUBJ/recap.log")" "1"
+chk "T18b and leaves the subject requested"   "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+
+rset gone
+rlaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" >/dev/null 2>&1; RRC=$?
+chk "T22 a closed pane exits 0 under --auto"  "$RRC" "0"
+chk "T22 the subject is left for the notice"  "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+chk "T22 and the failure says why"            "$(grep -c 'launcher failed' "$RSUBJ/recap.log")" "1"
+# Nothing to wait for: a pane that no longer exists will not come free.
+chk "T22 and a gone pane is not waited on"    "$(pireads)" "1"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

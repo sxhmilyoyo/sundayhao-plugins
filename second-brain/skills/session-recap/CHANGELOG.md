@@ -5,6 +5,14 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-09-16
+
+### Changed
+- Phase 1.0 step 2 no longer says the launcher opens a pane. As of plugin 2.16.0 it runs the recap in the
+  pane the command was typed in when that pane is at a shell prompt, and only splits beside it when
+  something is already running there — which is what a session invoking this through its Bash tool looks
+  like. Wording only; the skill's own behaviour is unchanged.
+
 ## [3.4.0] - 2026-09-16
 
 ### Changed

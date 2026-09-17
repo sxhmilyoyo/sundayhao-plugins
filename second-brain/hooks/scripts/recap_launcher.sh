@@ -61,6 +61,12 @@ done
 
 # The notice prints folder paths with a trailing slash and a person may paste one.
 while [ "${SUBJECT%/}" != "$SUBJECT" ] && [ "$SUBJECT" != "/" ]; do SUBJECT="${SUBJECT%/}"; done
+# Absolute from here on, because this string outlives the directory it was typed in. The
+# child changes into the vault before it uses it, and every path built from it afterwards —
+# recap.log, the note it reads, the folder it hands the status writer — would then resolve
+# against the vault instead. A relative path that happens to exist under the vault too is
+# the bad case: no error, just a different session's note being written.
+case "$SUBJECT" in /*) ;; *) SUBJECT="$PWD/$SUBJECT" ;; esac
 
 if [ ! -f "$SUBJECT/session.md" ]; then
     printf 'recap_launcher.sh: no session note at %s/session.md\n' "$SUBJECT" >&2
@@ -146,6 +152,134 @@ fi
 
 KB_PATH=$(get_kb_path 2>/dev/null)
 [ -n "$KB_PATH" ] || fail "knowledge bank not configured"
+
+# ── Where to run it: in this pane, or beside it ──────────────────────────────────
+# One rule for both modes: run where the shell is free, otherwise beside it. A person
+# leaves a pane sitting at its prompt after exiting a session, so that pane is the natural
+# home for that session's recap, and a new pane per recap is clutter reuse removes.
+#
+# "Free" is Herdr's own definition of an available shell pane, read from `pane
+# process-info` rather than guessed from a prompt pattern: `foreground_process_group_id` is
+# the process group that currently owns the pane's terminal, `shell_pid` its root shell.
+# `agent start` decides availability from the same fact, but cannot be used here because it
+# has no way to carry the child's inline markers, so reuse is a `pane run` after the check.
+#
+# What that group is compared against differs by mode, because our own position differs:
+#
+#   --auto   is detached in a session of its own, so nothing of ours is in that pane. Free
+#            means the foreground group is the pane's own shell: nothing running, at a
+#            prompt. Measured: an idle pane reports fg group == shell_pid and exactly one
+#            foreground process, zsh.
+#   --manual is running IN that pane, so the shell's own group is exactly what a free pane
+#            does NOT report — we are holding the foreground ourselves. Free means the
+#            foreground group is ours. Measured: a script typed at a zsh prompt is the
+#            tty's foreground group leader (pgid == tpgid), while the same script run
+#            through a Claude session's Bash tool sits in its own group beneath claude, and
+#            claude's group holds the foreground. Comparing against shell_pid here would
+#            call every manual launch busy and leave the inline path unreachable.
+pane_state() {   # free | busy | gone
+    local pane="$1" fg shell nproc want
+    { IFS= read -r fg; IFS= read -r shell; IFS= read -r nproc; } \
+        < <("$HERDR_BIN" pane process-info --pane "$pane" 2>/dev/null \
+        | jq -r '.result.process_info.foreground_process_group_id // "",
+                 .result.process_info.shell_pid // "",
+                 (.result.process_info.foreground_processes | length)' 2>/dev/null)
+    # A closed pane answers nothing. Distinguished from busy because there is no point
+    # waiting for a pane that no longer exists, and because the split below will fail
+    # against it too, which is what leaves the subject `requested` for the notice.
+    [ -n "$fg" ] || { printf 'gone\n'; return; }
+    # Whose group has to hold the pane for it to count as free: the pane's own shell when
+    # we are outside it, our own group when we are the thing standing in it.
+    if [ "$MODE" = "auto" ]; then
+        want="$shell"
+        # Second half of the rule, and it only means anything on this side. A shell hands
+        # each job its own process group, so a shell that owns the foreground normally owns
+        # it alone; a second process in there is something running without a group of its
+        # own, and the pane is busy however the group ids compare. Under --manual the group
+        # is ours and holds us, so counting would only be counting ourselves.
+        # `-le 1` rather than `-eq 1`: a build that does not report the list at all answers
+        # zero, and a missing field should not quietly switch reuse off.
+        case "$nproc" in
+            ''|*[!0-9]*) : ;;
+            *) [ "$nproc" -le 1 ] || { printf 'busy\n'; return; } ;;
+        esac
+    else
+        want=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+    fi
+    if [ -n "$want" ] && [ "$fg" = "$want" ]; then printf 'free\n'; else printf 'busy\n'; fi
+}
+
+# Under --auto the pane is certain to be busy at this instant, and waiting is not
+# optional. This process was spawned by the ending session's own SessionEnd hook, so it is
+# a descendant of that session's claude, so claude is still alive, so claude's process
+# group still owns the pane's terminal. Measured directly: CLAUDE_PID in the hook
+# environment is the very number `pane process-info` reports as
+# foreground_process_group_id, and shell_pid is its parent. A single check here would
+# therefore read `busy` every time and reuse would never once engage — the plan's
+# assumption that this process already waits for the parent was wrong, the child is what
+# waits. So wait for the pane itself to come free, which is the condition the decision
+# actually needs and is true only once claude has released the terminal.
+#
+# Bounded, because a person who exits a session and immediately starts something else in
+# that pane must not hold the recap up: when the window closes on a still-busy pane the
+# split below runs, exactly as before reuse existed. Off the hook's clock either way —
+# this process is detached and nothing is waiting on it.
+#
+# The child keeps its own parent-exit wait, and it is still load-bearing: that timeout is
+# reached precisely when the pane never came free, which is when claude may still be alive
+# and the transcript still being written.
+STATE=$(pane_state "$HERDR_PANE_ID")
+if [ "$MODE" = "auto" ]; then
+    # Validated, not trusted, and for a specific reason: an unusable value makes `-lt` fail
+    # with "integer expression expected", the body never runs, and the wait silently
+    # collapses to the single check this whole passage exists to avoid — with the complaint
+    # going to the /dev/null this process was detached onto, so nothing would record it.
+    ATTEMPTS="${SECOND_BRAIN_PANE_WAIT_ATTEMPTS:-20}"
+    case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=20 ;; esac
+    i=0
+    while [ "$STATE" = "busy" ] && [ "$i" -lt "$ATTEMPTS" ]; do
+        sleep 0.5
+        i=$(( i + 1 ))
+        STATE=$(pane_state "$HERDR_PANE_ID")
+    done
+fi
+
+if [ "$STATE" = "free" ]; then
+    if [ "$MODE" = "auto" ]; then
+        # Nothing is renamed here. The pane still carries the subject's name, and the recap
+        # session's own SessionStart renames pane and agent to the recap name just as it
+        # does in a split; claiming the label before anything ran would tell a watcher the
+        # wrong thing if the hand-off failed.
+        #
+        # One risk reuse adds that a fresh pane did not have: `pane run` submits text to
+        # that shell, and several things a person would call busy read as free here, because
+        # `process-info` reads processes and not the line editor or the job table. A prompt
+        # with something typed at it but not yet entered looks exactly like an empty one. So
+        # does a suspended job: Ctrl-Z hands the terminal back, so the foreground group is
+        # the shell again and holds only the shell. So does anything the shell runs inside
+        # its own group rather than a job of its own — a shell function, a compound command,
+        # a `read` prompt. In each case the text lands somewhere it does nothing.
+        # Left alone deliberately: the shell reports a command it cannot find, the subject
+        # stays `requested` and the next notice offers it, so the failure is visible and
+        # costs a recap rather than any data. Clearing the line first would start the recap
+        # by throwing away what they were typing, which is worse than the notice.
+        if ! "$HERDR_BIN" pane run "$HERDR_PANE_ID" "$CMD" >/dev/null 2>&1; then
+            fail "could not start the recap in pane $HERDR_PANE_ID"
+        fi
+        say "reusing pane $HERDR_PANE_ID for $NAME"
+        exit 0
+    fi
+    # --manual at a prompt: become the recap. No Herdr call at all, so there is no pane
+    # hand-off left to fail, and the pane returns to its prompt when the recap ends.
+    # Exported rather than quoted onto a command line: there is no shell in between to
+    # quote for, which removes the only place a vault path with a space could break.
+    echo "Recapping $(basename "$SUBJECT") as $NAME in this pane"
+    export SECOND_BRAIN_RECAP_OF="$SUBJECT"
+    export SECOND_BRAIN_RECAP_NAME="$NAME"
+    export SECOND_BRAIN_PARENT_PID="$PARENT_PID"
+    export SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN_ROOT"
+    exec bash "$CHILD" "$SUBJECT"
+fi
 
 # stdout and stderr are kept apart: the response is parsed as JSON, and one deprecation
 # notice or auth warning on stderr would otherwise prefix the document, make jq fail, and

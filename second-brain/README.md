@@ -208,6 +208,10 @@ Takes the raw session data that Layer 1 captured and distills it into actionable
 <plugin-path>/hooks/scripts/recap_launcher.sh --manual /path/to/session-folder
 ```
 
+Run that at a shell prompt and the recap takes over the pane you typed it in, returning you to the prompt
+when it finishes. Run it from inside a Claude session and it opens a pane beside that one instead, since the
+pane you are in is busy.
+
 A recap runs in a **dedicated recap session**, not in whatever session you have open. That session's note
 records which session it recapped, so it is never recapped in turn, and the recap can write the subject's
 description without any doubt about which note is which.
@@ -224,7 +228,7 @@ Set `auto_recap` and the plugin keeps track of which sessions still need one:
 |-------|----------------------------------|
 | `off` (default) | Nothing. No property is written and no notice appears |
 | `notify` | The session's note is stamped `recap_status: requested`, or `exempt` if the session was too small to hold knowledge. The next session you start shows what is waiting, with the command to run |
-| `on` | The same, and the recap starts itself: the ending session's Herdr pane splits and the recap runs beside it. Herdr only, and it needs the SessionEnd budget raised (see below); anywhere else it behaves as `notify` |
+| `on` | The same, and the recap starts itself: it runs in the pane you just left, if that pane is back at its shell prompt, and splits beside it if you have started something else there. Herdr only, and it needs the SessionEnd budget raised (see below); anywhere else it behaves as `notify` |
 
 The notice is shown to **you**, not added to Claude's context, because it carries a command to run and
 because a recap belongs in its own session rather than in the middle of your work. It lists recaps that
@@ -278,9 +282,11 @@ written the note and stamped it, so a hook cancelled at its budget never reaches
 when that happens: the session stays `requested` and the next session's notice offers you the command. But
 it does mean `on` only fires reliably once the budget is raised.
 
-Once it fires, the ending session's pane splits and the recap runs in the new half, labelled with the
-recap's name. You can watch it, interrupt it, or close the pane; closing it marks the subject `failed` so
-the notice picks it up rather than leaving it looking like a recap still in flight.
+Once it fires, the recap runs **in the pane you just left**, which is normally sitting at its shell prompt
+by then, and the pane takes the recap's name. If you have already started something else there it splits
+instead and runs beside it, so reuse never takes a pane out from under you. You can watch it, interrupt it,
+or close the pane; closing it marks the subject `failed` so the notice picks it up rather than leaving it
+looking like a recap still in flight.
 
 ---
 

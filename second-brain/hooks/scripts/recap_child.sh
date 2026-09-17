@@ -105,6 +105,17 @@ fi
 printf '%s start pane=%s name=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "${HERDR_PANE_ID:-none}" "${SECOND_BRAIN_RECAP_NAME:-unnamed}" >> "$LOG" 2>/dev/null || true
 
+# A reused pane brings no `--cwd`. The split passed the vault, and that is what keeps the
+# work repo's own project settings and instructions out of the recap's context — the reason
+# the split used the vault in the first place. Doing it here instead makes it hold however
+# this process was started: reused pane, fresh split, or a command pasted into some other
+# terminal. get_kb_path is already in scope through obsidian_helpers -> resolve_project.
+KB_PATH=$(get_kb_path 2>/dev/null)
+if [ -z "$KB_PATH" ] || ! cd "$KB_PATH" 2>/dev/null; then
+    printf '%s no vault to run in, staying in %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PWD" >> "$LOG" 2>/dev/null || true
+fi
+
 # Interactive and in the foreground, on this pane's TTY, so a person can watch it and
 # step in. The trap runs when it exits, or when the pane is closed under it.
 # No --settings: ADR-0003 keeps this session's hooks on, which is what registers it.
