@@ -7,6 +7,25 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.3] - 2026-09-18
+
+### Fixed
+- **The regression suite reported 8 false failures when run from inside a recap session.** 266 passed /
+  12 failed, against 274 / 4 from an ordinary shell — and it said nothing about why, so the difference
+  read as twelve real defects. The recap launcher exports `SECOND_BRAIN_RECAP_OF` (plus `_PLUGIN_ROOT`,
+  `_RECAP_NAME`, `_PARENT_PID`) into the pane it starts and every child inherits them. `RECAP_OF` alone
+  marks the process as a recap, so the end hook stamps `exempt` where the tests expect `requested` — the
+  whole 5-case exempt cluster — and the notice and launcher assertions follow from it. Bisected by
+  restoring one variable at a time: all four cleared gives 274/4, `RECAP_OF` alone restored gives back
+  all 12, and the other three are innocent. Now unset at the top of the suite, alongside the Herdr
+  variables and for the same reason; cases that want the marker pass it per invocation through `env`, so
+  nothing is taken away from them.
+
+  Worth recording that ADR-0003 exists precisely because this marker must be read from the persisted note
+  and never from the inherited environment. The suite that guards that decision was itself caught by the
+  hazard the decision is about. The header now also states that the suite is not re-entrant, since fixed
+  fixture ids mean two concurrent copies corrupt each other.
+
 ## [2.16.2] - 2026-09-18
 
 ### Fixed

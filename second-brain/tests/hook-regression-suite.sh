@@ -7,12 +7,20 @@
 #   ./tests/hook-regression-suite.sh            # test this working tree
 #   PLUGIN=/path/to/second-brain ./tests/...    # test an installed plugin copy
 #
-# Two environment notes that are easy to trip over. HOME is redirected only for
+# Three environment notes that are easy to trip over. HOME is redirected only for
 # the hook processes, because get_kb_path builds its config path from ${HOME} by
 # plain assignment and offers no override; redirecting it for the whole script
 # would also hit any tool that resolves through a version-manager shim. File
 # edits use awk and sed for the same reason. HERDR_PANE_ID and TMUX_PANE are
 # cleared per invocation so the terminal rename helper cannot touch a real pane.
+#
+# Third: the suite inherits its caller's environment, and two kinds of inherited
+# state make it lie rather than fail. The SECOND_BRAIN_* recap markers are now
+# unset below -- run from inside a recap session before that, this reported 8 false
+# failures silently. And it is not re-entrant: fixture session ids are fixed, so two
+# copies at once corrupt each other's results, and an interrupted run leaks
+# /tmp/second-brain-folder-<id> files that outlive it. Run one at a time, from an
+# ordinary shell.
 PLUGIN="${PLUGIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ROOT=$(mktemp -d /tmp/sb-test.XXXXXX)
 H="$ROOT/home"; KB="$ROOT/kb"
@@ -69,6 +77,26 @@ export PATH="$ROOT/bin:$PATH"
 # rather than live, and exactly the kind of thing to clear before it becomes live.
 export HERDR_ENV= HERDR_PANE_ID= HERDR_TAB_ID= HERDR_WORKSPACE_ID= \
        HERDR_SOCKET_PATH= HERDR_BIN_PATH= TMUX_PANE=
+# ── The recap markers are cleared for the same reason ────────────────────────────
+# Run from inside a recap session, this suite reported 8 false failures and said
+# nothing about why: 266 passed / 12 failed against 274 / 4 from an ordinary shell.
+# The recap launcher exports SECOND_BRAIN_RECAP_OF (plus _PLUGIN_ROOT, _RECAP_NAME and
+# _PARENT_PID) into the pane it starts, every child inherits them, and RECAP_OF alone
+# marks the process as a recap — so the end hook stamps `exempt` instead of
+# `requested`, which is the whole exempt cluster, and the notice and launcher rows
+# follow from it. Reproduced both ways: clearing all four gives 274/4, restoring only
+# RECAP_OF gives back all 12.
+#
+# Cases that want the marker pass it per invocation through `env`, so clearing it here
+# takes nothing away from them. Unset rather than set empty: absent is what a normal
+# session's environment looks like.
+#
+# The irony is worth recording. ADR-0003 exists because this marker must be read from
+# the persisted note and never from the inherited environment, and the vault states the
+# same rule as "Trust the Persisted Fact Not the Inherited Environment". The suite that
+# guards that decision was itself caught by the hazard the decision is about.
+unset SECOND_BRAIN_RECAP_OF SECOND_BRAIN_PLUGIN_ROOT SECOND_BRAIN_RECAP_NAME \
+      SECOND_BRAIN_PARENT_PID
 
 TODAY=$(date +%Y-%m-%d)
 PASS=0; FAIL=0
