@@ -1100,6 +1100,109 @@ chk "T22 and the failure says why"            "$(grep -c 'launcher failed' "$RSU
 # Nothing to wait for: a pane that no longer exists will not come free.
 chk "T22 and a gone pane is not waited on"    "$(pireads)" "1"
 
+echo "== 39. ccfind survives its own warm cache on a GNU host =="
+# GNU stat reads `-f` as --file-system, prints a filesystem block on stdout and exits 1,
+# so a BSD-first || chain *appends* the real epoch to that garbage instead of replacing
+# it, and cache_age's arithmetic reads the word `File` — fatal under set -u. The cold
+# path returns early without calling stat, so the crash only fires once a cache exists:
+# every run but the very first, and never on macOS, where the BSD form succeeds.
+CC2="$ROOT/cchome2"; mkdir -p "$CC2/ccfind"
+env XDG_CACHE_HOME="$CC2" HOME="$H" "$PLUGIN/tools/ccfind/ccfind.sh" --tags >/dev/null 2>&1 || true
+chk "a cold run builds a cache"        "$([ -s "$CC2/ccfind/sessions.tsv" ] && echo yes || echo no)" "yes"
+W39=$(env XDG_CACHE_HOME="$CC2" HOME="$H" "$PLUGIN/tools/ccfind/ccfind.sh" --tags 2>&1 >/dev/null); W39RC=$?
+chk "a warm run exits zero"            "$W39RC" "0"
+chk "and reads no poisoned mtime"      "$(printf '%s' "$W39" | grep -c 'unbound variable')" "0"
+
+echo "== 40. ccfind's actions do not require pbcopy or tmux =="
+# The three fzf actions assumed a Mac inside tmux: Ctrl-Y piped to pbcopy (a 127 that
+# set -e turns into the whole UI dying), and Enter/Ctrl-O called tmux new-window with no
+# guard — herdr is not tmux, sets no $TMUX and runs no tmux server, so both primary
+# actions failed under it. The functions are extracted and driven with a PATH holding
+# only what each tier needs, because the OSC 52 tier writes to /dev/tty and a test that
+# let it fire would set the clipboard of whoever runs the suite.
+CBIN="$ROOT/ccbin"; mkdir -p "$CBIN"
+for t in bash cut dirname sed; do ln -sf "$(command -v "$t")" "$CBIN/$t"; done
+CFNS=$(sed -n '/^copy_to_clipboard()/,/^}/p; /^copy_session_path()/,/^}/p; /^open_alongside()/,/^}/p' \
+    "$PLUGIN/tools/ccfind/ccfind.sh")
+CROW=$(printf 'disp\tid9\t/tmp/work\t%s/_sessions/2026-09-18/id9/session.md\t-\t-\t-' "$KB")
+# pbcopy first when it exists: upstream macOS behaviour is unchanged.
+cat > "$CBIN/pbcopy" << PB
+#!/bin/bash
+exec /bin/cat > "$ROOT/pb.out"
+PB
+chmod +x "$CBIN/pbcopy"
+env PATH="$CBIN" TMUX= HERDR_ENV= CFNS="$CFNS" bash -c 'eval "$CFNS"; printf %s /kb/x | copy_to_clipboard' 2>/dev/null
+chk "pbcopy is preferred when present" "$(cat "$ROOT/pb.out" 2>/dev/null)" "/kb/x"
+rm -f "$CBIN/pbcopy" "$ROOT/pb.out"
+# With no clipboard tool at all, the action must say where the path is and leave the
+# UI alive, not die 127 before the confirmation line.
+C40=$(env PATH="$CBIN" TMUX= HERDR_ENV= CFNS="$CFNS" CROW="$CROW" bash -c \
+    'set -euo pipefail; eval "$CFNS"; copy_session_path "$CROW"' 2>&1); C40RC=$?
+chk "no clipboard tool is not fatal"   "$C40RC" "0"
+chk "and the path is still shown"      "$(printf '%s' "$C40" | grep -c '_sessions/2026-09-18/id9')" "1"
+# Inside tmux the existing behaviour is kept, flags included.
+cat > "$CBIN/tmux" << TM
+#!/bin/bash
+printf '%s\n' "\$*" >> "$ROOT/cc-mux.log"
+TM
+chmod +x "$CBIN/tmux"
+: > "$ROOT/cc-mux.log"
+env PATH="$CBIN" TMUX=/tmp/fake,1,0 HERDR_ENV= CFNS="$CFNS" bash -c \
+    'eval "$CFNS"; open_alongside /tmp/work claude -r id9' 2>/dev/null
+chk "inside tmux, tmux opens the window" \
+    "$(grep -c 'new-window -c /tmp/work claude -r id9' "$ROOT/cc-mux.log")" "1"
+rm -f "$CBIN/tmux"
+# Under herdr the same action is a right-hand split of the caller's own pane, then pane
+# run; the new pane's id must be read from the reply, never predicted. The stub answers
+# with the real CLI's JSON shape, which nests the id under "pane", not "root_pane".
+# It lives in a directory of its own so the PATH-less case below can hide it.
+HBIN="$ROOT/hbin"; mkdir -p "$HBIN"
+cat > "$HBIN/herdr" << HD
+#!/bin/bash
+printf '%s\n' "\$*" >> "$ROOT/cc-mux.log"
+case "\$*" in
+    "pane split"*)  printf '{"id":"cli:pane:split","result":{"pane":{"agent_status":"unknown","cwd":"/tmp/work","focused":true,"pane_id":"w9:p7","tab_id":"w9:t2"},"type":"pane_info"}}\n' ;;
+    "api snapshot"*) printf '{"id":"cli:api:snapshot","result":{"snapshot":{"focused_pane_id":"w9:pFOCUS","focused_tab_id":"w9:t2","panes":[]}}}\n' ;;
+esac
+HD
+chmod +x "$HBIN/herdr"
+: > "$ROOT/cc-mux.log"
+env PATH="$HBIN:$CBIN" TMUX= HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD CFNS="$CFNS" bash -c \
+    'eval "$CFNS"; open_alongside /tmp/work claude -r id9' 2>/dev/null
+chk "under herdr, the caller's pane splits right" \
+    "$(grep -c 'pane split --pane w9:pOLD --direction right --cwd /tmp/work' "$ROOT/cc-mux.log")" "1"
+chk "and the command runs in the replied pane" "$(grep -c 'pane run w9:p7 claude -r id9' "$ROOT/cc-mux.log")" "1"
+# herdr places new panes in the background; tmux switches to the new window. Without an
+# explicit --focus the action looks like it did nothing at all: nvim really is running,
+# in a pane the user never sees, and the only visible evidence is a stray process.
+chk "and it is focused, as new-window would be" \
+    "$(grep -c 'pane split .*--focus' "$ROOT/cc-mux.log")" "1"
+# The launcher people actually use is a herdr keybinding of type "popup", and herdr runs
+# a keybinding's command directly rather than through a login shell. Two things follow,
+# and together they made every action fail while every test still passed: $PATH is not
+# the one ~/.zshrc builds, so `command -v herdr` finds nothing; and popups have their
+# pane identity deliberately removed (herdr's app/popup.rs calls without_pane_identity),
+# so there is no own pane to split. The binary comes from $HERDR_BIN_PATH and the target
+# from the snapshot's focused pane — the one the popup is covering.
+: > "$ROOT/cc-mux.log"
+P40=$(env PATH="$CBIN" TMUX= HERDR_ENV=1 HERDR_BIN_PATH="$HBIN/herdr" CFNS="$CFNS" \
+    bash -c 'unset HERDR_PANE_ID; eval "$CFNS"; open_alongside /tmp/work nvim .' 2>&1); P40RC=$?
+chk "a popup launcher still opens a pane"   "$P40RC" "0"
+chk "it finds herdr off PATH via HERDR_BIN_PATH" \
+    "$(grep -c 'pane split' "$ROOT/cc-mux.log")" "1"
+chk "it asks which pane is focused"         "$(grep -c 'api snapshot' "$ROOT/cc-mux.log")" "1"
+chk "and splits that one, not an empty id"  "$(grep -c 'pane split --pane w9:pFOCUS' "$ROOT/cc-mux.log")" "1"
+# A missing binary must say so rather than dying on "command not found".
+B40=$(env PATH="$CBIN" TMUX= HERDR_ENV=1 HERDR_BIN_PATH="$ROOT/nope/herdr" CFNS="$CFNS" \
+    bash -c 'unset HERDR_PANE_ID; eval "$CFNS"; open_alongside /tmp/work nvim .' 2>&1); B40RC=$?
+chk "an unusable herdr binary is reported"  "$B40RC" "1"
+chk "and names the path it tried"           "$(printf '%s' "$B40" | grep -c 'herdr not found at')" "1"
+# Neither multiplexer: a clear refusal with a message, not a hang or a bare tmux error.
+M40=$(env PATH="$CBIN" TMUX= HERDR_ENV= CFNS="$CFNS" bash -c \
+    'eval "$CFNS"; open_alongside /tmp/work claude -r id9' 2>&1); M40RC=$?
+chk "no multiplexer is refused"        "$M40RC" "1"
+chk "and the refusal names both"       "$(printf '%s' "$M40" | grep -c 'tmux or herdr')" "1"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are

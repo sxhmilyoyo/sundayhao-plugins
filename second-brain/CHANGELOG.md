@@ -7,6 +7,54 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.1] - 2026-09-18
+
+### Fixed
+- **`ccfind` works on Linux and under Herdr; all three of its actions were broken there.** The tool assumed
+  macOS inside tmux. On a Linux host launched from a Herdr keybinding, every mode failed and every action
+  failed, in three independent ways.
+
+  *The cache age read poisoned itself.* `cache_age` chained the two `stat` forms with `||`, BSD first. That
+  relies on the wrong-platform binary failing silently, and GNU `stat` does the opposite: `-f` means
+  `--file-system` there, so it prints a filesystem block on **stdout** and exits 1. The fallback then appended
+  the real epoch to that block, and the arithmetic died on the word `File` under `set -u`. `cache_age` returns
+  early when no cache file exists, so this only fired once a cache was present — every run but the first, and
+  never on macOS, which is why a smoke test on a cold cache passed. Now branched on `$OSTYPE`, the way
+  `kb-lint` already did it, so neither platform depends on how the other one fails.
+
+  *`Ctrl-Y` had no clipboard.* `pbcopy` is macOS-only. `copy_to_clipboard` now tiers pbcopy → wl-copy → xclip
+  → OSC 52 → tmux buffer. OSC 52 is what fires on a headless host: there is no local clipboard worth writing
+  to, so the text goes to the terminal at the far end of the SSH session, and Herdr relays a pane's OSC 52
+  write to its attached client. The call site reports failure instead of letting `set -e` kill the UI before
+  the confirmation line prints.
+
+  *`Enter` and `Ctrl-O` called tmux unconditionally.* Herdr is not tmux, sets no `$TMUX` and runs no tmux
+  server, so both died with `failed to connect to server`. `open_alongside` now branches on the variable each
+  multiplexer owns rather than on which binaries exist — a host can have tmux installed with no server
+  running. Under Herdr it splits rightward and runs the command in the new pane.
+
+  Three things about the Herdr path were wrong on paper and only showed up against the real binary, because
+  every test ran from a shell while the tool is launched from a keybinding.
+
+  *`--focus` is not the default.* `tmux new-window` switches to the new window; Herdr creates panes in the
+  background, and omitting `--no-focus` is not the same as passing `--focus`. Without it the actions looked
+  completely inert while working perfectly — `nvim` was running the whole time in a pane nobody could see,
+  and the only visible evidence was a stray process.
+
+  *A popup has no pane identity.* Herdr runs a keybinding's command directly rather than through a login
+  shell. So `$PATH` is not the one the shell profile builds and `command -v herdr` finds nothing — the binary
+  now resolves through `$HERDR_BIN_PATH`, which Herdr injects into every pane for this purpose. And a popup's
+  `HERDR_PANE_ID` is deliberately removed, leaving no own pane to split; the target falls back to the focused
+  pane from `herdr api snapshot`, which is the pane the popup is covering and what "beside this" means to
+  someone looking at the screen.
+
+  *The reply shapes differ.* `pane split` returns the new id under `.result.pane`, `tab create` under
+  `.result.root_pane`. Ids are read from the reply, never predicted.
+
+  Regression cases 39 and 40 cover all of it: a warm-cache run, clipboard tier selection, the tmux branch, the
+  Herdr split, that the new pane is focused, a popup-shaped invocation with Herdr off `$PATH` and no pane id,
+  an unusable binary, and no multiplexer at all.
+
 ## [2.16.0] - 2026-09-16
 
 ### Changed

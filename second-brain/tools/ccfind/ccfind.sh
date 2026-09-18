@@ -42,8 +42,8 @@ Options:
   -h, --help      Show this help
 
 Keybindings (in fzf):
-  Enter           Resume session in new tmux tab
-  Ctrl-O          Open session folder in nvim (new tmux tab)
+  Enter           Resume session alongside (herdr pane right / tmux window)
+  Ctrl-O          Open session folder in nvim, alongside
   Ctrl-Y          Copy session folder path to clipboard
   Ctrl-A          Switch to all sessions
   Ctrl-N          Switch to by-name mode (named sessions only)
@@ -91,7 +91,16 @@ cache_age() {
     fi
     local now file_mtime
     now=$(date +%s)
-    file_mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
+    # Branch on the platform rather than chaining the two forms with ||, the way
+    # kb-lint already does. A chain relies on the wrong-platform binary failing
+    # silently, and GNU stat given -f does the opposite: -f means --file-system there,
+    # so it prints a filesystem block on stdout *and* exits 1, the fallback appends the
+    # real epoch to that, and the arithmetic below dies on `File` under set -u.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        file_mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0)
+    else
+        file_mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
+    fi
     echo $(( now - file_mtime ))
 }
 
@@ -153,6 +162,73 @@ filter_named() {
 
 # --- Actions ---
 
+# Reads the text to copy on stdin. Local clipboard tools first, then OSC 52: on a
+# headless host the terminal at the far end of the SSH session owns the real clipboard,
+# and herdr relays a pane's OSC 52 write to its attached client. tmux's paste buffer is
+# last because it is the only tier that does not reach a system clipboard.
+copy_to_clipboard() {
+    if command -v pbcopy >/dev/null 2>&1; then pbcopy
+    elif command -v wl-copy >/dev/null 2>&1; then wl-copy
+    elif command -v xclip >/dev/null 2>&1; then xclip -selection clipboard
+    elif command -v base64 >/dev/null 2>&1 && [ -w /dev/tty ]; then
+        printf '\033]52;c;%s\007' "$(base64 | tr -d '\n')" > /dev/tty
+    elif [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+        tmux load-buffer -
+    else
+        return 1
+    fi
+}
+
+# Opens $@ next to the caller, at cwd $1: a right-hand split under herdr, a new window
+# under tmux. Each multiplexer is detected by the variable it owns, not by which binaries
+# exist: a host can have tmux installed with no server running (herdr is not tmux and
+# sets no $TMUX). Neither herdr verb takes a command, so the pane is made first and the
+# id is read from the reply — ids must never be predicted. --focus is explicit because
+# herdr places new panes in the background, while tmux switches to the new window:
+# without it the editor really does open, somewhere you never see.
+open_alongside() {
+    local cwd="$1"; shift
+    if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+        tmux new-window -c "$cwd" "$*"
+        return
+    fi
+    if [ "${HERDR_ENV:-}" != 1 ]; then
+        echo "Not inside tmux or herdr; cannot open a new pane." >&2
+        return 1
+    fi
+
+    # herdr launches a keybinding's command directly, not through a login shell, so
+    # $PATH there is not the one ~/.zshrc builds and `command -v herdr` finds nothing.
+    # $HERDR_BIN_PATH is injected into every pane for exactly this; the last fallback
+    # is the idiom recap_launcher.sh already uses.
+    local herdr_bin
+    herdr_bin=$(command -v herdr 2>/dev/null) \
+        || herdr_bin="${HERDR_BIN_PATH:-$HOME/.local/bin/herdr}"
+    if [ ! -x "$herdr_bin" ]; then
+        echo "herdr not found at $herdr_bin; cannot open a new pane." >&2
+        return 1
+    fi
+
+    # Which pane to split. A popup launcher has its pane identity deliberately removed
+    # (herdr's app/popup.rs drops HERDR_PANE_ID), so there is no own pane to split and
+    # the workspace's focused pane — the one the popup is covering — is what the user
+    # means by "beside this".
+    local target
+    target="${HERDR_PANE_ID:-}"
+    [ -n "$target" ] || target=$("$herdr_bin" api snapshot 2>/dev/null \
+        | sed -n 's/.*"focused_pane_id":"\([^"]*\)".*/\1/p')
+    if [ -z "$target" ]; then
+        echo "Could not determine which herdr pane to split." >&2
+        return 1
+    fi
+
+    local created pane
+    created=$("$herdr_bin" pane split --pane "$target" --direction right --cwd "$cwd" --focus) || return 1
+    pane=$(printf '%s' "$created" | sed -n 's/.*"pane":{[^}]*"pane_id":"\([^"]*\)".*/\1/p')
+    [ -n "$pane" ] || return 1
+    "$herdr_bin" pane run "$pane" "$@"
+}
+
 resume_session() {
     local selected="$1"
     local session_id cwd
@@ -164,7 +240,7 @@ resume_session() {
         exit 1
     fi
 
-    tmux new-window -c "$cwd" "claude -r '$session_id'"
+    open_alongside "$cwd" claude -r "$session_id"
 }
 
 open_session_folder() {
@@ -174,7 +250,7 @@ open_session_folder() {
     session_dir="$(dirname "$session_path")"
 
     if [ -d "$session_dir" ]; then
-        tmux new-window -c "$session_dir" "nvim ."
+        open_alongside "$session_dir" nvim .
     else
         echo "Session directory not found: $session_dir" >&2
         exit 1
@@ -186,8 +262,11 @@ copy_session_path() {
     local session_path session_dir
     session_path=$(printf '%s' "$selected" | cut -f4)
     session_dir="$(dirname "$session_path")"
-    printf '%s' "$session_dir" | pbcopy
-    echo "Copied: $session_dir"
+    if printf '%s' "$session_dir" | copy_to_clipboard; then
+        echo "Copied: $session_dir"
+    else
+        echo "No clipboard available; path: $session_dir" >&2
+    fi
 }
 
 # --- Shared fzf navigation binds ---
