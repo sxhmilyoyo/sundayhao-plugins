@@ -64,9 +64,18 @@ done
 
 T=$(read_frontmatter_prop "$SUBJECT/session.md" transcript_source)
 if [ -n "$T" ] && [ -f "$T" ]; then
+    # Size, branched on the platform: `-f %z` is BSD, `-c %s` is GNU. There was no GNU
+    # form here at all, so on Linux every read returned the same filesystem block, the
+    # string comparison below matched on the second pass, and the loop fell out after six
+    # iterations — waiting six seconds instead of until the transcript stopped growing.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        stat_size() { stat -f %z "$1" 2>/dev/null || echo 0; }
+    else
+        stat_size() { stat -c %s "$1" 2>/dev/null || echo 0; }
+    fi
     last=-1; same=0; j=0
     while [ "$j" -lt 120 ] && [ "$same" -lt 5 ]; do
-        sz=$(stat -f %z "$T" 2>/dev/null || echo 0)
+        sz=$(stat_size "$T")
         if [ "$sz" = "$last" ]; then same=$(( same + 1 )); else same=0; fi
         last="$sz"
         sleep 1

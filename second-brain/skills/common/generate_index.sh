@@ -154,7 +154,9 @@ EOF
     return 0
 }
 
+if [ -n "${BASH_VERSION:-}" ]; then  # zsh has no `export -f`
 export -f generate_index
+fi
 
 # Direct execution
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

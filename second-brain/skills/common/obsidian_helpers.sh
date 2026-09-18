@@ -322,11 +322,17 @@ recap_lock_acquire() {
     # and a date fork each time round for an answer that cannot change in the 0.2 s a
     # caller on a clock is prepared to wait.
     #
-    # BSD then GNU, the idiom this repo already uses in ccfind and kb-lint. `stat -f`
-    # means something else entirely on GNU (report the filesystem), so without the second
-    # form every mtime read as 0, the staleness test could never be true, and one leaked
-    # lock would refuse every recap of that session forever.
-    mtime=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock" 2>/dev/null || echo 0)
+    # Branch on the platform, the idiom this repo already uses in ccfind and kb-lint.
+    # Chaining the two forms with `||` does not work: `-f` means --file-system on GNU, so
+    # `stat -f %m` prints a filesystem block on *stdout* and exits 1, and the fallback then
+    # appends the real epoch to that block. `[ -gt ]` on the result errors ("integer
+    # expression expected") and reads false, so the staleness test could never be true and
+    # one leaked lock would refuse every recap of that session forever.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        mtime=$(stat -f %m "$lock" 2>/dev/null || echo 0)
+    else
+        mtime=$(stat -c %Y "$lock" 2>/dev/null || echo 0)
+    fi
     now=$(date +%s)
     if [ "$mtime" -gt 0 ] && [ $(( now - mtime )) -gt 60 ]; then
         rm -rf "$lock" 2>/dev/null || true
@@ -576,10 +582,36 @@ rebuild_session_md() {
     [ -n "$cwd" ] || cwd=$(head -200 "$transcript" 2>/dev/null \
         | grep -o '"cwd":"[^"]*"' | head -1 | sed 's/"cwd":"//; s/"$//')
 
-    birth=$(stat -f '%B' "$transcript" 2>/dev/null)
+    # Birth time, branched on the platform rather than chained. `%B` is BSD-only, and on
+    # GNU `stat -f '%B'` is a filesystem query: it prints a block on stdout and exits 1,
+    # which is *non-empty*, so the guard below passed and `date -u -r` was handed that
+    # block — leaving started_at blank and date_dir empty, which files a rebuilt session
+    # under today rather than its real date.
+    #
+    # There is no portable birth time. GNU's is `%W`, which arrived in coreutils 8.31 and
+    # reads 0 wherever the filesystem has none, so off darwin this degrades to mtime. That
+    # is the session's last write rather than its start, which is minutes late and can
+    # cross midnight; it is chosen over the transcript's own first timestamp because that
+    # timestamp belongs to the *parent* for a forked session (see the note above this
+    # function), and mtime is always at least this session's own file. If fork replay is
+    # ever confirmed not to carry the parent's timestamps, the first record is the better
+    # source on both platforms and this branch can go away entirely.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        birth=$(stat -f '%B' "$transcript" 2>/dev/null || echo "")
+    else
+        birth=$(stat -c %W "$transcript" 2>/dev/null || echo "")
+        [ "${birth:-0}" -gt 0 ] 2>/dev/null || birth=$(stat -c %Y "$transcript" 2>/dev/null || echo "")
+    fi
     if [ -n "$birth" ]; then
-        started=$(date -u -r "$birth" +%Y-%m-%dT%H:%M:%S)
-        date_dir=$(date -r "$birth" +%Y-%m-%d)
+        # `date -r` also differs: BSD reads an epoch, GNU reads a reference *file* and
+        # errors on a number. GNU spells the epoch `-d @<seconds>`.
+        if [[ "$OSTYPE" == darwin* ]]; then
+            started=$(date -u -r "$birth" +%Y-%m-%dT%H:%M:%S)
+            date_dir=$(date -r "$birth" +%Y-%m-%d)
+        else
+            started=$(date -u -d "@$birth" +%Y-%m-%dT%H:%M:%S)
+            date_dir=$(date -d "@$birth" +%Y-%m-%d)
+        fi
     fi
 
     # An existing folder is authoritative about the date; only fall back to the
@@ -641,6 +673,7 @@ tags:" "$body"
     echo "$folder"
 }
 
+if [ -n "${BASH_VERSION:-}" ]; then  # zsh has no `export -f`
 export -f yaml_escape
 export -f yaml_unescape
 export -f read_frontmatter_prop
@@ -662,3 +695,4 @@ export -f count_user_messages
 export -f recap_lock_acquire
 export -f recap_lock_release
 export -f spawn_detached
+fi

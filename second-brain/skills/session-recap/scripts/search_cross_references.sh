@@ -5,7 +5,7 @@
 
 # Get script directory for relative path resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMMON_DIR="$SCRIPT_DIR/../common"
+COMMON_DIR="$SCRIPT_DIR/../../common"
 
 # Require common utilities - no fallback
 if [ ! -f "$COMMON_DIR/get_kb_path.sh" ]; then
@@ -136,7 +136,7 @@ for PROJECT in "${PROJECTS[@]}"; do
     while IFS= read -r category; do
         [ -z "$category" ] && continue
 
-        local emoji=$(get_category_emoji "$category")
+        emoji=$(get_category_emoji "$category")
 
         if search_category "$PROJECT" "$category" "$emoji"; then
             ((PROJECT_FOUND++))

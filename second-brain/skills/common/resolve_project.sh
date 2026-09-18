@@ -128,9 +128,11 @@ project_default_tags() {
     return 0
 }
 
+if [ -n "${BASH_VERSION:-}" ]; then  # zsh has no `export -f`
 export -f list_project_domains
 export -f validate_project
 export -f resolve_project
 export -f project_default_tags
 export -f _domain_map_keys
 export -f _match_domain_key
+fi

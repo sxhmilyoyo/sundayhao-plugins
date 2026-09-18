@@ -81,7 +81,7 @@ echo "📚 Knowledge bank: $KB_PATH"
 echo ""
 
 # Extract all WikiLinks from document
-WIKILINKS=$(grep -o '\[\[[^]]*\]\]' "$DOCUMENT" | sed 's/\[\[\(.*\)\]\]/\1/' | sort -u || true)
+WIKILINKS=$(sed '/^```/,/^```/d' "$DOCUMENT" | sed 's/`[^`]*`//g' | grep -o '\[\[[^]]*\]\]' | sed 's/\[\[\(.*\)\]\]/\1/' | sort -u || true)
 
 if [ -z "$WIKILINKS" ]; then
     echo -e "${YELLOW}⚠️  WARNING: No WikiLinks found in document${NC}"
@@ -126,10 +126,10 @@ while IFS= read -r link; do
     # Try to find the referenced file
     if target_file=$(find_file_by_title "$link"); then
         echo -e "${GREEN}✅ VALID:${NC} [[$link]] → $(basename "$target_file")"
-        ((VALID_LINKS++))
+        ((++VALID_LINKS))
     else
         echo -e "${RED}❌ BROKEN:${NC} [[$link]] - File not found"
-        ((BROKEN_LINKS++))
+        ((++BROKEN_LINKS))
 
         # Try to suggest similar files
         suggestions=$(find "$KB_PATH" -type f -name "*.md" -exec basename {} .md \; | grep -i "$(echo "$link" | sed 's/ /-/g')" | head -3 || true)

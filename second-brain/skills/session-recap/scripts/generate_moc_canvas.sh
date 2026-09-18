@@ -59,7 +59,7 @@ show_usage() {
 # Returns: list of link targets (one per line)
 extract_wikilinks() {
     local file="$1"
-    grep -oE '\[\[[^\]]+\]\]' "$file" 2>/dev/null | \
+    grep -oE '\[\[[^]]+\]\]' "$file" 2>/dev/null | \
         sed 's/\[\[//g; s/\]\]//g' | \
         sed 's/|.*//g' | \
         sed 's/#.*//g' | \
@@ -195,7 +195,7 @@ main() {
 
             node_ids+=("$node_id")
             group_nodes+="\"$node_id\","
-            ((node_index++))
+            ((++node_index))
         done <<< "$type_links"
 
         # Create group
@@ -207,7 +207,7 @@ main() {
             groups_json+="{\"id\":\"$group_id\",\"type\":\"group\",\"x\":$((group_x - GROUP_PADDING)),\"y\":$((group_y)),\"width\":$((NODE_WIDTH + GROUP_PADDING * 2)),\"height\":$group_height,\"label\":\"$group_label\"}"
         fi
 
-        ((group_index++))
+        ((++group_index))
     done
 
     # Build final JSON

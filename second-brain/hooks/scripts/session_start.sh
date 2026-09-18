@@ -134,10 +134,15 @@ recap_notice() {
         # An unnamed session is still identifiable, and the first eight characters of
         # the id are what the rest of this plugin shows for one.
         label="${nm:-$(basename "$folder" | cut -c1-8)}"
-        # BSD then GNU: `stat -f` reports the filesystem on GNU, so without the second
-        # form every age read as zero and no staleness threshold below could ever fire.
-        mtime=$(stat -f %m "$folder/session.md" 2>/dev/null \
-            || stat -c %Y "$folder/session.md" 2>/dev/null || echo "$now")
+        # Branch on the platform; chaining the two forms does not work. `-f` means
+        # --file-system on GNU, so `stat -f %m` prints a filesystem block on *stdout* and
+        # exits 1, and the fallback appended the real epoch to that block. The arithmetic
+        # below then errored and left `age` empty, so no staleness threshold could fire.
+        if [[ "$OSTYPE" == darwin* ]]; then
+            mtime=$(stat -f %m "$folder/session.md" 2>/dev/null || echo "$now")
+        else
+            mtime=$(stat -c %Y "$folder/session.md" 2>/dev/null || echo "$now")
+        fi
         age=$(( now - mtime ))
         # A path is data: a vault directory may contain a space, and an unquoted one
         # turns the printed command into three arguments the launcher rejects.

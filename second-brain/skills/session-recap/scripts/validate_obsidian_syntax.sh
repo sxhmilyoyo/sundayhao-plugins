@@ -71,12 +71,12 @@ show_usage() {
 
 log_error() {
     echo -e "${RED}ERROR${NC}: $1" >&2
-    ((ERROR_COUNT++))
+    ((++ERROR_COUNT))
 }
 
 log_warning() {
     echo -e "${YELLOW}WARN${NC}: $1" >&2
-    ((WARNING_COUNT++))
+    ((++WARNING_COUNT))
 }
 
 log_success() {
@@ -220,7 +220,7 @@ validate_file() {
         return 0
     fi
 
-    ((CHECKED_COUNT++))
+    ((++CHECKED_COUNT))
 
     echo "Checking: $file"
 

@@ -7,6 +7,66 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.2] - 2026-09-18
+
+### Fixed
+- **Four more `stat -f` sites were BSD-only, in the same way `ccfind` was in 2.16.1.** Chaining the two
+  `stat` forms with `||` relies on the wrong-platform binary failing silently, and GNU does the opposite:
+  `-f` means `--file-system`, so it prints a filesystem block on **stdout** and exits 1, and the fallback
+  appends the real value to that block. All four are now branched on `$OSTYPE`, and the comments that
+  predicted the right symptom from the wrong mechanism ("every mtime read as 0" — it does not read as 0,
+  it reads as six lines of filesystem statistics) are corrected.
+
+  *Lock staleness never fired* (`skills/common/obsidian_helpers.sh`). `[ "$mtime" -gt 0 ]` on the block
+  errored with "integer expression expected" and read false, so the staleness branch was skipped
+  entirely. One leaked lock refused every recap of that session forever — the exact failure the code
+  comment above it warned about.
+
+  *Session age was empty* (`hooks/scripts/session_start.sh`). The arithmetic errored and left `age` unset,
+  so no staleness threshold below it could ever fire.
+
+  *The transcript-settling wait exited after six seconds* (`hooks/scripts/recap_child.sh`). This site had
+  no GNU form at all. The loop compares sizes as strings, so it saw the identical filesystem block on
+  every pass, `same` reached its limit on the sixth iteration, and the wait returned regardless of whether
+  the transcript was still being written. The GNU spelling of `-f %z` is `-c %s`.
+
+  *`started_at` was blank and a rebuilt session was filed under today* (`skills/common/obsidian_helpers.sh`).
+  `stat -f '%B'` is a BSD birth time; on GNU it produced the filesystem block, which is **non-empty**, so
+  the `[ -n "$birth" ]` guard passed and `date -u -r` was handed that block. `date -r` is itself BSD-only —
+  GNU reads a reference *file* there and errors on an epoch, so it needs `-d @<seconds>`. There is no
+  portable birth time (GNU's `%W` arrived in coreutils 8.31 and reads 0 where the filesystem has none), so
+  off darwin this degrades to mtime; the tradeoff against using the transcript's own first timestamp is
+  recorded at the call site, since that timestamp belongs to the parent for a forked session.
+
+  Together these clear 13 of the 17 pre-existing failures in `tests/hook-regression-suite.sh` on Linux:
+  261 passed / 17 failed → **274 passed / 4 failed**. Ten of the thirteen come from the `session_start.sh`
+  age fix alone: with `age` empty, every `[ "$age" -gt N ]` errored and read false, so the start-of-session
+  notice excluded every row it should have listed. The 4 that remain are a single `session_name`/`summary`
+  preservation cluster, unrelated to any of this.
+
+- **The two knowledge-bank validators aborted on their first file and printed nothing but a banner.**
+  `((VAR++))` under `set -euo pipefail` is fatal when the counter is 0: post-increment returns the *old*
+  value, so the arithmetic expression evaluates false, exits 1, and `set -e` kills the script. This is not
+  platform-specific — it never worked anywhere, and the empty output read as "validation failed with no
+  findings" rather than as a crash, which is how it survived. Now `((++VAR))`, in
+  `validate_obsidian_syntax.sh`, `validate_cross_references.sh` and `generate_moc_canvas.sh` (7 sites).
+
+- **`generate_moc_canvas.sh` produced a 1-node canvas from any MOC.** `'[^\]]'` is not a POSIX bracket
+  expression: a backslash is literal inside brackets, so the pattern demanded `]]]` and GNU grep matched
+  zero links. Now `'[^]]'` — the Claude Code MOC goes from 0 links to 96.
+
+- **`search_cross_references.sh` hard-failed at startup.** `COMMON_DIR` was `$SCRIPT_DIR/../common`; the
+  five sibling scripts all use `../../common`. A stray `local` in the main loop then errored once per
+  project on every run.
+
+- **`validate_cross_references.sh` false-positived on documented WikiLink syntax.** Fenced and inline code
+  are now stripped before links are extracted, so a note that *describes* `[[…]]` is not reported broken.
+
+- **Sourcing the shared helpers from zsh emitted about 30 `invalid option(s)` lines.** zsh has no
+  `export -f`. The export blocks in `skills/common/{generate_index,get_kb_path,obsidian_helpers,
+  resolve_project}.sh` are guarded on `BASH_VERSION`, which is a no-op under bash — the functions are
+  still exported to child processes there.
+
 ## [2.16.1] - 2026-09-18
 
 ### Fixed

@@ -143,6 +143,7 @@ find_first_moc() {
 }
 
 # Export functions for use in scripts
+if [ -n "${BASH_VERSION:-}" ]; then  # zsh has no `export -f`
 export -f get_kb_path
 export -f get_plugin_config_value
 export -f validate_kb_path
@@ -150,3 +151,4 @@ export -f discover_projects
 export -f discover_categories
 export -f project_exists
 export -f find_first_moc
+fi
