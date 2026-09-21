@@ -211,12 +211,21 @@ open_alongside() {
 
     # Which pane to split. A popup launcher has its pane identity deliberately removed
     # (herdr's app/popup.rs drops HERDR_PANE_ID), so there is no own pane to split and
-    # the workspace's focused pane — the one the popup is covering — is what the user
-    # means by "beside this".
+    # the focused pane — the one the popup is covering — is what the user means by
+    # "beside this".
+    #
+    # Asked for with `pane current` rather than read out of `api snapshot`. The snapshot
+    # carries a focused_pane_id per layout as well as the session's own, and the greedy
+    # `.*` these patterns open with matches the last one on a one-line document: the
+    # remembered focus of whichever tab sorts last, not the tab in front. Since
+    # `pane split --pane` puts the new pane in that pane's tab, the editor opened in
+    # another tab whenever the front tab was not the last one — and looked fine whenever
+    # it was, which is one tab, or the last one, or any demo. `pane current` answers with
+    # a single pane, so there is one pane_id to match and no ordering to get wrong.
     local target
     target="${HERDR_PANE_ID:-}"
-    [ -n "$target" ] || target=$("$herdr_bin" api snapshot 2>/dev/null \
-        | sed -n 's/.*"focused_pane_id":"\([^"]*\)".*/\1/p')
+    [ -n "$target" ] || target=$("$herdr_bin" pane current 2>/dev/null \
+        | sed -n 's/.*"pane_id":"\([^"]*\)".*/\1/p')
     if [ -z "$target" ]; then
         echo "Could not determine which herdr pane to split." >&2
         return 1

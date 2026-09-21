@@ -1190,7 +1190,7 @@ cat > "$HBIN/herdr" << HD
 printf '%s\n' "\$*" >> "$ROOT/cc-mux.log"
 case "\$*" in
     "pane split"*)  printf '{"id":"cli:pane:split","result":{"pane":{"agent_status":"unknown","cwd":"/tmp/work","focused":true,"pane_id":"w9:p7","tab_id":"w9:t2"},"type":"pane_info"}}\n' ;;
-    "api snapshot"*) printf '{"id":"cli:api:snapshot","result":{"snapshot":{"focused_pane_id":"w9:pFOCUS","focused_tab_id":"w9:t2","panes":[]}}}\n' ;;
+    "pane current"*) printf '{"id":"cli:pane:current","result":{"pane":{"cwd":"/tmp","focused":true,"pane_id":"w9:pFOCUS","tab_id":"w9:t2","workspace_id":"w9"},"type":"pane_info"}}\n' ;;
 esac
 HD
 chmod +x "$HBIN/herdr"
@@ -1211,14 +1211,15 @@ chk "and it is focused, as new-window would be" \
 # the one ~/.zshrc builds, so `command -v herdr` finds nothing; and popups have their
 # pane identity deliberately removed (herdr's app/popup.rs calls without_pane_identity),
 # so there is no own pane to split. The binary comes from $HERDR_BIN_PATH and the target
-# from the snapshot's focused pane — the one the popup is covering.
+# from `pane current` — the focused pane, the one the popup is covering. Case 42 covers why
+# that is asked for directly rather than read out of `api snapshot`.
 : > "$ROOT/cc-mux.log"
 P40=$(env PATH="$CBIN" TMUX= HERDR_ENV=1 HERDR_BIN_PATH="$HBIN/herdr" CFNS="$CFNS" \
     bash -c 'unset HERDR_PANE_ID; eval "$CFNS"; open_alongside /tmp/work nvim .' 2>&1); P40RC=$?
 chk "a popup launcher still opens a pane"   "$P40RC" "0"
 chk "it finds herdr off PATH via HERDR_BIN_PATH" \
     "$(grep -c 'pane split' "$ROOT/cc-mux.log")" "1"
-chk "it asks which pane is focused"         "$(grep -c 'api snapshot' "$ROOT/cc-mux.log")" "1"
+chk "it asks which pane is focused"         "$(grep -c 'pane current' "$ROOT/cc-mux.log")" "1"
 chk "and splits that one, not an empty id"  "$(grep -c 'pane split --pane w9:pFOCUS' "$ROOT/cc-mux.log")" "1"
 # A missing binary must say so rather than dying on "command not found".
 B40=$(env PATH="$CBIN" TMUX= HERDR_ENV=1 HERDR_BIN_PATH="$ROOT/nope/herdr" CFNS="$CFNS" \
@@ -1293,6 +1294,36 @@ N41=$(env -i HOME="$FHOME" PATH=/usr/bin:/bin XDG_CACHE_HOME="$ROOT/fzfcache" \
 chk "an unusable fzf is reported"       "$N41RC" "1"
 chk "and the message names fzf"         "$(printf '%s' "$N41" | grep -c 'needs fzf')" "1"
 chk "and names the path it tried"       "$(printf '%s' "$N41" | grep -c 'nope/fzf')" "1"
+
+echo "== 42. Ctrl-O splits the pane in front, not whichever tab sorts last =="
+# `pane split --pane X` puts the new pane in X's tab, so the wrong X opens nvim in another
+# tab. Intermittently, which is what made it look like a Herdr quirk rather than a parse
+# bug: a real snapshot carries one focused_pane_id per layout as well as the session's own,
+# and a greedy `.*` in front of the pattern matches the LAST one on a one-line document --
+# the remembered focus of whichever tab sorts last, whichever tab is actually in front.
+# With one tab, or with the front tab last, the two coincide and it is right by luck.
+# Case 40 passed throughout because its stub answers with a single focused_pane_id and an
+# empty pane list, a shape the real server never sends.
+TBIN="$ROOT/tbin"; mkdir -p "$TBIN"
+# Modelled on a captured snapshot: session focus first, per-layout focus after it, and a
+# last layout pointing somewhere else. It answers `pane current` as well, so the rows below
+# assert which pane was split rather than which call was used to choose it.
+cat > "$TBIN/herdr" << TB
+#!/bin/bash
+printf '%s\n' "\$*" >> "$ROOT/cc-tab.log"
+case "\$*" in
+    "pane split"*)   printf '{"id":"cli:pane:split","result":{"pane":{"pane_id":"w9:pNEW","tab_id":"w9:t1"},"type":"pane_info"}}\n' ;;
+    "pane current"*) printf '{"id":"cli:pane:current","result":{"pane":{"cwd":"/tmp","focused":true,"pane_id":"w9:pFRONT","tab_id":"w9:t1","workspace_id":"w9"},"type":"pane_info"}}\n' ;;
+    "api snapshot"*) printf '{"id":"cli:api:snapshot","result":{"snapshot":{"focused_pane_id":"w9:pFRONT","focused_tab_id":"w9:t1","focused_workspace_id":"w9","layouts":[{"focused_pane_id":"w9:pFRONT","tab_id":"w9:t1"},{"focused_pane_id":"w9:pBACK","tab_id":"w9:t2"}],"panes":[{"pane_id":"w9:pFRONT","tab_id":"w9:t1"},{"pane_id":"w9:pBACK","tab_id":"w9:t2"}]}}}\n' ;;
+esac
+TB
+chmod +x "$TBIN/herdr"
+: > "$ROOT/cc-tab.log"
+T42=$(env PATH="$CBIN" TMUX= HERDR_ENV=1 HERDR_BIN_PATH="$TBIN/herdr" CFNS="$CFNS" \
+    bash -c 'unset HERDR_PANE_ID; eval "$CFNS"; open_alongside /tmp/work nvim .' 2>&1); T42RC=$?
+chk "a popup split still succeeds"        "$T42RC" "0"
+chk "the split targets the front pane"    "$(grep -c 'pane split --pane w9:pFRONT' "$ROOT/cc-tab.log")" "1"
+chk "and never the last tab's pane"       "$(grep -c 'pane split --pane w9:pBACK' "$ROOT/cc-tab.log")" "0"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

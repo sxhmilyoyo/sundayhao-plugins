@@ -7,6 +7,46 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.5] - 2026-09-21
+
+### Fixed
+- **`Ctrl-O` in the ccfind popup opened nvim in another tab, some of the time.** The action resolved
+  which pane to split by scraping `herdr api snapshot` for `focused_pane_id`, and a real snapshot is a
+  single line carrying one `focused_pane_id` **per layout** as well as the session's own. The pattern
+  opened with a greedy `.*`, which on one line matches the **last** of them: the remembered focus of
+  whichever tab sorts last in the array, not the tab in front. `pane split --pane X` puts the new pane
+  in X's tab, so the editor opened wherever that pane happened to live.
+
+  Which is also the whole of "some of the time". When the front tab *is* the last layout the two
+  values coincide and the action is right by luck — so it is right with one tab, right in the last
+  tab, and right in every demo. A captured snapshot with a second tab present made it deterministic:
+  the session's focus was `w1:p1B` in tab `w1:tD`, the last layout's was `w1:p1J` in tab `w1:tE`, and
+  the scrape returned `w1:p1J`.
+
+  Only the popup launcher was affected, which is why the keybinding was the only way to see it. With
+  `HERDR_PANE_ID` set — ccfind run from an ordinary pane — the snapshot is never consulted at all and
+  the caller's own pane is split. A popup has that identity deliberately removed, so it is the one
+  caller that has to ask.
+
+  The target now comes from `herdr pane current`, which answers with a single pane and therefore a
+  single `pane_id`: there is nothing to order and nothing to pick wrongly. Asking a purpose-built
+  question rather than parsing a document that happens to contain the answer several times.
+
+  Worth recording why case 40 passed throughout. Its `api snapshot` stub answered with one
+  `focused_pane_id` and an empty pane list — a shape the real server never sends — so the fixture
+  could not express the bug, and a test asserting the popup splits "the focused pane" was really
+  asserting it splits the only pane on offer. Case 42 models a captured snapshot instead: session
+  focus, per-layout focus after it, and a last layout pointing elsewhere. It answers both `pane
+  current` and `api snapshot` truthfully, so it asserts which pane was split rather than which call
+  was used to choose it, and it fails on the old code either way. Case 40 is updated to the new
+  mechanism, since its stub and one assertion encoded the old one.
+
+  Left alone deliberately: the sibling scrape that reads the new pane's id out of the `pane split`
+  reply. It is the same shape, but that reply carries exactly one `pane_id`, and its failure mode is
+  an empty id and the explicit refusal below it rather than a plausible wrong pane. `recap_launcher.sh`
+  never had either problem — it reads `.result.pane.pane_id` with `jq`, and it always runs in a pane
+  with an identity.
+
 ## [2.16.4] - 2026-09-21
 
 ### Fixed
