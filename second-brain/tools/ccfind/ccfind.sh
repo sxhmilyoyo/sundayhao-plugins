@@ -280,7 +280,47 @@ FZF_NAV_HEADER=' ^a all  ^n named  ^t by tag  ^r refresh'
 
 # --- Session picker via fzf ---
 
+# fzf is the one dependency that has to come off $PATH at runtime, and the launcher people
+# actually use is a herdr keybinding of type "popup", whose command herdr runs directly
+# rather than through a login shell. So $PATH is not the one ~/.zshrc builds — the same
+# fact open_alongside records for the herdr binary, one call earlier — and fzf sits in
+# ~/.local/bin on the clouddesk and under Homebrew's prefix on the Mac, neither of which a
+# popup inherits. A miss does not fail cleanly either: the picker is the read end of
+# `get_sessions | fzf`, so a 127 there breaks the pipe, pipefail reports 141, and the
+# "command not found" line lands in a popup that closed 35ms after it opened. The
+# keybinding reads as dead, which is a worse bug than a missing tool.
+require_fzf() {
+    command -v fzf >/dev/null 2>&1 && return 0
+
+    # $CCFIND_FZF is for fzf what $HERDR_BIN_PATH is for herdr: an explicit path for a
+    # caller whose $PATH cannot be fixed. Then the places fzf installs on either host.
+    local fzf_bin="${CCFIND_FZF:-}" dir
+    if [ -z "$fzf_bin" ]; then
+        for dir in "$HOME/.local/bin" "$HOME/.fzf/bin" /opt/homebrew/bin /usr/local/bin; do
+            [ -x "$dir/fzf" ] && { fzf_bin="$dir/fzf"; break; }
+        done
+    fi
+
+    if [ ! -x "$fzf_bin" ]; then
+        echo "ccfind needs fzf, which is not on \$PATH${fzf_bin:+ or at $fzf_bin}." >&2
+        # A popup closes the moment this returns, taking the reason with it, which is how a
+        # missing dependency came to look like an unbound key. Herdr drops HERDR_PANE_ID
+        # from a popup while leaving HERDR_ENV set — the signal open_alongside already
+        # reads — so hold there, and only while a tty is present to answer.
+        if [ "${HERDR_ENV:-}" = 1 ] && [ -z "${HERDR_PANE_ID:-}" ] && [ -r /dev/tty ]; then
+            printf 'Press any key to close. ' > /dev/tty
+            read -r -n 1 _ < /dev/tty || true
+        fi
+        exit 1
+    fi
+
+    # Prepended to PATH rather than kept in a variable: the picker's own ^a/^n/^t binds
+    # re-exec this script through fzf's `become`, and a child inherits PATH, not a local.
+    PATH="$(dirname "$fzf_bin"):$PATH"
+}
+
 pick_session_from() {
+    require_fzf
     local label="${1:- ccfind }"
     local fzf_output
     fzf_output=$(fzf --ansi \
@@ -320,6 +360,9 @@ case "$MODE" in
         filter_not_recapped | pick_session_from " ccfind: not recapped "
         ;;
     by_tag)
+        # This mode picks a tag through a second fzf of its own, before the session picker
+        # it shares with every other mode, so resolving one does not resolve the other.
+        require_fzf
         tag=$(get_unique_tags | fzf \
             --border-label=' ccfind: select tag ' \
             --prompt='tag> ' \

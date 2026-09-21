@@ -7,6 +7,64 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.4] - 2026-09-21
+
+### Fixed
+- **`ccfind`'s popup died 35ms after opening, so `prefix+shift+c` read as a dead keybinding.** The
+  keybinding fired, Herdr spawned the popup pane, and the pane exited with status 141 before anything
+  rendered — measured from the server log, 4ms from keypress to `pane.spawn.start` and 35ms from there
+  to `pane.exit`. Nothing was ever on screen long enough to read, which is why the tool looked
+  unbound rather than broken.
+
+  The cause is the fact 2.16.1 already recorded for the `herdr` binary, one call earlier and left
+  unapplied to the rest: Herdr runs a keybinding's command **directly, not through a login shell**, so
+  `$PATH` is not the one `~/.zshrc` builds. `fzf` lives in `~/.local/bin` on the clouddesk and under
+  Homebrew's prefix on the Mac, and a popup inherits neither. The server this was found on ran with
+  `PATH=~/.aim/mcp-servers:~/.cargo/bin:/usr/local/bin:/usr/bin` — no `~/.local/bin` — and that PATH
+  is not incidental: a Herdr server started locally inherits a login shell's PATH, while one started
+  over SSH by `herdr --remote` gets the non-interactive one. The remote attach is what makes the
+  minimal PATH the normal case here.
+
+  Nor did the miss fail cleanly. The picker is the read end of `get_sessions | fzf`, so a 127 there
+  breaks the pipe, the write end takes SIGPIPE, and `pipefail` reports 141 while the `command not
+  found` line goes to a popup that has already closed. `--by-tag` was quieter still: its tag picker's
+  `|| exit 0` swallowed the failure into a clean exit 0. `fzf` is now resolved the way the plugin
+  already resolves binaries off a minimal PATH — `command -v`, then `$CCFIND_FZF` as the escape hatch
+  `$HERDR_BIN_PATH` is for `herdr`, then the directories fzf installs into on either host — and its
+  directory is prepended to `PATH` rather than kept in a variable, because the picker's own `^a`/`^n`/
+  `^t` binds re-exec this script through fzf's `become` and a child inherits `PATH`, not a local. When
+  fzf genuinely cannot be found the message now names what was tried and, under a popup, holds the
+  screen until a key is pressed, so the next missing dependency is legible instead of a 35ms flash.
+  `--tags` and `--refresh` still need no fzf at all; resolution is per interactive mode, not up front.
+
+  Only `fzf` was exposed. `parse_sessions.sh` needs `awk`, `date`, `find` and `sort` and `preview.sh`
+  needs `cat`, all of which a minimal PATH has, and `nvim`/`claude` are reached through
+  `herdr pane run` or `tmux new-window`, which go via a shell. Case 41 covers the popup PATH, the
+  second picker `--by-tag` opens, the non-interactive modes, a hit at a later candidate than the first
+  (the Mac's layout, and the only row that exercises the search past a miss), and the unusable-binary
+  message. Its fzf stub drains stdin because the real one does: a reader that exits without draining
+  hands SIGPIPE back to `get_sessions` and manufactures the very 141 the case asserts the absence of.
+
+### Note
+- **Which host runs the popup depends on how you reached the remote session, and only one of the two
+  ways runs it at all.** Established against Herdr 0.9.1, because it decides whose `config.toml`
+  supplies the binding and therefore which checkout path has to be in it:
+
+  *Saved SSH machine* (`herdr machine add`, the machine's spaces shown in a local TUI) — the binding
+  fires, and the popup is created on the **machine's** server and resolved from the **machine's own
+  config**. So the clouddesk's `[[keys.command]]` block, pointing at the clouddesk checkout, is the
+  one that runs, and nothing needs to change on the client. Confirmed live: with a machine's pane
+  focused, `prefix+shift+c` spawned a popup on the remote server, not the local one. This is also why
+  the bug above was the whole bug — that popup is spawned by a server started over SSH, which is
+  precisely the one without `fzf` on its PATH.
+
+  *`herdr --remote`* — different, and worth knowing before reaching for it as a workaround. It
+  defaults to `--remote-keybindings local`, and in that mode the client's table carries **only
+  built-in actions**: every `[[keys.command]]` binding is dropped, from both hosts' configs. Verified
+  against Herdr's own `prefix+?` overlay, where filtering for `scratch` and `viewer` both return "no
+  matching keybinds", and by a marker binding in the client's config that never fired. `fzf` aside,
+  `--remote-keybindings server` is what restores them there.
+
 ## [2.16.3] - 2026-09-18
 
 ### Fixed

@@ -1231,6 +1231,69 @@ M40=$(env PATH="$CBIN" TMUX= HERDR_ENV= CFNS="$CFNS" bash -c \
 chk "no multiplexer is refused"        "$M40RC" "1"
 chk "and the refusal names both"       "$(printf '%s' "$M40" | grep -c 'tmux or herdr')" "1"
 
+echo "== 41. ccfind finds fzf off the minimal PATH a popup launcher runs with =="
+# The same fact case 40 records for the herdr binary, one call earlier: a keybinding's
+# command does not run through a login shell, so $PATH is not the one ~/.zshrc builds.
+# fzf lives in ~/.local/bin on the clouddesk and under Homebrew's prefix on the Mac, and
+# a popup inherits neither. Missing fzf was not a clean 127 either -- the picker is the
+# read end of `get_sessions | fzf`, so the write end took SIGPIPE, pipefail reported 141,
+# and "command not found" went to a popup that had already closed. Measured at 35ms from
+# spawn to exit, which is why the keybinding read as dead rather than as a broken tool.
+FHOME="$ROOT/fzfhome"; mkdir -p "$FHOME/.local/bin" "$FHOME/.claude/plugins/config/second-brain"
+cp "$CFGF" "$FHOME/.claude/plugins/config/second-brain/config.json"
+# Prints nothing, so the picker selects nothing and ccfind exits before any action: this
+# case is about reaching fzf at all, and none of the three actions should run here. It
+# drains stdin first because the real fzf does, and a reader that exits without draining
+# hands SIGPIPE back to get_sessions, which pipefail then reports as 141 — the very status
+# this case is asserting the absence of, arriving from the stub rather than from the bug.
+cat > "$FHOME/.local/bin/fzf" << FZ
+#!/bin/bash
+cat > /dev/null
+printf 'fzf ran: %s\n' "\$*" >> "$ROOT/cc-fzf.log"
+FZ
+chmod +x "$FHOME/.local/bin/fzf"
+: > "$ROOT/cc-fzf.log"
+# env -i for a genuinely bare environment, as the popup has: no PATH from the caller, and
+# no HERDR_* either, so the launcher's gate stays shut without relying on the tripwire.
+F41=$(env -i HOME="$FHOME" PATH=/usr/bin:/bin XDG_CACHE_HOME="$ROOT/fzfcache" \
+    "$PLUGIN/tools/ccfind/ccfind.sh" 2>&1); F41RC=$?
+chk "a PATH without fzf is not fatal"   "$F41RC" "0"
+chk "the picker still opened"           "$(grep -c 'fzf ran' "$ROOT/cc-fzf.log")" "1"
+chk "and it was not a broken pipe"      "$(printf '%s' "$F41" | grep -c 'command not found')" "0"
+# The two-step mode picks a tag through a second fzf of its own, before the session
+# picker it shares with every other mode, so resolving one does not resolve the other.
+: > "$ROOT/cc-fzf.log"
+T41=$(env -i HOME="$FHOME" PATH=/usr/bin:/bin XDG_CACHE_HOME="$ROOT/fzfcache" \
+    "$PLUGIN/tools/ccfind/ccfind.sh" --by-tag 2>&1); T41RC=$?
+chk "--by-tag reaches its tag picker"   "$T41RC" "0"
+chk "and ran fzf for the tag list"      "$(grep -c 'fzf ran' "$ROOT/cc-fzf.log")" "1"
+# A non-interactive mode must not start needing fzf to list tags.
+G41=$(env -i HOME="$FHOME" PATH=/usr/bin:/bin XDG_CACHE_HOME="$ROOT/fzfcache" \
+    CCFIND_FZF="$ROOT/nope/fzf" "$PLUGIN/tools/ccfind/ccfind.sh" --tags 2>&1); G41RC=$?
+chk "--tags needs no fzf at all"        "$G41RC" "0"
+# Found at a later candidate, past a directory that does not have it: the Mac's case, where
+# fzf is under Homebrew's prefix and ~/.local/bin holds something else or nothing. Worth its
+# own row because the search is a short-circuited `[ -x ] && { ...; }` per directory, and
+# only the first-candidate hit is exercised above.
+FHOME2="$ROOT/fzfhome2"; mkdir -p "$FHOME2/.local/bin" "$FHOME2/.fzf/bin" \
+    "$FHOME2/.claude/plugins/config/second-brain"
+cp "$CFGF" "$FHOME2/.claude/plugins/config/second-brain/config.json"
+cp "$FHOME/.local/bin/fzf" "$FHOME2/.fzf/bin/fzf"
+: > "$ROOT/cc-fzf.log"
+L41=$(env -i HOME="$FHOME2" PATH=/usr/bin:/bin XDG_CACHE_HOME="$ROOT/fzfcache2" \
+    "$PLUGIN/tools/ccfind/ccfind.sh" 2>&1); L41RC=$?
+chk "an empty first candidate is not fatal" "$L41RC" "0"
+chk "and the later one is still found"      "$(grep -c 'fzf ran' "$ROOT/cc-fzf.log")" "1"
+# An unusable fzf is named, the way an unusable herdr binary is in case 40, rather than
+# leaving 141 as the only evidence. $CCFIND_FZF pins the lookup so the assertion does not
+# depend on whether the host running the suite happens to have fzf in a system prefix.
+# Not exercised: under a popup the message is also held on screen, which needs a tty.
+N41=$(env -i HOME="$FHOME" PATH=/usr/bin:/bin XDG_CACHE_HOME="$ROOT/fzfcache" \
+    CCFIND_FZF="$ROOT/nope/fzf" "$PLUGIN/tools/ccfind/ccfind.sh" 2>&1); N41RC=$?
+chk "an unusable fzf is reported"       "$N41RC" "1"
+chk "and the message names fzf"         "$(printf '%s' "$N41" | grep -c 'needs fzf')" "1"
+chk "and names the path it tried"       "$(printf '%s' "$N41" | grep -c 'nope/fzf')" "1"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are
