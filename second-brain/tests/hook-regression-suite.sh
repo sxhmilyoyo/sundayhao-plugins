@@ -1325,6 +1325,27 @@ chk "a popup split still succeeds"        "$T42RC" "0"
 chk "the split targets the front pane"    "$(grep -c 'pane split --pane w9:pFRONT' "$ROOT/cc-tab.log")" "1"
 chk "and never the last tab's pane"       "$(grep -c 'pane split --pane w9:pBACK' "$ROOT/cc-tab.log")" "0"
 
+# ── create_domain.sh: the one sanctioned domain invention (ADR-0007) ─────────────
+# A fresh fixture home, so the map written here cannot leak into earlier fixtures.
+DKB="$ROOT/dkb"; DH="$ROOT/dhome"
+DCFG="$DH/.claude/plugins/config/second-brain/config.json"
+mkdir -p "$DH/.claude/plugins/config/second-brain" "$DKB/projects/cc"
+jq -n --arg kb "$DKB" '{knowledge_bank_path:$kb}' > "$DCFG"
+CDOM="$PLUGIN/skills/common/create_domain.sh"
+env HOME="$DH" "$CDOM" "Bad Name" >/dev/null 2>&1; T43RC=$?
+chk "a non-slug name is refused"           "$T43RC" "2"
+chk "and creates nothing"                  "$(find "$DKB/projects" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" "1"
+env HOME="$DH" "$CDOM" supply-chain --map "/tmp/sct*" --tags "sct, ops" >/dev/null 2>&1; T44RC=$?
+chk "an approved slug creates the folder"  "$([ -d "$DKB/projects/supply-chain" ] && echo yes || echo no)" "yes"
+chk "and exits clean"                      "$T44RC" "0"
+chk "the map entry lands in the config"    "$(jq -r '.project_domains["/tmp/sct*"].domain // ""' "$DCFG")" "supply-chain"
+chk "with its default tags"                "$(jq -r '.project_domains["/tmp/sct*"].default_tags | join(",")' "$DCFG")" "sct,ops"
+chk "other config keys survive the write"  "$(jq -r '.knowledge_bank_path' "$DCFG")" "$DKB"
+env HOME="$DH" "$CDOM" supply-chain >/dev/null 2>&1; T45RC=$?
+chk "re-approving the same name resumes, not fails" "$T45RC" "0"
+T46=$(env HOME="$DH" bash -c "source '$PLUGIN/skills/common/resolve_project.sh'; resolve_project /tmp/sct-pkgs/sub")
+chk "a future session there resolves without a proposal" "$T46" "supply-chain"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are

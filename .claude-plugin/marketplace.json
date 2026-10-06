@@ -11,7 +11,7 @@
       "name": "second-brain",
       "source": "./second-brain",
       "description": "Agentic workflow with memory and tribal knowledge. Transforms Claude from goldfish to elephant with persistent knowledge across sessions.",
-      "version": "1.0.0",
+      "version": "2.17.0",
       "keywords": ["memory", "knowledge-bank", "session-recap", "tribal-knowledge", "second-brain"],
       "license": "Apache-2.0"
     }

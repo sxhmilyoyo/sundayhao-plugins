@@ -7,6 +7,20 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.0] - 2026-10-06
+
+### Added
+- **A recap can propose a new knowledge-bank domain** when the session's knowledge fits no existing
+  one, and create it on the user's approval (session-recap 3.5.0, ADR-0007). The proposal is the
+  skill's one sanctioned prompt, asked in the recap's own pane after planning, when the evidence —
+  which docs need a home, why each near-miss domain is wrong — is concrete. Approval runs the new
+  `skills/common/create_domain.sh`: slug-validated folder under `projects/`, then the
+  `project_domains` map entry delegated to `setup_kb_path.sh --set-domain`, which stays the one
+  writer of the map. Naming an existing domain files there instead; "no project" completes the
+  recap `done`, deliberately domainless, recorded as `proposal=`/`decision=` lines in `recap.log` —
+  instead of a `failed` that nags forever. Sessions with nothing to propose keep the old failure
+  path and its notice reason.
+
 ## [2.16.5] - 2026-09-21
 
 ### Fixed

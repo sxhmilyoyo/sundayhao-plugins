@@ -582,7 +582,8 @@ See `CHANGELOG.md` for complete version history.
 
 **Issue: no knowledge-bank domain fits the session**
 - `project` names a domain from the vault's `projects/` folders, never a directory name (ADR-0004)
-- Map the directory: `skills/common/setup_kb_path.sh --set-domain /path/to/tree <domain>`
+- A recap with knowledge to file proposes a new domain itself and asks in its own pane (Phase 2.6, ADR-0007)
+- To map a directory ahead of that: `skills/common/setup_kb_path.sh --set-domain /path/to/tree <domain>`
 - Or set `project` on the session note by hand, then retry the recap
 
 **Issue: Script permission denied**

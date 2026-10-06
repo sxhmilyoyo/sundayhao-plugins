@@ -76,8 +76,9 @@ recoverable when two things run at once.
 In automatic mode, write every tag that already has a canonical form. A tag the vault has never seen may
 be written only when the conversation gives repeated evidence for it, such as a tool, component or
 technique that recurs. Otherwise record it as a proposed tag in the daily log and in `recap.log` and
-write nothing for it. Never prompt: a recap runs unattended in an unfocused pane, so a question there
-stalls forever, and an unattended writer that coins freely is how a shared vocabulary drifts.
+write nothing for it. Never prompt for a tag: a recap's one sanctioned question is the domain proposal
+(ADR-0007), tags in automatic mode are decided rather than asked, and a writer that coins freely is how
+a shared vocabulary drifts.
 
 **Done when:** every tag with a canonical form is on the note in that form, written by the one writer
 that mode names, and in automatic mode anything without one has been recorded as a proposal rather than

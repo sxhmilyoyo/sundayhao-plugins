@@ -5,6 +5,27 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-10-06
+
+### Added
+- **Phase 2.6 proposes a new domain when none fits** (ADR-0007). Phase 1.2's no-fit case no longer
+  fails on the spot: it defers to a new step after planning, which — when the plan holds concept,
+  component or best-practice docs that cohere as a domain the bank lacks — derives a proposed domain
+  (slug name, one-line description, rationale against the near-miss domains, a map entry for the
+  subject's repository root) and asks the person attending the pane with the skill's one sanctioned
+  prompt. Approval runs `skills/common/create_domain.sh` (folder, then map entry through
+  `setup_kb_path.sh --set-domain`) and the recap files under the new domain; naming an existing
+  domain files there; "no project" completes the recap `done` with an empty `project` — a person's
+  decision, recorded as `proposal=` and `decision=` lines in `recap.log`, so nothing nags again.
+  In a batch, a proposal blocks until answered, and later sessions weigh names proposed earlier.
+
+### Changed
+- **Phase 1.0's rule narrows from "never prompt" to "prompt exactly once"** — the 2.6 proposal and
+  nothing else. Recap panes are checked, not watched; a pane closed on the open question leaves the
+  subject `running`, which the stale-running notice already surfaces, and the forced retry re-asks.
+- Sessions with nothing to propose — no domain-needing docs, or docs that cohere into no single
+  domain — keep the old failure path, with the same `reason=` line the notice shows.
+
 ## [3.4.1] - 2026-09-16
 
 ### Changed

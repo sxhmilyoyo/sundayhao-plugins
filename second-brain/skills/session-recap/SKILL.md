@@ -106,7 +106,7 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
    (`grep -c -m5 '"type":"assistant"'`), the same test the end hook applies. Not a count of user messages:
    sessions here are long autonomous runs on a handful of prompts, and that test exempted a third of the
    real ones. Every candidate gets Phases 1.2 and 5.5 in full — a batch describes every session it recaps.
-3. **Process chronologically** — full 5-phase workflow per session, each gets its own daily log + extracted docs
+3. **Process chronologically** — full 5-phase workflow per session, each gets its own daily log + extracted docs; a Phase 2.6 proposal blocks the batch until the person answers, and later sessions weigh names proposed earlier (see 2.6)
 4. **Parallelize when independent** — different projects/topics can use parallel agents; same investigation thread should be sequential for cross-references
 5. **Integrate once at end** — index regeneration and log append after all sessions, not per session
 
@@ -120,9 +120,12 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
 
 #### 1.0 Gate, Claim, Inventory (MUST complete first, in this order)
 
-**Never prompt anywhere in this skill.** A recap session is launched, not attended: it runs in a pane
-nobody is looking at, so a question stalls forever. Where something is missing, do what needs nothing,
-record the gap, and mark the subject `failed` with the reason. The start-of-session notice asks a person.
+**Prompt exactly once in this skill — the domain proposal of Phase 2.6 — and nowhere else.** A recap
+pane is checked, not watched: the one decision only a person can make may wait for them, and a pane
+closed on the open question is recovered by the stale-`running` notice
+([ADR-0007](../../../docs/adr/0007-a-new-domain-is-proposed-by-the-recap-created-on-approval.md)). For
+anything else missing, do what needs nothing, record the gap, and mark the subject `failed` with the
+reason. The start-of-session notice asks a person.
 
 **(1) Dedicated-session gate.** Read your own session's note — its folder is in the SessionStart context
 you were given — and require its `recap_of` to equal the subject folder you were asked to recap:
@@ -218,7 +221,7 @@ fi
 
 **If no folder (current conversation mode)**: Skip session.md reading. Analyze current conversation context.
 
-#### 1.2 Decide the Project — three sources, never ask
+#### 1.2 Decide the Project — three sources, then Phase 2.6
 
 `project` names a knowledge-bank domain, one of the folders under `projects/`
 ([ADR-0004](../../../docs/adr/0004-project-names-a-knowledge-bank-domain.md)). Non-empty is not the
@@ -243,20 +246,11 @@ which is why this decision is here and not at session start
 Phase 5.5 writes the result. Because the note's own valid value is the first source, writing it back
 overwrites only a value that is **not** a domain, which is exactly the legacy-basename case.
 
-**When no domain fits, carry on without one.** Do not ask, and do not invent. Write the daily log and any
-reflections, which need no domain; list in the daily log the concepts and components that could not be
-filed and why; then at Phase 5.5 write the tags and summary, leave `project` empty, and mark the subject
-failed with the reason, which the notice shows to a person:
-
-```bash
-printf '%s failed reason=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "no knowledge-bank domain fits, set project on its note" >> "$SUBJECT/recap.log"
-"$PLUGIN_ROOT/skills/common/recap_status.sh" "$SUBJECT" failed --tags "$TAGS" --summary "$SUMMARY"
-```
-
-Write the reason as `reason=<text>` on its own line in `recap.log`: the notice reads the last such line
-and shows it, so anything else leaves a person with "failed" and nowhere to look. A retry resumes in place
-through the Phase 1.0 inventory once the project is set.
+**When no domain fits, defer to Phase 2.6.** Do not invent a name here, and do not fail yet: whether
+this session warrants a *new* domain is judged against the Phase 2 plan, where the one sanctioned
+question lives
+([ADR-0007](../../../docs/adr/0007-a-new-domain-is-proposed-by-the-recap-created-on-approval.md)).
+Record the project as unresolved and carry on.
 
 Never fall back to `./scripts/parse_transcript.sh project` for a decision: it reports the working
 directory and the domain that directory maps to, and nothing more. Filing under a name no domain matches
@@ -293,7 +287,8 @@ Record the classified list for Phase 2.5.
 
 ### Phase 2: PLAN
 
-**Goal**: Determine what to document and whether reflection is required.
+**Goal**: Determine what to document and whether reflection is required — and, when Phase 1.2 resolved
+nothing, whether to propose a domain.
 
 #### 2.1 Reflection Decision Gate (MUST complete)
 
@@ -374,6 +369,65 @@ If insights were extracted in Phase 1.3, classify each:
 | General educational context | Daily Log | MUST include in daily log |
 
 **Record classifications for Phase 3.**
+
+#### 2.6 Propose a Domain (MUST when Phase 1.2 left the project unresolved)
+
+The one prompt this skill is allowed, and the only place a domain name may be invented — put to the
+person attending the pane, created only on their answer
+([ADR-0007](../../../docs/adr/0007-a-new-domain-is-proposed-by-the-recap-created-on-approval.md)). It
+sits after planning because the plan is the evidence a person approves on.
+
+**First, check there is anything to ask about.** A domain exists to hold filed knowledge. When the
+Phase 2 plan creates no concept, component or best-practice docs, or the docs it does create cohere
+into no single domain of work, there is no proposal to make. Keep the failure path: write what needs
+no domain, list in the daily log anything that could not be filed and why, then at Phase 5.5 write the
+tags and summary, leave `project` empty, and mark the subject failed with the reason, which the notice
+shows to a person:
+
+```bash
+printf '%s failed reason=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "no knowledge-bank domain fits, set project on its note" >> "$SUBJECT/recap.log"
+"$PLUGIN_ROOT/skills/common/recap_status.sh" "$SUBJECT" failed --tags "$TAGS" --summary "$SUMMARY"
+```
+
+Write the reason as `reason=<text>` on its own line in `recap.log`: the notice reads the last such line
+and shows it, so anything else leaves a person with "failed" and nowhere to look. A retry resumes in place
+through the Phase 1.0 inventory once the project is set.
+
+**Otherwise derive the proposal** before asking:
+
+| Field | Rule |
+|---|---|
+| Name | a slug like every existing domain (`^[a-z0-9][a-z0-9-]*$`), not already in `list_project_domains` |
+| Description | one line on what the domain holds |
+| Rationale | why the nearest existing domains do not fit this work |
+| Map entry | the subject's git repository root — its exact cwd when there is none — plus default tags; the cwd comes from `./scripts/parse_transcript.sh "$TRANSCRIPT" project` |
+| Near miss | the one closest existing domain, for option 2 below |
+
+In a batch, weigh names proposed earlier in the batch before coining another, so sessions about the
+same work converge on one domain instead of a family of near-synonyms.
+
+**Ask with AskUserQuestion**: one question, three options. The tool adds a free-text "Other" itself, so
+say in the question that a different slug typed there creates under that name instead.
+
+1. **Create `<name>`** (Recommended) — the option description carries the dossier: the one-line
+   description, the docs that will file under it, the map entry it will add
+2. **File under `<near miss>` instead** — the likeliest wrong proposal is a sibling of something that
+   already fits, so correcting it is one keypress
+3. **No project for this session** — the work belongs to no domain, now or later
+
+**Act on the answer, and record it first** — one `proposal=<name>` line and one `decision=<...>` line
+in `recap.log`, and a sentence in the daily log:
+
+| Answer | `decision=` | Then |
+|---|---|---|
+| Create, or "Other" with a new slug | `approved`, or `renamed:<slug>` | `"$PLUGIN_ROOT/skills/common/create_domain.sh" <name> --map <prefix> --tags "<tags>"`, then `PROJECT=<name>` |
+| The near miss, or "Other" naming an existing domain | `existing:<domain>` | `PROJECT=<domain>`; create nothing |
+| No project | `none` | `PROJECT` stays empty; list the unfiled docs in the daily log; Phase 5.5 marks the subject **done** with `--project ""` — a person decided, so nothing nags again |
+
+The question blocks until answered, mid-batch included; that is the accepted cost of a synchronous
+answer. A pane closed on an open question leaves the subject `running`, which the stale-running notice
+surfaces, and the forced retry re-derives and re-asks.
 
 ---
 
@@ -586,7 +640,7 @@ keeps a concurrent SessionEnd rewrite from reading a half-written description.
 
 | Value | What it is |
 |---|---|
-| `--project` | The domain from Phase 1.2. Omit it when nothing fits, and mark `failed` instead of `done` |
+| `--project` | The domain from Phase 1.2 or 2.6. Pass `""` when the person chose no project at 2.6 — done, deliberately domainless. Omit it only when 2.6 had nothing to propose, and mark `failed` instead of `done` |
 | `--tags` | Canonical tags for the work, from `tag-canonicalization.md` **automatic** mode |
 | `--summary` | One line on what the session accomplished |
 
@@ -613,6 +667,7 @@ prevent.
 | `parse_transcript.sh` | Extract data from session transcript | 1.3 |
 | `detect_session_sources.sh` | Detect ingestible references and artifacts | 1.4 |
 | `resolve_project.sh` | Resolve and validate a knowledge-bank domain | 1.2 |
+| `create_domain.sh` | Create an approved domain: folder, then map entry via `--set-domain` | 2.6 |
 | `search_cross_references.sh` | Find cross-reference targets | 2.2 |
 | `detect_external_docs.sh` | Scan for investigation documents | 2.3 |
 | `analyze_for_distillation.sh` | Analyze docs for distillation | 2.3 |
@@ -640,7 +695,8 @@ Session recap is complete when:
 6. ✅ Obsidian syntax validation passes
 7. ✅ Knowledge bank indices updated (if new docs created)
 8. ✅ The subject's `recap_status` is `done`, with its `project`, `tags` and `summary` written by 5.5 —
-   or `failed` with the reason in `recap.log` when no domain fit
+   `project` empty when the person chose none at 2.6 — or `failed` with the reason in `recap.log`
+   when 2.6 had nothing to propose
 
 **Only then declare**: "✅ Session Recap Complete"
 

@@ -22,7 +22,8 @@
 # There is deliberately no project precondition. The recap is where the domain for
 # work in an unmapped directory is decided, so refusing to launch without one would
 # block the value on the only thing that can supply it (ADR-0006). A recap that still
-# cannot place the work marks the subject failed and the notice asks a person.
+# cannot place the work proposes a new domain in its own pane (ADR-0007), and failing
+# that marks the subject failed so the notice asks a person.
 #
 # Exit: 0 launched, command printed, or deliberately did nothing; 2 usage or no subject.
 

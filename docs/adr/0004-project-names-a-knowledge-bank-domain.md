@@ -50,6 +50,9 @@ Launching a recap is the one exception, added by
 work in an unmapped directory is decided, so refusing to launch without one would block the value on the
 only thing that can supply it. A recap that still cannot place the work writes what needs no domain,
 leaves the property empty, and marks the subject failed, which is how the decision reaches a person.
+[ADR-0007](0007-a-new-domain-is-proposed-by-the-recap-created-on-approval.md) amends that last step: a
+recap whose plan holds knowledge worth a domain of its own proposes one to the person attending its
+pane, and only a session with nothing to propose still fails.
 
 Existing notes keep their basenames. They are not migrated, because a basename cannot be turned into a
 domain without knowing what the session was about, and guessing that retroactively is how the wrong

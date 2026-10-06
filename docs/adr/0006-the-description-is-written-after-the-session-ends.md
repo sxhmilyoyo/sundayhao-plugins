@@ -57,7 +57,9 @@ end hook, a description requires pasting the command the start-of-session notice
 The recap becomes the only place a domain is decided for work in an unmapped directory, so it must be
 able to launch without one: it infers the domain from the conversation, and when nothing in the bank's
 domain set fits, it writes tags and summary, leaves the project empty, and marks the subject failed so
-the notice asks a person. Recapping is not blocked on a value only recapping can supply.
+the notice asks a person — unless its plan holds knowledge worth a new domain, in which case it proposes
+one itself first ([ADR-0007](0007-a-new-domain-is-proposed-by-the-recap-created-on-approval.md)).
+Recapping is not blocked on a value only recapping can supply.
 
 Tags are canonicalized against the vault as before. A recap may coin a tag the vault has never seen only
 when the conversation gives repeated evidence for it, and otherwise records it as a proposal, because an
