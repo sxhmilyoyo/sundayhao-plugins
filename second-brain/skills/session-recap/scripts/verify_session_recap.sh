@@ -59,6 +59,7 @@ KB_PATH=""
 PROJECT=""
 DAILY_LOG=""
 REFLECTION_REQUIRED="unknown"
+PROPOSALS="unset"
 CREATED_DOCS=""
 
 usage() {
@@ -70,6 +71,8 @@ usage() {
     echo "  --daily-log FILE        Path to created daily log"
     echo "  --reflection-required   Flag that reflection is required (problem-solving occurred)"
     echo "  --no-reflection         Flag that reflection is NOT required"
+    echo "  --proposals F1,F2,...   Proposal files the Phase 2.7 scan produced (filenames in _proposals/)"
+    echo "  --no-proposals          Flag that the Phase 2.7 scan found no candidates"
     echo "  --docs FILE1,FILE2,...  Comma-separated list of created documentation files"
     echo "  --help                  Show this help message"
     echo ""
@@ -98,6 +101,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-reflection)
             REFLECTION_REQUIRED="no"
+            shift
+            ;;
+        --proposals)
+            PROPOSALS="$2"
+            shift 2
+            ;;
+        --no-proposals)
+            PROPOSALS="none"
             shift
             ;;
         --docs)
@@ -225,9 +236,59 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 3: Cross-Reference Validation
+# SECTION 3: Proposed Improvements (Phase 2.7 consistency)
 # ═══════════════════════════════════════════════════════════════
-print_section "3. CROSS-REFERENCE VALIDATION"
+print_section "3. PROPOSED IMPROVEMENTS"
+
+# Consistency, not existence: zero candidates is a legitimate scan outcome, so the
+# check is that the scan's recorded result and the files in _proposals/ agree, and
+# that each file is a complete, pending proposal a person can act on.
+if [ "$PROPOSALS" = "unset" ]; then
+    warn "Improvement scan outcome not specified"
+    info "Use --proposals file1,file2 for the files the Phase 2.7 scan produced"
+    info "Use --no-proposals when the scan found no candidates"
+elif [ "$PROPOSALS" = "none" ]; then
+    pass "Improvement scan recorded no candidates (a legitimate outcome)"
+else
+    IFS=',' read -ra PROP_ARRAY <<< "$PROPOSALS"
+    for prop in "${PROP_ARRAY[@]}"; do
+        prop=$(echo "$prop" | xargs)
+        [ -n "$prop" ] || continue
+        BASENAME=$(basename "$prop")
+        PROP_PATH="$KB_PATH/_proposals/$BASENAME"
+        if [ ! -f "$PROP_PATH" ]; then
+            fail "$BASENAME: recorded by the scan but not found in _proposals/"
+            continue
+        fi
+        FM=$(sed -n '/^---$/,/^---$/p' "$PROP_PATH")
+        MISSING=""
+        for field in type severity category target classification session-folder status; do
+            printf '%s\n' "$FM" | grep -q "^$field:" || MISSING="$MISSING $field"
+        done
+        # Values may arrive quoted or bare: Obsidian strips quotes it does not need
+        # whenever a person saves a note, the same drift the session-note scan accepts.
+        if [ -n "$MISSING" ]; then
+            fail "$BASENAME: frontmatter missing:$MISSING"
+        elif ! printf '%s\n' "$FM" | grep -Eq '^type:[[:space:]]*"?proposed-improvement"?[[:space:]]*$'; then
+            fail "$BASENAME: type must be proposed-improvement"
+        elif ! printf '%s\n' "$FM" | grep -Eq '^severity:[[:space:]]*"?(critical|high|medium|low)"?[[:space:]]*$'; then
+            fail "$BASENAME: severity must be critical, high, medium or low"
+        elif ! printf '%s\n' "$FM" | grep -Eq '^classification:[[:space:]]*"?(mechanical|judgment)"?[[:space:]]*$'; then
+            fail "$BASENAME: classification must be mechanical or judgment"
+        elif ! printf '%s\n' "$FM" | grep -Eq '^status:[[:space:]]*"?pending"?[[:space:]]*$'; then
+            fail "$BASENAME: a recap writes proposals as status: pending; only a person moves them"
+        else
+            pass "$BASENAME: complete proposal, pending"
+        fi
+    done
+fi
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 4: Cross-Reference Validation
+# ═══════════════════════════════════════════════════════════════
+print_section "4. CROSS-REFERENCE VALIDATION"
 
 if [ -n "$CREATED_DOCS" ]; then
     IFS=',' read -ra DOC_ARRAY <<< "$CREATED_DOCS"
@@ -274,7 +335,7 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 4: Summary
+# SECTION 5: Summary
 # ═══════════════════════════════════════════════════════════════
 print_section "VERIFICATION SUMMARY"
 

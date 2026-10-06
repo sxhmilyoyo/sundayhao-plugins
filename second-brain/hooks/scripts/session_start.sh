@@ -202,6 +202,25 @@ recap_notice() {
     fi
 }
 
+# ── Proposed-improvements notice — same audience, never a prompt ─────────────
+# A recap derives proposed improvements and a person ratifies them (ADR-0008); this
+# line is how a queue nobody watches stays visible. Counted regardless of auto_recap,
+# because a manual recap writes proposals too; the directory guard keeps the cost at
+# zero for a vault that has none. The status is accepted quoted or bare, because the
+# recap writes it bare and Obsidian normalises quotes whenever a person saves a note.
+proposals_notice() {
+    local n
+    [ -d "$KB_PATH/_proposals" ] || return 0
+    n=$(grep -El '^status:[[:space:]]*"?pending"?[[:space:]]*$' \
+        "$KB_PATH/_proposals"/*.md 2>/dev/null | wc -l | tr -d ' ')
+    [ "$n" -gt 0 ] || return 0
+    if [ "$n" -eq 1 ]; then
+        printf 'Second Brain: 1 proposed improvement pending — review %s' "$KB_PATH/_proposals/"
+    else
+        printf 'Second Brain: %d proposed improvements pending — review %s' "$n" "$KB_PATH/_proposals/"
+    fi
+}
+
 # Try to get KB path (will fail if not configured)
 KB_PATH=$(get_kb_path 2>/dev/null)
 
@@ -412,6 +431,9 @@ SESSION_NAME=$(read_frontmatter_prop "$SESSION_MD" "session_name")
 NOTICE=""
 RECAP_MODE=$(get_plugin_config_value auto_recap off)
 [ "$RECAP_MODE" != "off" ] && NOTICE=$(recap_notice "$RECAP_MODE")
+P_NOTICE=$(proposals_notice)
+[ -n "$P_NOTICE" ] && NOTICE="${NOTICE:+$NOTICE
+}$P_NOTICE"
 
 # Inject system prompt with docs path
 emit_output "Session folder created: $SESSION_FOLDER

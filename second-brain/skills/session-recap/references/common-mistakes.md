@@ -216,7 +216,24 @@ Bidirectional links enable navigation in both directions and prevent one-way "kn
 
 ---
 
-## Mistake 15: Premature Completion Declaration
+## Mistake 15: Improvement Suggestions Written as Reflection Prose
+
+### Wrong ❌
+A reflection with "What Could Be Improved" sections or action-item checkboxes
+
+### Right ✅
+The reflection records what happened; each improvement becomes a proposal file in
+`{KB}/_proposals/` via the Phase 2.7 scan (severity, concrete target, evidence), or a
+best-practice doc when it is a validation technique
+
+### Why It Matters
+Nothing ever re-reads prose action items — 264 reflections accumulated them and no phase,
+checklist, or script revisited one (ADR-0008). A queue the session-start notice counts gets
+drained; prose does not.
+
+---
+
+## Mistake 16: Premature Completion Declaration
 
 ### Wrong ❌
 Declare "session recap complete" without systematic verification
@@ -241,6 +258,7 @@ Use this quick checklist to avoid common mistakes:
 - [ ] Include quantitative metrics
 - [ ] Complete YAML frontmatter for all documents
 - [ ] Create process reflections (not just technical docs)
+- [ ] File improvement suggestions as `_proposals/` files or best-practice docs, never as reflection prose
 - [ ] Establish bidirectional cross-links
 - [ ] Update relevant MOCs
 - [ ] Verify with quality standards checklist

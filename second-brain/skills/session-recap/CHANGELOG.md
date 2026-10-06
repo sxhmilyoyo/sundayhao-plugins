@@ -5,6 +5,38 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-10-06
+
+### Added
+- **Phase 2.7 improvement scan** (ADR-0008): seven use-when categories — navigation, guardrails,
+  steering files, tool economy, tool reliability, information access, validation approach — turn
+  transcript friction into **proposed improvements**: one file each in `{KB}/_proposals/` carrying
+  severity, a concretely named target, a mechanical-or-judgment classification, the evidence, and
+  `status: pending`. Only a person moves a proposal past pending; the recap never prompts for one —
+  an improvement never blocks the recap, so the skill's one sanctioned prompt stays Phase 2.6's
+  domain proposal. A `validation-approach` finding that is a technique rather than a mechanizable
+  check routes to a best-practice doc instead, where knowledge-bank-lookup can find it. Zero
+  candidates is a legitimate outcome; no gate forces one. New reference
+  `references/improvement-scan.md` (categories, routing, severity rubric, file format), adapted
+  from mattpocock's `retro` skill — discipline borrowed, no runtime coupling.
+- `verify_session_recap.sh --proposals <files>` / `--no-proposals`: consistency, not existence —
+  the scan's recorded outcome and the files in `_proposals/` must agree, each file complete and
+  pending.
+
+### Changed
+- **Reflections record; they never propose** (GLOSSARY: Reflection, Proposed improvement). Phase
+  2.1's gate drops its tool/process-friction question — friction is scan evidence now — keeping
+  debugging/problem-solving and workflow-pattern as the MUST triggers.
+  `process-reflection-template.md` rewritten lean: Overview, What worked, What didn't / what
+  failed, Key learning, Cross-references, every claim citing transcript evidence; the sections
+  nothing ever revisited ("What Could Be Improved", "What Would Make This Seamless", "Action
+  Items") are gone — they are proposals now. Existing reflections untouched: `type: reflection`,
+  the category folders, and the ≥5 WikiLink minimum all survive, so mining and verification keep
+  working.
+- Phase 3 priority order: proposed improvements are item 7; the daily log is item 8 and carries
+  one line per proposal, with a `proposed_improvement=<filename>` line each in the subject's
+  `recap.log` — the proposed-tag precedent, upgraded from prose to a queue.
+
 ## [3.5.0] - 2026-10-06
 
 ### Added

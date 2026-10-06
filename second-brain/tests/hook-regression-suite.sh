@@ -623,6 +623,32 @@ ncfg off
 chk "off produces no notice at all" \
     "$(printf '%s' "$(nstart 12121212-2222-2222-2222-222222222222)" | jq -r '.systemMessage // "none"')" "none"
 
+echo "== 27b. pending proposed improvements are counted into the notice =="
+# Queue files are what a recap writes and a person drains; the start-of-session notice is
+# their only surfacing (ADR-0008), so it must fire regardless of auto_recap — `off` was
+# set just above and deliberately stays. One status bare and one quoted, because Obsidian
+# normalises quotes whenever a person saves a note.
+mkdir -p "$NKB/_proposals"
+mkprop(){ printf -- '---\ntype: proposed-improvement\nseverity: high\ncategory: tool-reliability\ntarget: scripts/x\nclassification: mechanical\nsession-folder: _sessions/2026-09-13/f1\nstatus: %s\n---\nbody\n' \
+    "$2" > "$NKB/_proposals/$1"; }
+mkprop 2026-09-13-one.md 'pending'
+mkprop 2026-09-13-two.md '"pending"'
+POUT=$(nstart 12121212-3333-3333-3333-333333333333)
+PMSG=$(printf '%s' "$POUT" | jq -r '.systemMessage // ""')
+PCTX=$(printf '%s' "$POUT" | jq -r '.hookSpecificOutput.additionalContext // ""')
+chk "pending proposals are noticed with auto_recap off" "$(printf '%s' "$PMSG" | grep -c 'proposed improvements pending')" "1"
+chk "quoted and bare status both count"                 "$(printf '%s' "$PMSG" | grep -c '2 proposed improvements')" "1"
+chk "the queue path is in the notice"                   "$(printf '%s' "$PMSG" | grep -c '_proposals')" "1"
+chk "and never into Claude's context"                   "$(printf '%s' "$PCTX" | grep -c 'proposed improvement')" "0"
+# A person's approval is what empties the queue, and one left is still a sentence.
+mkprop 2026-09-13-two.md 'approved'
+P1MSG=$(nstart 12121212-4444-4444-4444-444444444444 | jq -r '.systemMessage // ""')
+chk "an approved proposal stops counting" "$(printf '%s' "$P1MSG" | grep -c '1 proposed improvement pending')" "1"
+mkprop 2026-09-13-one.md 'rejected'
+chk "an empty queue produces no notice" \
+    "$(printf '%s' "$(nstart 12121212-5555-5555-5555-555555555555)" | jq -r '.systemMessage // "none"')" "none"
+rm -rf "$NKB/_proposals"
+
 echo "== 28. the launcher hands over a command that carries the markers inline =="
 LSUBJ="$NKB/_sessions/2026-09-13/f1111111-1111-1111-1111-111111111111"
 LOUT=$(env HOME="$NH" HERDR_ENV= HERDR_PANE_ID= "$PLUGIN/hooks/scripts/recap_launcher.sh" --manual "$LSUBJ/" 2>&1)

@@ -7,6 +7,21 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.0] - 2026-10-06
+
+### Added
+- **A recap proposes environment improvements, ratified by a person** (session-recap 3.6.0,
+  ADR-0008). The new Phase 2.7 scan walks the subject's transcript against seven use-when
+  categories (adapted from mattpocock's `retro` skill) and files each finding as a pending
+  proposal in `{KB}/_proposals/` — severity, concrete target, mechanical-or-judgment
+  classification, evidence. Nothing new prompts: an improvement never blocks the recap, so the
+  one sanctioned prompt remains the Phase 2.6 domain proposal. The start-of-session notice now
+  counts the queue ("N proposed improvements pending — review {KB}/_proposals/"), independent of
+  `auto_recap` since manual recaps write proposals too, so the queue cannot go write-only.
+  Reflections lose their improvement-prose half and become pure records (GLOSSARY: Reflection,
+  Proposed improvement); a validation technique that is knowledge rather than a mechanizable
+  check routes to a best-practice doc instead.
+
 ## [2.18.0] - 2026-10-06
 
 ### Added

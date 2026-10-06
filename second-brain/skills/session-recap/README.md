@@ -207,14 +207,18 @@ Load session data and extract facts.
 - **1.3 Extract Session Facts** - Parse transcript for user requests, files, commands, errors, subagents, insights
 
 ### Phase 2: PLAN
-Determine what to document and whether reflection is required.
+Determine what to document, whether reflection is required, whether to propose a domain, and
+what the session's friction says the environment should change.
 - **2.1 Reflection Decision Gate** - Answer YES/NO questions to determine if reflection is MUST
 - **2.2 Search Cross-References** - Find 10-15 cross-reference targets across categories and projects
 - **2.3 External Document Distillation** - Distill verbose investigation documents (if they exist)
-- **2.4 Insight Classification** - Classify insights as Concept, Component, Best Practice, or Reflection
+- **2.4 Source Ingestion Plan** - Decide ingest/distill/skip for sources detected in Phase 1
+- **2.5 Insight Classification** - Classify insights as Concept, Component, Best Practice, Reflection, or Proposed improvement
+- **2.6 Propose a Domain** - When no domain fits, derive a proposal and ask the person attending the pane (the skill's one prompt, ADR-0007)
+- **2.7 Improvement Scan** - Seven use-when categories turn session friction into proposed improvements in `{KB}/_proposals/`, ratified by a person later (ADR-0008)
 
 ### Phase 3: CREATE
-Write documentation in priority order: concepts → components → best practices → reflections → daily log.
+Write documentation in priority order: concepts → components → best practices → artifact/reference docs → reflections → proposed improvements → daily log.
 
 ### Phase 4: VERIFY
 Confirm all requirements met before declaring complete.
@@ -306,12 +310,14 @@ Final verification gate for session recap completion.
   --kb-path "$KB_PATH" \
   --project "$PROJECT" \
   --daily-log "YYYY-MM-DD [Topic].md" \
-  --reflection-required
+  --reflection-required \
+  --proposals "file1.md,file2.md"   # or --no-proposals
 ```
 
 **Validates**:
 - Daily log exists and meets quality standards
 - Required distilled documents created
+- Phase 2.7 scan record and `_proposals/` files agree, each complete and `pending`
 - Cross-references meet minimum thresholds
 - All completion criteria satisfied
 

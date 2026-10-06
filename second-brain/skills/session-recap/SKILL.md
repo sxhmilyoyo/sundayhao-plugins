@@ -80,7 +80,7 @@ This skill uses RFC 2119 keywords:
 
 Every session recap executes all 5 phases completely — no exceptions. A daily log alone is not a recap; it's a log entry. The knowledge bank compounds from extracted concepts, reflections, and best practices, not from session summaries. Skipping phases produces a diary, not a brain.
 
-Even when processing many sessions, each session gets its own full Phase 2.1 reflection gate, Phase 2.4 source ingestion plan, and Phase 3 document creation. Do not batch sessions into a single daily log or skip phases for throughput.
+Even when processing many sessions, each session gets its own full Phase 2.1 reflection gate, Phase 2.4 source ingestion plan, Phase 2.7 improvement scan, and Phase 3 document creation. Do not batch sessions into a single daily log or skip phases for throughput.
 
 ## Batch Recap
 
@@ -287,8 +287,9 @@ Record the classified list for Phase 2.5.
 
 ### Phase 2: PLAN
 
-**Goal**: Determine what to document and whether reflection is required — and, when Phase 1.2 resolved
-nothing, whether to propose a domain.
+**Goal**: Determine what to document and whether reflection is required; when Phase 1.2 resolved
+nothing, whether to propose a domain; and what the session's friction says the environment
+should change (2.7).
 
 #### 2.1 Reflection Decision Gate (MUST complete)
 
@@ -298,11 +299,15 @@ Answer these questions:
 |----------|--------|
 | 1. Did this session involve debugging or problem-solving? | YES / NO |
 | 2. Did this session discover a workflow pattern? | YES / NO |
-| 3. Did this session encounter tool/process friction? | YES / NO |
 
 **Decision**:
 - **If ANY answer is YES** → MUST create at least 1 reflection
 - **If ALL answers are NO** → MAY skip reflections
+
+A reflection **records** how the work went; it never proposes
+([GLOSSARY](../../../GLOSSARY.md)). Tool or process friction is deliberately not a
+question here: friction is evidence for the Phase 2.7 improvement scan, which is where a
+suggestion to change the environment belongs.
 
 Record decision for Phase 4 verification.
 
@@ -366,6 +371,7 @@ If insights were extracted in Phase 1.3, classify each:
 | Documents methodology | Best Practice | SHOULD create best practice doc |
 | Reveals workflow pattern | Reflection | SHOULD create reflection |
 | Identifies anti-pattern | Reflection | SHOULD create reflection |
+| Suggests an environment change (tool, check, rule, structure) | Proposed improvement | Record as a Phase 2.7 candidate |
 | General educational context | Daily Log | MUST include in daily log |
 
 **Record classifications for Phase 3.**
@@ -429,6 +435,26 @@ The question blocks until answered, mid-batch included; that is the accepted cos
 answer. A pane closed on an open question leaves the subject `running`, which the stale-running notice
 surfaces, and the forced retry re-derives and re-asks.
 
+#### 2.7 Improvement Scan (MUST complete)
+
+Walk the transcript against seven categories — navigation, guardrails, steering files, tool
+economy, tool reliability, information access, validation approach — each with a *use when*
+trigger defined in [improvement-scan.md](references/improvement-scan.md). A category fires
+only on evidence; **zero candidates is a legitimate outcome**, and no YES/NO gate forces one.
+
+For each candidate record its category, severity, concrete target, evidence, and route:
+`mechanical` and `judgment` candidates become proposal files in `{KB}/_proposals/` (Phase 3,
+item 7); a `validation-approach` candidate that is a technique rather than a mechanizable
+check becomes a best-practice doc instead (Phase 3, item 3), where knowledge-bank-lookup can
+find it.
+
+Proposals are **derived here, ratified by a person later** — the same shape as proposed
+domains and proposed tags, minus the prompt: an improvement never blocks the recap, so
+nothing here asks. Pending proposals reach a person through the start-of-session notice
+([ADR-0008](../../../docs/adr/0008-improvement-proposals-are-ratified-artifacts.md)).
+
+Record the candidate list and routes for Phase 3 creation and Phase 4 verification.
+
 ---
 
 ### Phase 3: CREATE
@@ -451,7 +477,8 @@ second daily log for one session is how a retry turns into a duplicate that nobo
 4. **Artifact-derived docs** - SHOULD if Phase 2.4 decision = ingest (from session `docs/` artifacts, plans). Use 5-8 WikiLinks. Frontmatter: `source-type: artifact`, `ingested-from: {path}`
 5. **Reference-derived docs** - MAY if Phase 2.4 decision = ingest (from external references). Use 5-8 WikiLinks. Frontmatter: `source-type: reference`, `ingested-from: {path or URL}`
 6. **Process reflections** - **MUST if Phase 2.1 decision = required** OR insight reveals workflow/anti-pattern
-7. **Daily session log** - MUST (always required, includes all insights)
+7. **Proposed improvements** - **MUST if Phase 2.7 recorded candidates**: one file per proposal in `{KB}/_proposals/` per [improvement-scan.md](references/improvement-scan.md), plus one `proposed_improvement=<filename>` line each in the subject's `recap.log`
+8. **Daily session log** - MUST (always required; includes all insights and one line per proposed improvement)
 
 #### Document Locations
 
@@ -461,6 +488,7 @@ second daily log for one session is how a retry turns into a duplicate that nobo
 | Component | `{KB}/projects/{project}/components/` | [component-template.md](references/component-template.md) |
 | Best Practice | `{KB}/projects/{project}/best-practices/` | [best-practice-template.md](references/best-practice-template.md) |
 | Reflection | `{KB}/reflections/{category}/` | [process-reflection-template.md](references/process-reflection-template.md) |
+| Proposed improvement | `{KB}/_proposals/` | [improvement-scan.md](references/improvement-scan.md) |
 | Daily Log | `{KB}/daily-log/YYYY-MM-DD [Topic].md` | [daily-log-template.md](references/daily-log-template.md) |
 
 #### Reflection Categories
@@ -479,6 +507,7 @@ second daily log for one session is how a retry turns into a duplicate that nobo
 Every document MUST include:
 - **Technical docs**: 10-15 WikiLinks (minimum 10)
 - **Reflections**: 5-8 WikiLinks (minimum 5)
+- **Proposed improvements**: exempt — queue items a person drains, not knowledge docs
 
 Verify with:
 ```bash
@@ -503,6 +532,10 @@ ingested-from: /path/to/source.md          # Optional: provenance for artifact/r
 ```
 
 The `session-folder` field applies to ALL recap-created docs (daily log, concepts, components, best practices, reflections). It creates a reverse reference — Obsidian's backlinks panel on `session.md` will show all KB docs extracted from that session. Omit if no session folder was provided (current conversation mode).
+
+Proposed improvements carry their own frontmatter (`type: proposed-improvement`, severity,
+category, target, classification, session-folder, status), defined in
+[improvement-scan.md](references/improvement-scan.md), not this schema.
 
 #### Obsidian Syntax (MUST invoke when obsidian skills installed)
 
@@ -535,7 +568,10 @@ This ensures proper Obsidian Flavored Markdown syntax for:
   --kb-path "$KB_PATH" \
   --project "$PROJECT" \
   --daily-log "YYYY-MM-DD [Topic].md" \
-  --reflection-required  # or --no-reflection based on Phase 2.1
+  --reflection-required \
+  --proposals "2026-10-06-slug.md,2026-10-06-other.md"
+# --reflection-required or --no-reflection, from the Phase 2.1 decision
+# --proposals <comma-separated filenames> or --no-proposals, from the Phase 2.7 scan
 ```
 
 #### 4.2 Validate Obsidian Syntax (MUST complete)
@@ -561,6 +597,12 @@ This ensures proper Obsidian Flavored Markdown syntax for:
 - [ ] Phase 2.1 decision recorded
 - [ ] If decision = required → reflection exists
 - [ ] Reflection has ≥ 5 cross-references
+
+**Improvement Scan** (MUST verify):
+- [ ] Phase 2.7 ran and its candidate list is recorded (empty is fine)
+- [ ] Every mechanical/judgment candidate has a proposal file in `_proposals/` with complete frontmatter and `status: pending`
+- [ ] Every technique-routed candidate has its best-practice doc
+- [ ] Daily log carries one line per proposal; `recap.log` one `proposed_improvement=` line each
 
 **Quality** (MUST verify):
 - [ ] No broken WikiLinks
@@ -690,11 +732,12 @@ Session recap is complete when:
 1. ✅ `verify_session_recap.sh` exits with code 0
 2. ✅ Daily log created with ≥ 10 cross-references
 3. ✅ Reflection created (if Phase 2.1 decision = required)
-4. ✅ All documents have YAML frontmatter
-5. ✅ No broken WikiLinks
-6. ✅ Obsidian syntax validation passes
-7. ✅ Knowledge bank indices updated (if new docs created)
-8. ✅ The subject's `recap_status` is `done`, with its `project`, `tags` and `summary` written by 5.5 —
+4. ✅ Proposal file written for every Phase 2.7 candidate, or `--no-proposals` was the truth
+5. ✅ All documents have YAML frontmatter
+6. ✅ No broken WikiLinks
+7. ✅ Obsidian syntax validation passes
+8. ✅ Knowledge bank indices updated (if new docs created)
+9. ✅ The subject's `recap_status` is `done`, with its `project`, `tags` and `summary` written by 5.5 —
    `project` empty when the person chose none at 2.6 — or `failed` with the reason in `recap.log`
    when 2.6 had nothing to propose
 
@@ -706,6 +749,7 @@ Session recap is complete when:
 
 - [KB Schema](_meta/schema.md) — Unified conventions for all KB documents (document types, frontmatter, WikiLinks, naming)
 - [Templates](references/templates.md)
+- [Improvement Scan](references/improvement-scan.md) — Phase 2.7 categories, routing, proposal file format
 - [Cross-Reference Guide](references/cross-reference-guide.md)
 - [Quality Standards](references/quality-standards.md)
 - [Completion Checklist](references/completion-checklist.md)
