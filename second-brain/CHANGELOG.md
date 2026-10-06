@@ -7,6 +7,22 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.0] - 2026-10-06
+
+### Added
+- **New skill: `wdym`** ("what do you mean") — an on-demand decoder for agent output. Fires on
+  self-directed comprehension or verification asks with no named audience ("wdym", "I don't
+  follow", "how did you verify", "prove it") and re-explains the session's own work — prose
+  conclusions, raw tool output, subagent reports — grounded in session evidence with explicit
+  verified-vs-inferred marking. Calibrates from a personal comprehension profile at
+  `$KB_PATH/rules/comprehension-profile.md` (generic engineer-peer defaults without one),
+  escalates 80%-STE prose → diagram → interactive HTML (Karpathy's 2026-10-02 format ladder,
+  rungs 1–3), answers the questioner's interrogation ladder ending at "prove it", appends dated
+  confusion records to the profile's Inbox, offers promotion of landed explanations to
+  knowledge-bank concept docs, and provides a `wdym debrief` end-of-task mode. Composes with
+  eli5 (named audiences) and show-me (visual grammar); modifies neither. See
+  `skills/wdym/CHANGELOG.md`.
+
 ## [2.17.0] - 2026-10-06
 
 ### Added
