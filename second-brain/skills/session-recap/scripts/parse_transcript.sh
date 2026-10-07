@@ -41,13 +41,25 @@ if [ ! -f "$TRANSCRIPT" ]; then
     exit 1
 fi
 
-# Extract user messages
+# Extract user messages: one line per human prompt, truncated per message rather than
+# per output, so one expanded skill body cannot hide every prompt after it. Messages
+# from other sessions are isMeta records the prompt filter drops, so they get their
+# own section.
 extract_users() {
     echo "=== User Messages ==="
-    jq -r 'select(.type == "user") |
+    jq -r 'select(.type == "user" and (.isMeta | not)) |
+      (.message.content | if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end) as $t |
+      select(($t | length) > 0) |
+      "[" + (.timestamp // "unknown") + "] " + ($t | gsub("\\s+"; " ") | .[0:300])' \
+      "$TRANSCRIPT" 2>/dev/null
+    echo ""
+    echo "=== Inbound Session Messages ==="
+    jq -r 'select(.type == "user" and .isMeta and ((.message.content | type) == "string")
+             and (.message.content | contains("<cross-session-message"))) |
       "[" + (.timestamp // "unknown") + "] " +
-      (.message.content | if type == "string" then . else (.[0].text // "[tool_result]") end)' \
-      "$TRANSCRIPT" 2>/dev/null | head -100
+      ((.message.content | capture("from-name=\"(?<n>[^\"]*)\"") | .n) // "?") + ": " +
+      (.message.content | sub("(?s)^.*?<cross-session-message[^>]*>"; "") | gsub("\\s+"; " ") | .[0:300])' \
+      "$TRANSCRIPT" 2>/dev/null
 }
 
 # Extract files read
@@ -147,6 +159,7 @@ extract_stats() {
         echo "User prompts (approx.): $(count_user_messages "$TRANSCRIPT")"
     fi
     echo "User records (incl. tool results): $(jq -s '[.[] | select(.type == "user")] | length' "$TRANSCRIPT" 2>/dev/null)"
+    echo "Inbound session messages: $(jq -s '[.[] | select(.type == "user" and .isMeta and ((.message.content | type) == "string") and (.message.content | contains("<cross-session-message")))] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Assistant messages: $(jq -s '[.[] | select(.type == "assistant")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Tool uses: $(jq -s '[.[] | .message.content[]? | select(.type == "tool_use")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Summaries: $(jq -s '[.[] | select(.type == "summary")] | length' "$TRANSCRIPT" 2>/dev/null)"

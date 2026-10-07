@@ -7,6 +7,41 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.2] - 2026-10-07
+
+### Fixed
+- **A resumed session's later exits refresh its memory snapshot instead of nesting it.**
+  `session_end.sh` copied the project memory with `cp -r <memory> <folder>/memory`. On every exit
+  after the first, `memory/` already exists, so `cp` put the fresh snapshot *inside* it as
+  `memory/memory/`. The note's Memory Snapshot section is rebuilt from the top-level files, so it
+  kept linking the first exit's copies while the current ones sat unlinked, and a recap reading
+  those links read stale memory. Seven session folders in a real vault were found nested. The hook
+  now copies the directory's contents (`cp -r <memory>/. <folder>/memory/`), which refreshes changed
+  memories and adds new ones; memories deleted at the source stay, as ADR-0001 asks. Folders that
+  are already nested are left for a person to flatten. Regression case 44.
+- **The recap's transcript parser shows every prompt and every message from other sessions**
+  (session-recap 3.6.2). Regression case 43.
+- **Renames and durations work on Linux, and the suite runs clean there.** Two BSD-only commands
+  were left after the earlier portability pass, both with stderr discarded, so on GNU they failed
+  without a trace:
+  - **`tail -r`.** Three reverse scans for the latest `/rename` used it: session-manager's
+    `read_custom_title` sync, the lost-note rebuild in `rebuild_session_md`, and the end hook. On
+    Linux each came back empty, so a renamed session kept its old name. A new `reverse_lines`
+    helper uses `tac` where it exists and falls back to `tail -r` on macOS, which has no `tac`.
+  - **`date -j -f`.** The end hook computed `duration_seconds` with it, so no note on Linux ever
+    got a duration: 0 of 80 in a real vault. It now branches on `$OSTYPE`, as `recap_child.sh`
+    already does, and parses with `date -u -d` on GNU.
+
+  Fixing the suite showed these were the "single `session_name`/`summary` preservation cluster"
+  that the 2.16.2 portability entry left at 4 Linux failures. Two fixtures used macOS
+  `sed -i ''`, which GNU reads as an empty script plus a filename, so they were never applied.
+  Two paths were a hardcoded `/private/tmp`, which doesn't exist on Linux. The suite now resolves
+  the real temp directory once (`cd /tmp && pwd -P`). That revived two checks that had passed
+  vacuously: "no rendezvous key written" (a `find` in a missing directory) and section 15's
+  `forked_from_name` backfill (a blanking the broken `sed` never did). It also made the fixture
+  cleanup work. Regression case 45 covers the latest rename and a recorded duration. On Linux:
+  318 passed, 0 failed, the suite's first clean run there.
+
 ## [2.19.1] - 2026-10-07
 
 ### Fixed

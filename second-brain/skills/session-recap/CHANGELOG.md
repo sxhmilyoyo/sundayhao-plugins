@@ -5,6 +5,20 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.2] - 2026-10-07
+
+### Fixed
+- `parse_transcript.sh users` showed almost none of a long session. It printed every user record's
+  content, multi-line, then cut the whole output at `head -100` lines, so a first prompt that
+  expands a long skill body used up the budget and hid every later prompt: 1 of 35 shown on the
+  session that found this. Messages from other sessions are `isMeta` records and never appeared
+  at all (0 of 25). A recap of that orchestrated session missed the three days of peer-driven work
+  after its last prompt and filed a daily log that understated the session. The view now prints one
+  line per human prompt, truncated per message (300 characters) so no record can starve the rest,
+  and it skips skill expansions and tool results. A new `=== Inbound Session Messages ===` section
+  lists each peer message with its timestamp, its sender's `from-name`, and its text, and `stats`
+  gains an `Inbound session messages: N` line.
+
 ## [3.6.1] - 2026-10-07
 
 ### Fixed

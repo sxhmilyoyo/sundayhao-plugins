@@ -23,6 +23,9 @@
 # ordinary shell.
 PLUGIN="${PLUGIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ROOT=$(mktemp -d /tmp/sb-test.XXXXXX)
+# The real temp directory: /private/tmp on macOS, where /tmp is a symlink that find
+# does not descend, and plain /tmp on Linux, which has no /private/tmp at all.
+TMPREAL=$(cd /tmp && pwd -P)
 H="$ROOT/home"; KB="$ROOT/kb"
 mkdir -p "$H/.claude/plugins/config/second-brain" "$KB/_sessions" "$H/.claude/projects/proj"
 CFGF="$H/.claude/plugins/config/second-brain/config.json"
@@ -135,12 +138,12 @@ F1="$KB/_sessions/$TODAY/$S1"; M1="$F1/session.md"
 chk "date is today" "$(prop "$M1" date)" "$TODAY"
 chk "unmapped cwd leaves project empty" "$(prop "$M1" project)" ""
 chk "forked_from empty for a new session" "$(prop "$M1" forked_from)" ""
-# /private/tmp, not /tmp: on macOS /tmp is a symlink and find does not descend it,
-# so this assertion passed no matter what the hook wrote.
-[ -z "$(find /private/tmp -maxdepth 1 -name 'second-brain-startup-*' -print -quit 2>/dev/null)" ] && ok "no rendezvous key written" || no "no rendezvous key written"
+# The real temp directory, not /tmp: searched through the macOS symlink, or at a
+# hardcoded /private/tmp on Linux, this assertion passed no matter what the hook wrote.
+[ -z "$(find "$TMPREAL" -maxdepth 1 -name 'second-brain-startup-*' -print -quit 2>/dev/null)" ] && ok "no rendezvous key written" || no "no rendezvous key written"
 
 echo "== 2. /clear does not discard user metadata =="
-sed -i '' 's/^summary:$/summary: "kept summary"/' "$M1"
+sed 's/^summary:$/summary: "kept summary"/' "$M1" > "$M1.t" && mv "$M1.t" "$M1"
 ins_after "$M1" "tags:"
 run session_start.sh "{\"session_id\":\"$S1\",\"cwd\":\"/tmp/work\",\"transcript_path\":\"$T1\",\"source\":\"clear\"}"
 chk "summary survives /clear" "$(prop "$M1" summary)" "kept summary"
@@ -292,7 +295,7 @@ SH=99999999-9999-9999-9999-999999999999
 fork_transcript $SH "$KB/_sessions/$TODAY/$S9"
 start $SH fork "" /tmp/mapped >/dev/null
 MH="$KB/_sessions/$TODAY/$SH/session.md"
-sed -i '' 's/^forked_from_name: .*/forked_from_name: ""/' "$MH"
+sed 's/^forked_from_name: .*/forked_from_name: ""/' "$MH" > "$MH.t" && mv "$MH.t" "$MH"
 run session_end.sh "{\"transcript_path\":\"$H/.claude/projects/proj/$SH.jsonl\",\"cwd\":\"/tmp/mapped\",\"reason\":\"other\"}"
 chk "forked_from_name backfilled at exit" "$(prop "$MH" forked_from_name)" "named-one"
 chk "Lineage regenerated at exit"         "$(grep -c '^## Lineage' "$MH")" "1"
@@ -1372,13 +1375,69 @@ chk "re-approving the same name resumes, not fails" "$T45RC" "0"
 T46=$(env HOME="$DH" bash -c "source '$PLUGIN/skills/common/resolve_project.sh'; resolve_project /tmp/sct-pkgs/sub")
 chk "a future session there resolves without a proposal" "$T46" "supply-chain"
 
+echo "== 43. the recap's transcript parser shows every prompt and every inbound session message =="
+# The user view used to cut its whole output at 100 lines, so a first prompt that expands
+# a long skill body hid every later prompt; and messages from other sessions arrive as
+# isMeta records, which a prompt view drops. A real recap missed three days of
+# peer-driven work this way and filed a daily log that understated the session.
+PT43="$PLUGIN/skills/session-recap/scripts/parse_transcript.sh"
+PX43="$ROOT/parse-fixture.jsonl"
+{
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:00Z","cwd":"/tmp/mapped","message":{"role":"user","content":"<command-name>/long-skill</command-name>"}}'
+    printf '{"type":"user","isMeta":true,"timestamp":"2026-10-01T00:00:01Z","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' \
+        "$(for i in $(seq 1 150); do printf 'skill line %s\\n' "$i"; done)"
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:02Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}'
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"out"}]}}'
+    printf '%s\n' '{"type":"user","isMeta":true,"timestamp":"2026-10-02T00:00:00Z","message":{"role":"user","content":"Another Claude session sent a message:\n<cross-session-message from=\"uds:/x.sock\" from-name=\"peer-a\" from-mode=\"prompting\">\nlayer seven found\n</cross-session-message>"}}'
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-03T00:00:00Z","message":{"role":"user","content":"the last human prompt"}}'
+} > "$PX43"
+PU43=$("$PT43" "$PX43" users 2>/dev/null)
+chk "the last prompt survives a long first skill body" "$(printf '%s\n' "$PU43" | grep -c 'the last human prompt')" "1"
+chk "an expanded skill body is not shown as a prompt"  "$(printf '%s\n' "$PU43" | grep -c 'skill line 50')" "0"
+chk "a tool result is not shown as a prompt"           "$(printf '%s\n' "$PU43" | grep -c 'tool_result')" "0"
+chk "an inbound session message is shown with its sender" "$(printf '%s\n' "$PU43" | grep -c 'peer-a: *layer seven found')" "1"
+chk "and counted in the statistics" "$("$PT43" "$PX43" stats 2>/dev/null | grep -c '^Inbound session messages: 1$')" "1"
+
+echo "== 44. a resumed session's second exit refreshes the memory snapshot in place =="
+# cp -r into a memory/ that already exists copies the source inside it, so every exit
+# after the first nested a fresh snapshot at memory/memory/ while the note kept linking
+# the first exit's copies. Seven real session folders were found nested.
+MS44="$H/.claude/projects/-tmp-mapped/memory"
+mkdir -p "$MS44"; printf 'first\n' > "$MS44/note.md"
+P44=aaaaaaaa-0000-0000-0000-000000000044; TP44="$H/.claude/projects/proj/$P44.jsonl"
+turns "$TP44" 9; start $P44 startup mem-snapshot /tmp/mapped >/dev/null
+F44="$KB/_sessions/$TODAY/$P44"
+endrun x "$TP44" prompt_input_exit
+chk "the first exit snapshots memory" "$(cat "$F44/memory/note.md" 2>/dev/null)" "first"
+printf 'second\n' > "$MS44/note.md"; printf 'new\n' > "$MS44/added.md"
+endrun x "$TP44" prompt_input_exit
+chk "a second exit does not nest the snapshot" "$([ -d "$F44/memory/memory" ] && echo nested || echo flat)" "flat"
+chk "and refreshes a changed memory in place"  "$(cat "$F44/memory/note.md" 2>/dev/null)" "second"
+chk "and the note links a memory added since"  "$(grep -c '^- \[\[added\]\]$' "$F44/session.md")" "1"
+rm -rf "$MS44"
+
+echo "== 45. renames and durations survive a GNU userland =="
+# tail -r and date -j -f are BSD-only. On GNU both error into /dev/null, so on Linux
+# every reverse scan for the latest /rename came back empty and no session note ever
+# got a duration: 0 of 80 notes in a real vault.
+RC45="$ROOT/rc45"; mkdir -p "$RC45/.claude/projects/-tmp-rc45"
+printf '%s\n' '{"type":"custom-title","customTitle":"first-name"}' '{"type":"user","cwd":"/tmp/rc45"}' \
+    '{"type":"custom-title","customTitle":"latest-name"}' > "$RC45/.claude/projects/-tmp-rc45/s45.jsonl"
+chk "read_custom_title returns the latest rename" \
+    "$(env HOME="$RC45" bash -c 'source "$1" >/dev/null 2>&1; read_custom_title /tmp/rc45 s45' _ "$HELPL")" "latest-name"
+P45=aaaaaaaa-0000-0000-0000-000000000045; TP45="$H/.claude/projects/proj/$P45.jsonl"
+turns "$TP45" 9; start $P45 startup timed /tmp/mapped >/dev/null
+endrun x "$TP45" prompt_input_exit
+chk "the end hook records a duration" \
+    "$(prop "$KB/_sessions/$TODAY/$P45/session.md" duration_seconds | grep -cE '^[0-9]+$')" "1"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are
 # fixed, so leaving those files behind lets one run hand a stale path to the next.
 # Matched on content, not on the id, so a real session's cache file is never
 # touched even if it happens to share an id with a fixture.
-for cache_file in /private/tmp/second-brain-folder-*; do
+for cache_file in "$TMPREAL"/second-brain-folder-*; do
     [ -f "$cache_file" ] || continue
     case "$(cat "$cache_file" 2>/dev/null)" in "$ROOT"/*) rm -f "$cache_file" ;; esac
 done

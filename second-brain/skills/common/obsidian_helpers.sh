@@ -274,6 +274,13 @@ HEADER
     echo "| ${timestamp} | ${op_type} | ${operator} | ${details} |" >> "$log_file"
 }
 
+# Print a file's lines last-first. `tail -r` is BSD-only: GNU tail rejects it, and
+# every caller sends stderr to /dev/null, so on Linux each reverse scan came back empty.
+# macOS has no tac, which is why the BSD form stays as the fallback.
+reverse_lines() {
+    if command -v tac >/dev/null 2>&1; then tac "$@"; else tail -r "$@"; fi
+}
+
 # Read customTitle from a Claude Code session transcript.
 # Args: $1=cwd (working directory of the session)
 #       $2=session_id
@@ -285,7 +292,7 @@ read_custom_title() {
     local hash=$(echo "$cwd" | sed 's|[/.]|-|g')
     local transcript="$HOME/.claude/projects/$hash/${session_id}.jsonl"
     [ -f "$transcript" ] || return 0
-    tail -r "$transcript" 2>/dev/null \
+    reverse_lines "$transcript" 2>/dev/null \
         | grep -m1 '"type":"custom-title"' \
         | jq -r '.customTitle // empty' 2>/dev/null
 }
@@ -633,7 +640,7 @@ rebuild_session_md() {
         [ -n "$cwd" ] && project=$(resolve_project "$cwd" "$kb_path")
         [ -n "$cwd" ] && branch=$(git -C "$cwd" branch --show-current 2>/dev/null)
         forked=$(transcript_forked_from "$transcript" "$session_id")
-        title=$(tail -r "$transcript" 2>/dev/null \
+        title=$(reverse_lines "$transcript" 2>/dev/null \
             | grep -m1 '"type":"custom-title"' \
             | jq -r '.customTitle // empty' 2>/dev/null)
         forked_name=""
@@ -684,6 +691,7 @@ export -f write_session_md
 export -f session_folder_relpath
 export -f session_lineage_body
 export -f append_kb_log
+export -f reverse_lines
 export -f read_custom_title
 export -f rename_terminal_window
 export -f rename_herdr_agent

@@ -266,8 +266,15 @@ ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
 
 DURATION=""
 if [ -n "$STARTED_AT" ]; then
-    START_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$STARTED_AT" +%s 2>/dev/null)
-    END_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$ENDED_AT" +%s 2>/dev/null)
+    # Both stamps are UTC. `date -j -f` is BSD-only: GNU date rejects -j, and with
+    # stderr discarded every note's duration was left empty on Linux.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        to_epoch() { date -j -f "%Y-%m-%dT%H:%M:%S" "$1" +%s 2>/dev/null; }
+    else
+        to_epoch() { date -u -d "$1" +%s 2>/dev/null; }
+    fi
+    START_EPOCH=$(to_epoch "$STARTED_AT")
+    END_EPOCH=$(to_epoch "$ENDED_AT")
     if [ -n "$START_EPOCH" ] && [ -n "$END_EPOCH" ]; then
         DURATION=$(( END_EPOCH - START_EPOCH ))
     fi
@@ -275,7 +282,7 @@ fi
 
 # Read customTitle from transcript (reverse-scan — fast on large files)
 if [ -f "$TRANSCRIPT_PATH" ]; then
-    CUSTOM_TITLE=$(tail -r "$TRANSCRIPT_PATH" 2>/dev/null \
+    CUSTOM_TITLE=$(reverse_lines "$TRANSCRIPT_PATH" 2>/dev/null \
         | grep -m1 '"type":"custom-title"' \
         | jq -r '.customTitle // empty' 2>/dev/null)
     [ -n "$CUSTOM_TITLE" ] && SESSION_NAME="$CUSTOM_TITLE"
@@ -288,7 +295,10 @@ if [ -n "$CWD" ]; then
     MEMORY_HASH=$(echo "$MEMORY_ROOT" | sed 's|[/.]|-|g')
     MEMORY_SRC="$HOME/.claude/projects/$MEMORY_HASH/memory"
     if [ -d "$MEMORY_SRC" ]; then
-        cp -r "$MEMORY_SRC" "$SESSION_FOLDER/memory"
+        # Copy the contents, not the directory: on every exit after the first, memory/
+        # already exists, and cp -r would nest the fresh snapshot inside it.
+        mkdir -p "$SESSION_FOLDER/memory"
+        cp -r "$MEMORY_SRC/." "$SESSION_FOLDER/memory/"
     fi
 fi
 
