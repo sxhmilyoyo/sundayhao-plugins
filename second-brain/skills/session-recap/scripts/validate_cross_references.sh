@@ -80,8 +80,11 @@ echo "🔍 Validating cross-references in: $(basename "$DOCUMENT")"
 echo "📚 Knowledge bank: $KB_PATH"
 echo ""
 
-# Extract all WikiLinks from document
-WIKILINKS=$(sed '/^```/,/^```/d' "$DOCUMENT" | sed 's/`[^`]*`//g' | grep -o '\[\[[^]]*\]\]' | sed 's/\[\[\(.*\)\]\]/\1/' | sort -u || true)
+# Extract all WikiLink targets from document
+# Strip |alias and #anchor (same sed as knowledge-bank-lookup's wikilink-utils.sh);
+# a link with no target left (e.g. [[#Same-Note Heading]]) points at the document
+# itself, so it is dropped rather than validated.
+WIKILINKS=$(sed '/^```/,/^```/d' "$DOCUMENT" | sed 's/`[^`]*`//g' | grep -o '\[\[[^]]*\]\]' | sed 's/\[\[\([^]|#]*\).*/\1/' | grep -v '^[[:space:]]*$' | sort -u || true)
 
 if [ -z "$WIKILINKS" ]; then
     echo -e "${YELLOW}⚠️  WARNING: No WikiLinks found in document${NC}"
@@ -97,6 +100,14 @@ echo ""
 find_file_by_title() {
     local title="$1"
     local search_results
+
+    # Vault-relative target (e.g. [[_sessions/2026-01-01/abc/session]]):
+    # the find -name searches below match basenames only, so a path-style
+    # target can only resolve via a direct existence check
+    if [ -f "$KB_PATH/$title.md" ]; then
+        echo "$KB_PATH/$title.md"
+        return 0
+    fi
 
     # Search for markdown files with matching title in frontmatter
     search_results=$(find "$KB_PATH" -type f -name "*.md" -exec grep -l "^title: $title$" {} \; 2>/dev/null || true)

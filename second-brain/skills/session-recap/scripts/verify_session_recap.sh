@@ -323,7 +323,7 @@ if [ -f "$SCRIPT_DIR/validate_cross_references.sh" ] && [ -n "$DAILY_LOG" ]; the
     LOG_PATH="$KB_PATH/daily-log/$DAILY_LOG"
     if [ -f "$LOG_PATH" ]; then
         info "Running WikiLink validation on daily log..."
-        BROKEN_LINKS=$("$SCRIPT_DIR/validate_cross_references.sh" "$LOG_PATH" 2>/dev/null | grep -c "NOT FOUND" || true)
+        BROKEN_LINKS=$("$SCRIPT_DIR/validate_cross_references.sh" "$LOG_PATH" 2>/dev/null | grep -c "File not found" || true)
         if [ "$BROKEN_LINKS" -eq 0 ]; then
             pass "No broken WikiLinks detected"
         else

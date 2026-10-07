@@ -7,6 +7,20 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.1] - 2026-10-07
+
+### Fixed
+- **WikiLink validation resolves aliased, anchored, and path targets** (session-recap 3.6.1).
+  `validate_cross_references.sh` kept a link's whole inner text, so `[[Target|alias]]`,
+  `[[Target#Heading]]`, and vault-relative paths like `[[_sessions/.../session]]` were all
+  reported broken — resolution searched for a file literally named `Target|alias.md`, and the
+  basename-only `find -name` could never match a path. Targets are now stripped at the first
+  `|` or `#` (the same sed knowledge-bank-lookup's `wikilink-utils.sh` uses), same-note anchors
+  (`[[#Heading]]`) are skipped, and path-style targets resolve via a direct
+  `$KB_PATH/<target>.md` check. Also fixes `verify_session_recap.sh`'s daily-log WikiLink gate,
+  which grepped the validator's output for `NOT FOUND` — a string it never prints — and so
+  passed unconditionally; it now matches the actual `File not found` marker.
+
 ## [2.19.0] - 2026-10-06
 
 ### Added
