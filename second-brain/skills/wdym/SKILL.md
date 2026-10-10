@@ -12,13 +12,14 @@ material is the session itself: explain what actually happened here, never the g
 ## Step 0: Load the profile
 
 ```bash
-source skills/common/get_kb_path.sh && KB_PATH=$(get_kb_path)
+source "${CLAUDE_PLUGIN_ROOT}/skills/common/get_kb_path.sh" && KB_PATH=$(get_kb_path)
 cat "$KB_PATH/rules/comprehension-profile.md"
 ```
 
-The profile carries the person's register, analogy policy, native formats, daily-stack anchors,
-and known confusion clusters. It overrides the generic defaults below. If the file is missing,
-use the defaults and offer once to compile a profile from the knowledge bank's reflections.
+The profile carries the person's calibration that is not already in their always-on
+instructions — register, analogy policy, native formats, daily-stack anchors, known confusion
+clusters — and overrides the generic defaults below. If the file is missing, use the defaults
+and offer once to compile a profile from the knowledge bank's reflections.
 
 ## Calibration (generic defaults; the profile overrides)
 

@@ -45,10 +45,21 @@ by a recap from evidence in the [[#Subject]]'s transcript and put to a person fo
 before anything is changed. It names a concrete target and carries a severity; only a
 person's approval turns a proposed improvement into a change.
 
+## Verification approach
+
+A way of proving a claim about work on direct evidence, named by the question it answers and
+carrying the method, the concrete command or tool, and the incidents it caught. The depth behind
+it stays wherever the bank already records it: a best practice, a [[#Reflection]], a skill. The
+approach is the one entry that points at all of them. "Validation" names the same thing and is
+retired in favour of this term. The verify skill chooses one before a claim is made; a
+[[#Decode]] explains, after the fact, which one was used.
+
 ## Decode
 
 Re-explaining a stretch of agent work to the person supervising it, grounded in that
-session's own evidence rather than the general case. The wdym skill performs decodes.
+session's own evidence rather than the general case. The wdym skill performs decodes. A
+decode happens on request; the [[#Comprehension register]] applies to every response
+without one.
 
 ## Agent output
 
@@ -56,11 +67,19 @@ What a [[#Decode]] explains: the agent's prose conclusions, the raw tool output 
 (logs, diffs, traces, query results), and background-agent reports. Recap artifacts are not
 agent output here; they have their own vocabulary above.
 
+## Comprehension register
+
+The stable calibration applied to every response a person receives — register, analogy
+policy, native formats, daily-stack anchors — whether or not a [[#Decode]] was asked for.
+Carried by the person's own always-on instructions, never by the plugin: it is about the
+person, not the mechanism.
+
 ## Comprehension profile
 
-The durable, person-specific calibration a [[#Decode]] reads: register, analogy policy,
-native formats, and known confusion clusters. Lives in the knowledge bank, never in the
-plugin — the mechanism is public, the person is not.
+The evolving, person-specific record a [[#Decode]] reads: known confusion clusters, the
+question ladder as the person climbs it, and the inbox of [[#Confusion record]]s. The stable
+calibration is the [[#Comprehension register]], kept beside it, not inside it. Lives in the
+knowledge bank, never in the plugin — the mechanism is public, the person is not.
 
 ## Confusion record
 
@@ -71,7 +90,9 @@ folds into the [[#Comprehension profile]]; it records, it never calibrates by it
 
 The escalation a supervising person climbs when probing agent work: what changed → where
 does it come from → what is it → why this way → prove it. A [[#Decode]] answers the rungs
-that apply and never leaves the next one unaddressed.
+that apply and never leaves the next one unaddressed. The last rung asks what verification
+already happened; choosing a [[#Verification approach]] before the claim is the verify
+skill's job, not a decode's.
 
 ## Promotion
 

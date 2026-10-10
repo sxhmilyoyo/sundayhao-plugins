@@ -7,6 +7,17 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.3] - 2026-10-10
+
+### Fixed
+- **`wdym` sourced its common script by a cwd-relative path** (wdym 1.0.1). Step 0 ran
+  `source skills/common/get_kb_path.sh`, which resolves only when the shell happens to sit at
+  the plugin root; the three decodes that reached the profile did so because the model worked
+  around it. It now sources `${CLAUDE_PLUGIN_ROOT}/skills/common/get_kb_path.sh`, the path the
+  hooks already use. `knowledge-bank-lookup` documents the same relative idiom and is left as is.
+  Step 0 also now describes the profile as carrying the calibration not already in the person's
+  always-on instructions, so a CLAUDE.md that carries the register is the expected shape.
+
 ## [2.19.2] - 2026-10-07
 
 ### Fixed

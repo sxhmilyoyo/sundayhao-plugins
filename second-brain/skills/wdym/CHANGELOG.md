@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.1] - 2026-10-10
+
+### Fixed
+- Step 0 sourced `skills/common/get_kb_path.sh` by a cwd-relative path, which resolves only
+  from the plugin root; it now uses `${CLAUDE_PLUGIN_ROOT}`, as the hooks do.
+
+### Changed
+- Step 0 describes the profile as carrying the calibration not already in the person's
+  always-on instructions. A person whose CLAUDE.md carries the register keeps only the
+  evolving parts (confusion clusters, ladder, inbox) in the profile.
+
 ## [1.0.0] - 2026-10-06
 
 ### Added
