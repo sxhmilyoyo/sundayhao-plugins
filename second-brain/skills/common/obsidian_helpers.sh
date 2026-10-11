@@ -517,9 +517,15 @@ transcript_forked_from() {
     # alone is not enough: a conversation that reads a hook script, or quotes
     # another session's registration line inside a tool result, puts the same
     # words in the transcript and would be misread as a parent.
+    # And only the marker's own path names a session. The hook's whole stdout is
+    # stored as one record, so the record carrying this session's marker also
+    # carries the recap notice, which lists other sessions by folder path; read
+    # whole, the record made the notice's last entry the parent of every session
+    # started while it was listed. The path ends at the JSON-escaped newline or
+    # the closing quote, so the match stops at the first backslash or quote.
     head -200 "$transcript" 2>/dev/null \
         | grep '"type":"attachment"' \
-        | grep 'Session folder created' \
+        | grep -o 'Session folder created: [^"\\]*' \
         | grep -o '_sessions/[0-9][0-9-]*/[0-9a-f-]\{36\}' \
         | sed 's|.*/||' \
         | grep -v "^${self}$" \

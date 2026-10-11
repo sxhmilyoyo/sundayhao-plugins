@@ -7,6 +7,23 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.4] - 2026-10-11
+
+### Fixed
+- **Every session was recorded as a fork of whichever session the recap notice listed last.**
+  `transcript_forked_from` took a session id from any `_sessions/<date>/<id>` path inside an
+  attachment record that mentioned the registration marker. Claude Code stores the start hook's
+  whole stdout as one such record, and that stdout carries the recap notice beside the marker, so
+  the notice's last entry (the oldest pending recap) became `forked_from` for every session started
+  while it was listed: 34 notes named `ccfind-session-finder`, 33 before them named
+  `dtf_adsp_forecasting-onboard`, 116 in all across a real vault, against one genuine fork. Each
+  also inherited that stranger's tags and domain at registration, and a genuine fork was credited
+  to the notice entry instead of its parent. The id is now read only from the marker's own path,
+  which ends at the JSON-escaped newline. The hook-regression suite gains 14b, which registers a
+  session whose own record carries a notice line and asserts no lineage, no inherited tags, and a
+  fork with a notice still naming its parent. Notes already carrying the wrong lineage are not
+  rewritten by this fix.
+
 ## [2.19.3] - 2026-10-10
 
 ### Fixed

@@ -290,6 +290,25 @@ printf '{"type":"user","message":{"content":"quoting Session folder created: %s 
 start $SG startup quoter /tmp/mapped >/dev/null
 chk "a quoted marker is not lineage"     "$(prop "$KB/_sessions/$TODAY/$SG/session.md" forked_from)" ""
 
+echo "== 14b. the recap notice in a session's own registration record is not lineage =="
+# The start hook's whole stdout is stored as one attachment record, so the record that
+# carries this session's marker also carries the recap notice, which names other
+# sessions by their folder path. Only the marker's own path may name a parent.
+SI=99999999-9999-9999-9999-99999999999a
+printf '{"type":"attachment","attachment":{"type":"hook_success","content":"Session folder created: %s/_sessions/%s/%s\\n\\nSecond Brain: 1 recap needs attention\\n- %s named-one — requested, not started — run: recap --manual %s/_sessions/%s/%s"}}\n{"type":"user","cwd":"/tmp/mapped"}\n' \
+    "$KB" "$TODAY" "$SI" "$TODAY" "$KB" "$TODAY" "$S9" > "$H/.claude/projects/proj/$SI.jsonl"
+start $SI startup noticed /tmp/mapped >/dev/null
+MI="$KB/_sessions/$TODAY/$SI/session.md"
+chk "a notice path is not lineage"               "$(prop "$MI" forked_from)" ""
+chk "and nothing is inherited from it"           "$(grep -c 'kepttag' "$MI")" "0"
+SJ=99999999-9999-9999-9999-99999999999b
+{ printf '{"type":"attachment","attachment":{"type":"hook_success","content":"Session folder created: %s"}}\n' "$KB/_sessions/$TODAY/$S9"
+  printf '{"type":"attachment","attachment":{"type":"hook_success","content":"Session folder created: %s/_sessions/%s/%s\\n- %s untagged — requested, not started — run: recap --manual %s/_sessions/%s/%s"}}\n{"type":"user","cwd":"/tmp/mapped"}\n' \
+    "$KB" "$TODAY" "$SJ" "$TODAY" "$KB" "$TODAY" "$SB"
+} > "$H/.claude/projects/proj/$SJ.jsonl"
+start $SJ fork "" /tmp/mapped >/dev/null
+chk "a fork with a notice still names its parent" "$(prop "$KB/_sessions/$TODAY/$SJ/session.md" forked_from)" "$S9"
+
 echo "== 15. the end hook backfills the lineage name, never the tags =="
 SH=99999999-9999-9999-9999-999999999999
 fork_transcript $SH "$KB/_sessions/$TODAY/$S9"
