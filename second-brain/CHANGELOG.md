@@ -7,6 +7,36 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.5] - 2026-10-11
+
+### Fixed
+- **The recap's transcript statistics counted lines instead of calls, never saw an `Agent`
+  spawn, and missed most messages from other sessions.** `parse_transcript.sh stats` piped
+  every record that held a Bash call through `wc -l`, so `Bash commands` counted pretty-printed
+  lines: 2061 for 31 calls, 9591 for 135. `Subagents spawned` looked for a tool named `Task`;
+  the tool is `Agent`, so it read 0 for every recap that had sub-agents. `Inbound session
+  messages` matched only the `isMeta` cross-session envelope, while agent-team reports arrive
+  as plain user records holding one or more `<teammate-message>` blocks (eight in one record on
+  a real transcript), a peer message or a subagent hand-back that arrives while the session is
+  busy is a `queued_command` attachment, and a hand-back delivered to an idle session is an
+  `isMeta` record that begins "Another Claude session sent a message:" around an
+  `<agent-message>` frame. And with no insight block, `all` exited 1 under `set -e` from the
+  trailing `grep -v`. The two counts now count `tool_use` blocks (`Agent` or `Task`), the
+  inbound line counts all five envelopes with teammate messages per block, the Subagent
+  Invocations listing names `Agent` calls as well, and `all` exits 0. Regression case 43b.
+- **The recap gate died on an apostrophe in a `--docs` or `--proposals` path.**
+  `verify_session_recap.sh` trimmed each entry with `xargs`, which reads a single quote as the
+  start of a quoted string and exits 1; under `set -e` the gate ended in section 3 or 4 with no
+  verdict line, which a recap reads as a failed gate rather than a tool fault. 18 documents in
+  a real vault carry an apostrophe. `xargs` also collapsed a double space inside a name. Both
+  trims are parameter expansions now. Regression case 46.
+- **The recap's "Errors & Failures" section listed words, not failures.** It grepped every
+  tool result for error, fail or exception, so on a long session quoted ticket text filled its
+  30 lines while the 6 results with `is_error: true` (four reads of a missing file, a check that
+  exited 1 after printing "syntax ok", a Write refused as modified since read) never appeared.
+  It now lists the results whose `is_error` is true, whitespace collapsed, 200 characters each.
+  Regression case 43c.
+
 ## [2.19.4] - 2026-10-11
 
 ### Fixed
