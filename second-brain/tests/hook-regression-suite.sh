@@ -1482,6 +1482,23 @@ endrun x "$TP45" prompt_input_exit
 chk "the end hook records a duration" \
     "$(prop "$KB/_sessions/$TODAY/$P45/session.md" duration_seconds | grep -cE '^[0-9]+$')" "1"
 
+echo "== 46. the recap gate survives an apostrophe and a double space in a --docs path =="
+# Each --docs and --proposals entry was trimmed with xargs, which reads a single quote as
+# the start of a quoted string: "unmatched single quote", exit 1, and under set -e the gate
+# died in section 3 or 4 with no verdict line, which a recap reads as a failed gate rather
+# than a tool fault. 18 documents in a real vault carry an apostrophe. xargs also collapsed
+# a double space inside a name, so that document would have read as not found.
+VKB46="$ROOT/vkb46"; mkdir -p "$VKB46/_proposals"
+VD46="$VKB46/Taskei Fields Are the Ticket Graph's  Schema.md"
+for i in $(seq 1 12); do printf '[[link %s]]\n' "$i"; done > "$VD46"
+printf '%s\n' '---' 'type: proposed-improvement' 'severity: low' 'category: tooling' 'target: a script' \
+    'classification: mechanical' 'session-folder: _sessions/2026-10-01/x' 'status: pending' '---' > "$VKB46/_proposals/what's-left.md"
+V46=$(env HOME="$H" "$PLUGIN/skills/session-recap/scripts/verify_session_recap.sh" --kb-path "$VKB46" --no-reflection \
+    --proposals " what's-left.md " --docs " $VD46 " 2>&1)
+chk "the gate reaches its summary"                 "$(printf '%s\n' "$V46" | grep -c 'VERIFICATION SUMMARY')" "1"
+chk "and counts the apostrophe document's links"   "$(printf '%s\n' "$V46" | grep -c "Graph's  Schema.md: 12 cross-references")" "1"
+chk "and checks the apostrophe proposal"           "$(printf '%s\n' "$V46" | grep -c "what's-left.md: complete proposal, pending")" "1"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are

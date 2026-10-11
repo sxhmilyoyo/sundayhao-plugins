@@ -252,7 +252,9 @@ elif [ "$PROPOSALS" = "none" ]; then
 else
     IFS=',' read -ra PROP_ARRAY <<< "$PROPOSALS"
     for prop in "${PROP_ARRAY[@]}"; do
-        prop=$(echo "$prop" | xargs)
+        # Trimmed by parameter expansion, not xargs: xargs reads an apostrophe in a name as
+        # an open quote and exits 1, which under set -e killed the gate before its verdict.
+        prop="${prop#"${prop%%[![:space:]]*}"}"; prop="${prop%"${prop##*[![:space:]]}"}"
         [ -n "$prop" ] || continue
         BASENAME=$(basename "$prop")
         PROP_PATH="$KB_PATH/_proposals/$BASENAME"
@@ -293,7 +295,7 @@ print_section "4. CROSS-REFERENCE VALIDATION"
 if [ -n "$CREATED_DOCS" ]; then
     IFS=',' read -ra DOC_ARRAY <<< "$CREATED_DOCS"
     for doc in "${DOC_ARRAY[@]}"; do
-        doc=$(echo "$doc" | xargs)  # Trim whitespace
+        doc="${doc#"${doc%%[![:space:]]*}"}"; doc="${doc%"${doc##*[![:space:]]}"}"  # Trim whitespace
         if [ -f "$doc" ]; then
             LINK_COUNT=$(grep -o '\[\[' "$doc" 2>/dev/null | wc -l | tr -d ' ')
             BASENAME=$(basename "$doc")
