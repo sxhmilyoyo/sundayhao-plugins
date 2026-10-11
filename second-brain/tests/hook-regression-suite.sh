@@ -1449,6 +1449,21 @@ chk "and all exits 0 without an insight block"       "$PA43BRC" "0"
 printf '%s\n' '{"type":"user","isMeta":true,"timestamp":"2026-10-01T00:00:08Z","message":{"role":"user","content":"Another Claude session sent a message:\n<agent-message from=\"a1b2c3\">\n[Subagent hand-back] the report\n</agent-message>"}}' >> "$PX43B"
 chk "a hand-back delivered to an idle session is the fifth inbound envelope" "$("$PT43" "$PX43B" stats 2>/dev/null | grep -c '^Inbound session messages: 5$')" "1"
 
+echo "== 43c. the recap's error list reads is_error, not the words a result happens to use =="
+# The section grepped every tool result for error, fail or exception, so on a long session
+# quoted ticket text and reports filled its 30 lines, while the results that had actually
+# failed, a cat of a missing file among them, named none of those words and never appeared.
+PX43C="$ROOT/parse-errors-fixture.jsonl"
+{
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"content":[{"type":"tool_use","id":"e1","name":"Bash","input":{"command":"cat missing"}}]}}'
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"e1","is_error":true,"content":"Exit code 1\ncat: missing: No such file or directory"}]}}'
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:02Z","message":{"content":[{"type":"tool_use","id":"e2","name":"Bash","input":{"command":"cat README.md"}}]}}'
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"e2","content":"Exit code 2 is a usage error"}]}}'
+} > "$PX43C"
+PE43C=$("$PT43" "$PX43C" errors 2>/dev/null)
+chk "errors lists a failed call that names no error word" "$(printf '%s\n' "$PE43C" | grep -c 'No such file or directory')" "1"
+chk "errors skips a successful result that quotes one"   "$(printf '%s\n' "$PE43C" | grep -c 'usage error')" "0"
+
 echo "== 44. a resumed session's second exit refreshes the memory snapshot in place =="
 # cp -r into a memory/ that already exists copies the source inside it, so every exit
 # after the first nested a fresh snapshot at memory/memory/ while the note kept linking

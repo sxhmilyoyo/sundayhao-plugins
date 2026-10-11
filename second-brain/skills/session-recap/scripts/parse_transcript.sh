@@ -87,18 +87,17 @@ extract_commands() {
       .input.command' "$TRANSCRIPT" 2>/dev/null | head -50
 }
 
-# Extract errors from tool results
+# Failed tool results, by is_error. The old word match (error, fail, exception) listed
+# successful results that quoted one, so on a long session ticket text filled the 30
+# lines, and it missed failed results that named none: a cat of a missing file, a check
+# that exited 1 after printing "syntax ok", a Write refused as modified since read.
 extract_errors() {
     echo "=== Errors & Failures ==="
-    jq -r 'select(.message.content[]?.type == "tool_result") |
-      .message.content[] | select(.type == "tool_result") |
-      if .content | type == "array" then
-        .content[] | select(.type == "text") | .text
-      elif .content | type == "string" then
-        .content
-      else
-        empty
-      end' "$TRANSCRIPT" 2>/dev/null | grep -i -E "(error|fail|exception|Error:|FAILED)" | head -30
+    jq -r 'select(.type == "user") | .message.content[]? |
+      select(.type == "tool_result" and .is_error == true) |
+      (if (.content | type) == "array" then [.content[] | select(.type == "text") | .text] | join(" ")
+       else (.content // "" | tostring) end) |
+      gsub("\\s+"; " ") | .[0:200]' "$TRANSCRIPT" 2>/dev/null | head -30
 }
 
 # Extract subagent invocations. The tool is Agent (Task is its old name), so a Task-only
