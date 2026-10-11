@@ -1417,6 +1417,38 @@ chk "a tool result is not shown as a prompt"           "$(printf '%s\n' "$PU43" 
 chk "an inbound session message is shown with its sender" "$(printf '%s\n' "$PU43" | grep -c 'peer-a: *layer seven found')" "1"
 chk "and counted in the statistics" "$("$PT43" "$PX43" stats 2>/dev/null | grep -c '^Inbound session messages: 1$')" "1"
 
+echo "== 43b. the recap's statistics count tool calls, Agent spawns and every inbound envelope =="
+# Bash commands piped every record that held a call through wc -l, so it counted the
+# pretty-printed lines (2061 for 31 calls on a real transcript); Subagents spawned looked
+# for a tool named Task when the tool is Agent, so it read 0 for every recap that had
+# sub-agents, and the Subagent Invocations listing stayed empty for the same reason; and the
+# inbound count matched only the isMeta cross-session envelope, while agent-team reports
+# (several <teammate-message> blocks in one plain user record), peer messages and subagent
+# hand-backs queued while the session was busy (queued_command attachments) and hand-backs
+# delivered to an idle session ("Another Claude session sent a message:" around
+# <agent-message>) each arrive in another. With no insight block, `all` also exited 1 from
+# the trailing grep -v.
+PX43B="$ROOT/parse-stats-fixture.jsonl"
+{
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:00Z","cwd":"/tmp/mapped","message":{"role":"user","content":"count things"}}'
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:01Z","message":{"content":[{"type":"text","text":"two calls in one record"},{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"ls\necho one"}},{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"echo two"}}]}}'
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b1","content":"one"},{"type":"tool_result","tool_use_id":"b2","content":"two"}]}}'
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:03Z","message":{"content":[{"type":"tool_use","id":"a1","name":"Agent","input":{"subagent_type":"Explore","description":"look around","prompt":"look"}}]}}'
+    printf '%s\n' '{"type":"user","timestamp":"2026-10-01T00:00:04Z","message":{"role":"user","content":"Another Claude session sent a message:\n<teammate-message teammate_id=\"reader-1\" summary=\"done\">\nfirst report\n</teammate-message>\n<teammate-message teammate_id=\"reader-2\" summary=\"done\">\nsecond report\n</teammate-message>"}}'
+    printf '%s\n' '{"type":"attachment","timestamp":"2026-10-01T00:00:05Z","attachment":{"type":"queued_command","prompt":"<cross-session-message from=\"uds:/x.sock\" from-name=\"peer-b\" from-mode=\"prompting\">\nqueued while busy\n</cross-session-message>","timestamp":"2026-10-01T00:00:05Z"}}'
+    printf '%s\n' '{"type":"attachment","timestamp":"2026-10-01T00:00:06Z","attachment":{"type":"queued_command","prompt":"<agent-message from=\"d4e5f6\">\n[Subagent hand-back] queued while busy\n</agent-message>","timestamp":"2026-10-01T00:00:06Z"}}'
+    printf '%s\n' '{"type":"attachment","timestamp":"2026-10-01T00:00:07Z","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>t1</task-id>\n</task-notification>","timestamp":"2026-10-01T00:00:07Z"}}'
+} > "$PX43B"
+PA43B=$(env HOME="$H" "$PT43" "$PX43B" all 2>/dev/null); PA43BRC=$?
+chk "two Bash calls in one record count as two"      "$(printf '%s\n' "$PA43B" | grep -c '^Bash commands: 2$')" "1"
+chk "an Agent call counts as a spawned subagent"     "$(printf '%s\n' "$PA43B" | grep -c '^Subagents spawned: 1$')" "1"
+chk "and the subagent listing names it"              "$(printf '%s\n' "$PA43B" | grep -c '^\[Explore\] look around$')" "1"
+chk "two teammate blocks, a queued peer message and a queued hand-back are four inbound, a queued task notification none" \
+    "$(printf '%s\n' "$PA43B" | grep -c '^Inbound session messages: 4$')" "1"
+chk "and all exits 0 without an insight block"       "$PA43BRC" "0"
+printf '%s\n' '{"type":"user","isMeta":true,"timestamp":"2026-10-01T00:00:08Z","message":{"role":"user","content":"Another Claude session sent a message:\n<agent-message from=\"a1b2c3\">\n[Subagent hand-back] the report\n</agent-message>"}}' >> "$PX43B"
+chk "a hand-back delivered to an idle session is the fifth inbound envelope" "$("$PT43" "$PX43B" stats 2>/dev/null | grep -c '^Inbound session messages: 5$')" "1"
+
 echo "== 44. a resumed session's second exit refreshes the memory snapshot in place =="
 # cp -r into a memory/ that already exists copies the source inside it, so every exit
 # after the first nested a fresh snapshot at memory/memory/ while the note kept linking

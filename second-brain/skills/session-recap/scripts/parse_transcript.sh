@@ -9,7 +9,7 @@
 #   files-mod   - Extract files modified (Edit/Write tools)
 #   commands    - Extract bash commands executed
 #   errors      - Extract errors and failures from tool results
-#   subagents   - Extract subagent (Task tool) invocations
+#   subagents   - Extract subagent (Agent tool, formerly Task) invocations
 #   insights    - Extract educational insights (★ Insight blocks)
 #   project     - Auto-detect project from cwd
 #   all         - Run all extractions
@@ -101,11 +101,12 @@ extract_errors() {
       end' "$TRANSCRIPT" 2>/dev/null | grep -i -E "(error|fail|exception|Error:|FAILED)" | head -30
 }
 
-# Extract subagent invocations
+# Extract subagent invocations. The tool is Agent (Task is its old name), so a Task-only
+# match left this section empty for every recap that had sub-agents. Matched per block:
+# the record-level `select(A and B)` form prints a record with two calls four times each.
 extract_subagents() {
     echo "=== Subagent Invocations ==="
-    jq -r 'select(.message.content[]?.type == "tool_use" and .message.content[]?.name == "Task") |
-      .message.content[] | select(.type == "tool_use" and .name == "Task") |
+    jq -r '.message.content[]? | select(.type == "tool_use" and (.name == "Agent" or .name == "Task")) |
       "[\(.input.subagent_type)] \(.input.description)"' "$TRANSCRIPT" 2>/dev/null
 }
 
@@ -116,7 +117,7 @@ extract_insights() {
       .message.content[] | select(.type == "text") |
       .text' "$TRANSCRIPT" 2>/dev/null | \
     awk '/★ Insight/,/─────────────────────────────────────────────────$/' | \
-    grep -v '^$'
+    grep -v '^$' || true  # no insight block is not a failure; under set -e it ended `all` with exit 1
 }
 
 # Report the working directory and the domain it maps to. This is information, never a
@@ -159,15 +160,34 @@ extract_stats() {
         echo "User prompts (approx.): $(count_user_messages "$TRANSCRIPT")"
     fi
     echo "User records (incl. tool results): $(jq -s '[.[] | select(.type == "user")] | length' "$TRANSCRIPT" 2>/dev/null)"
-    echo "Inbound session messages: $(jq -s '[.[] | select(.type == "user" and .isMeta and ((.message.content | type) == "string") and (.message.content | contains("<cross-session-message")))] | length' "$TRANSCRIPT" 2>/dev/null)"
+    # Messages from other sessions arrive in five envelopes, and a recap that reads "0"
+    # here on an orchestrated session understates it. An idle session stores a peer
+    # message, or a subagent hand-back prefixed "Another Claude session sent a message:",
+    # as an isMeta user record; a busy session queues either as a queued_command
+    # attachment instead; and agent-team reports are plain user records that can hold
+    # several <teammate-message> blocks each (eight in one record on a real transcript),
+    # so those are counted per block.
+    echo "Inbound session messages: $(jq -s '
+      ([.[] | select(.type == "user") |
+         (.message.content | if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end) as $t |
+         (if .isMeta and (($t | contains("<cross-session-message")) or
+                          (($t | startswith("Another Claude session sent a message:")) and ($t | contains("<agent-message"))))
+          then 1 else 0 end)
+         + ($t | [scan("<teammate-message")] | length)] | add // 0)
+      + ([.[] | select(.type == "attachment" and .attachment.type == "queued_command"
+                       and ((.attachment.prompt // "") | (startswith("<cross-session-message") or startswith("<agent-message"))))] | length)' \
+      "$TRANSCRIPT" 2>/dev/null)"
     echo "Assistant messages: $(jq -s '[.[] | select(.type == "assistant")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Tool uses: $(jq -s '[.[] | .message.content[]? | select(.type == "tool_use")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo "Summaries: $(jq -s '[.[] | select(.type == "summary")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo ""
     echo "Files read: $(jq -r 'select(.message.content[]?.name == "Read") | .message.content[] | select(.name == "Read") | .input.file_path' "$TRANSCRIPT" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
     echo "Files modified: $(jq -r 'select(.message.content[]?.name == "Edit" or .message.content[]?.name == "Write") | .message.content[] | select(.name == "Edit" or .name == "Write") | .input.file_path' "$TRANSCRIPT" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
-    echo "Bash commands: $(jq -r 'select(.message.content[]?.name == "Bash")' "$TRANSCRIPT" 2>/dev/null | wc -l | tr -d ' ')"
-    echo "Subagents spawned: $(jq -r 'select(.message.content[]?.name == "Task")' "$TRANSCRIPT" 2>/dev/null | wc -l | tr -d ' ')"
+    # Counted as tool_use blocks. The old Bash line piped every record that held a call
+    # through wc -l, so it counted pretty-printed lines (2061 for 31 calls on a real
+    # transcript), and the subagent tool is Agent: Task never matched, so this read 0.
+    echo "Bash commands: $(jq -s '[.[] | .message.content[]? | select(.type == "tool_use" and .name == "Bash")] | length' "$TRANSCRIPT" 2>/dev/null)"
+    echo "Subagents spawned: $(jq -s '[.[] | .message.content[]? | select(.type == "tool_use" and (.name == "Agent" or .name == "Task"))] | length' "$TRANSCRIPT" 2>/dev/null)"
 }
 
 # Run based on command
