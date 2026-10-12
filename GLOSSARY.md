@@ -92,7 +92,13 @@ The escalation a supervising person climbs when probing agent work: what changed
 does it come from → what is it → why this way → prove it. A [[#Decode]] answers the rungs
 that apply and never leaves the next one unaddressed. The last rung asks what verification
 already happened; choosing a [[#Verification approach]] before the claim is the verify
-skill's job, not a decode's.
+skill's job, not a decode's. The person climbs the ladder; the agent delivers a [[#Debrief]].
+
+## Debrief
+
+The agent's end-of-task account that pre-answers the [[#Interrogation ladder]] in one go:
+what changed, where it came from, new terms, why this shape, the proof. Compact when it
+closes a task unasked, full when asked for (`wdym debrief`). Not a ladder: nobody climbs it.
 
 ## Promotion
 
