@@ -6,7 +6,7 @@
 #   stats       - Show session statistics
 #   users       - Extract user messages
 #   files-read  - Extract files read (Read tool)
-#   files-mod   - Extract files modified (Edit/Write tools)
+#   files-mod   - Extract files modified (Edit/Write tools, and Bash writes: redirects, tee, sed -i, python open/Path.write_text)
 #   commands    - Extract bash commands executed
 #   errors      - Extract errors and failures from tool results
 #   subagents   - Extract subagent (Agent tool, formerly Task) invocations
@@ -70,13 +70,43 @@ extract_files_read() {
       .input.file_path' "$TRANSCRIPT" 2>/dev/null | sort -u
 }
 
-# Extract files modified
+# Files a Bash command writes. Under auto mode the harness asks for file changes through Bash, so
+# a change made with `cat > f <<'EOF'`, `tee f`, `sed -i … f` or a `python3 - <<'EOF'` heredoc that
+# calls open(f, "w") never shows up as an Edit or Write call: a six-file change on a real transcript
+# read "Files modified: 0". Redirect targets must look like paths (a `/`, a `./`, a `$`, or an
+# extension) and hold no `<`, `>`, quote or `*`, so `>` inside awk, sed or python scripts or a markdown
+# blockquote in a heredoc body is skipped;
+# explicit write APIs (tee, sed -i, open, Path.write_text) are taken as written. A `$VAR` or `${VAR}`
+# in a target is expanded from a `VAR=value` assignment in the same command.
+PT_JQ_DEFS=$(cat <<'JQ'
+def pt_unquote: if length >= 2 and ((startswith("\"") and endswith("\"")) or (startswith("'") and endswith("'"))) then .[1:-1] else . end;
+def pt_pathlike: test("^(\\$|/|~|\\.{1,2}/|[A-Za-z0-9_.-]+/|[A-Za-z0-9_.-]+\\.[A-Za-z0-9]{1,6}$)");
+def pt_bash_write_targets:
+  . as $c
+  | ([ $c | scan("(?:^|[\\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*'|[^\\s;&|)]+)") | {k: .[0], v: (.[1] | pt_unquote)} ]) as $vars
+  | def pt_expand: reduce $vars[] as $kv (.; gsub("\\$\\{" + $kv.k + "\\}|\\$" + $kv.k + "(?![A-Za-z0-9_])"; $kv.v));
+    ( [ $c | scan("(?<![0-9=<>-])>{1,2}\\s*(\"[^\"]+\"|'[^']+'|[^\\s;&|)]+)") | .[0] | pt_unquote | pt_expand | select(pt_pathlike) ]
+    + [ $c | scan("\\btee\\s+(?:-a\\s+)?(\"[^\"]+\"|'[^']+'|[^\\s;&|)]+)") | .[0] | pt_unquote | pt_expand ]
+    + [ $c | scan("\\bsed\\s+(?:-[A-Za-z]+\\s+)*-i\\S*\\s+(?:-e\\s+)?(?:'[^']*'|\"[^\"]*\")\\s+([^\\s;&|]+)") | .[0] | pt_expand ]
+    + [ $c | scan("\\bopen\\(\\s*([\"'])([^\"']+)\\1\\s*,\\s*[\"'][wa]") | .[1] ]
+    + [ $c | scan("Path\\(\\s*([\"'])([^\"']+)\\1\\s*\\)\\.write_(?:text|bytes)") | .[1] ]
+    + [ $c | scan("\\bopen\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*,\\s*[\"'][wa]") | .[0] as $v
+        | ($c | [scan("\\b" + $v + "\\s*=\\s*([\"'])([^\"']+)\\1")] | if length > 0 then .[0][1] else empty end) ]
+    )
+  | map(select(. != "/dev/null" and (startswith("&") | not) and (startswith("$(") | not) and (test("[<>'\"*]") | not)))
+  | unique;
+JQ
+)
+
+# Extract files modified: Edit and Write calls, plus the files Bash commands write ("Bash: <path>")
 extract_files_modified() {
     echo "=== Files Modified ==="
-    jq -r 'select(.message.content[]?.type == "tool_use") |
+    jq -r "${PT_JQ_DEFS}"'
+      select(.message.content[]?.type == "tool_use") |
       .message.content[] | select(.type == "tool_use") |
-      select(.name == "Edit" or .name == "Write") |
-      "\(.name): \(.input.file_path)"' "$TRANSCRIPT" 2>/dev/null | sort -u
+      if (.name == "Edit" or .name == "Write") then "\(.name): \(.input.file_path)"
+      elif .name == "Bash" then ((.input.command // "") | pt_bash_write_targets[] | "Bash: \(.)")
+      else empty end' "$TRANSCRIPT" 2>/dev/null | sort -u
 }
 
 # Extract bash commands
@@ -181,7 +211,8 @@ extract_stats() {
     echo "Summaries: $(jq -s '[.[] | select(.type == "summary")] | length' "$TRANSCRIPT" 2>/dev/null)"
     echo ""
     echo "Files read: $(jq -r 'select(.message.content[]?.name == "Read") | .message.content[] | select(.name == "Read") | .input.file_path' "$TRANSCRIPT" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
-    echo "Files modified: $(jq -r 'select(.message.content[]?.name == "Edit" or .message.content[]?.name == "Write") | .message.content[] | select(.name == "Edit" or .name == "Write") | .input.file_path' "$TRANSCRIPT" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+    echo "Files modified: $(jq -r "${PT_JQ_DEFS}"'.message.content[]? | select(.type == "tool_use") | if (.name == "Edit" or .name == "Write") then .input.file_path elif .name == "Bash" then ((.input.command // "") | pt_bash_write_targets[]) else empty end' "$TRANSCRIPT" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+    echo "Files modified via Bash: $(jq -r "${PT_JQ_DEFS}"'.message.content[]? | select(.type == "tool_use" and .name == "Bash") | ((.input.command // "") | pt_bash_write_targets[])' "$TRANSCRIPT" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
     # Counted as tool_use blocks. The old Bash line piped every record that held a call
     # through wc -l, so it counted pretty-printed lines (2061 for 31 calls on a real
     # transcript), and the subagent tool is Agent: Task never matched, so this read 0.

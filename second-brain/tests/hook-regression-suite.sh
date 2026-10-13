@@ -1464,6 +1464,28 @@ PE43C=$("$PT43" "$PX43C" errors 2>/dev/null)
 chk "errors lists a failed call that names no error word" "$(printf '%s\n' "$PE43C" | grep -c 'No such file or directory')" "1"
 chk "errors skips a successful result that quotes one"   "$(printf '%s\n' "$PE43C" | grep -c 'usage error')" "0"
 
+echo "== 43d. the recap's modified-files list sees writes made through Bash, not only Edit and Write =="
+# Under auto mode the harness asks for file changes through Bash, so a six-file change made with
+# `cat > … <<'EOF'` and `python3 - <<'EOF'` heredocs on a real transcript read "Files modified: 0"
+# with an empty section, and the recap recovered the list from the CR description by hand.
+PX43D="$ROOT/parse-files-fixture.jsonl"
+{
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"content":[{"type":"tool_use","id":"f1","name":"Edit","input":{"file_path":"/tmp/fx/src/A.java","old_string":"a","new_string":"b"}}]}}'
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:01Z","message":{"content":[{"type":"tool_use","id":"f2","name":"Bash","input":{"command":"M=/tmp/fx/memory; cat > \"$M/note.md\" <<'"'"'EOF'"'"'\n# note\n> [!note] a quoted line\nif x -> y then\nEOF\necho done >> /tmp/fx/log.txt; ls > /dev/null 2>&1; ls | tee /tmp/fx/listing.cfg; sed -n '"'"'/<a>/,/<\\/a>/p'"'"' /tmp/fx/x.xml"}}]}}'
+    printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:02Z","message":{"content":[{"type":"tool_use","id":"f3","name":"Bash","input":{"command":"python3 - <<'"'"'EOF'"'"'\np = \"packageInfo\"\ns = open(p).read()\nif len(s) > 0:\n    open(p, \"w\").write(s)\nopen(\"/tmp/fx/build.gradle.kts\", \"w\").write(\"x\")\nEOF"}}]}}'
+} > "$PX43D"
+PF43D=$("$PT43" "$PX43D" files-mod 2>/dev/null)
+chk "a heredoc written through an expanded variable is listed" "$(printf '%s\n' "$PF43D" | grep -c '^Bash: /tmp/fx/memory/note.md$')" "1"
+chk "an append redirect is listed"                             "$(printf '%s\n' "$PF43D" | grep -c '^Bash: /tmp/fx/log.txt$')" "1"
+chk "a tee target is listed"                                   "$(printf '%s\n' "$PF43D" | grep -c '^Bash: /tmp/fx/listing.cfg$')" "1"
+chk "a python open(var, w) resolves its variable"              "$(printf '%s\n' "$PF43D" | grep -c '^Bash: packageInfo$')" "1"
+chk "a python open(literal, w) is listed"                      "$(printf '%s\n' "$PF43D" | grep -c '^Bash: /tmp/fx/build.gradle.kts$')" "1"
+chk "the Edit call is still listed"                            "$(printf '%s\n' "$PF43D" | grep -c '^Edit: /tmp/fx/src/A.java$')" "1"
+chk "/dev/null, a blockquote, an arrow, a comparison and a sed script are not files" "$(printf '%s\n' "$PF43D" | grep -cE 'dev/null|\[!note\]|^Bash: y$|^Bash: 0:?$|<|>')" "0"
+PS43D=$("$PT43" "$PX43D" stats 2>/dev/null)
+chk "the count covers both tools and Bash"                     "$(printf '%s\n' "$PS43D" | grep -c '^Files modified: 6$')" "1"
+chk "and says how many came through Bash"                      "$(printf '%s\n' "$PS43D" | grep -c '^Files modified via Bash: 5$')" "1"
+
 echo "== 44. a resumed session's second exit refreshes the memory snapshot in place =="
 # cp -r into a memory/ that already exists copies the source inside it, so every exit
 # after the first nested a fresh snapshot at memory/memory/ while the note kept linking
