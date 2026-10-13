@@ -7,6 +7,21 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.6] - 2026-10-13
+
+### Fixed
+- **The recap's modified-files list saw only `Edit` and `Write` calls.** Under auto mode the harness
+  asks for file changes through Bash, so a six-file change made with `cat > … <<'EOF'` and
+  `python3 - <<'EOF'` heredocs on a real transcript read `Files modified: 0` with an empty
+  `=== Files Modified ===` section, and the recap recovered the list from the CR description by hand.
+  `parse_transcript.sh files-mod` now also lists the files a Bash command writes, as `Bash: <path>`:
+  redirect targets (`>` and `>>`, when they look like a path and hold no `<`, `>`, quote or `*`, so
+  `>` inside an awk, sed or python script or a markdown blockquote in a heredoc body is skipped), `tee`
+  targets, `sed -i` files, and `open(…, "w"|"a")` or `Path(…).write_text` in a python heredoc, with
+  `$VAR` expanded from a `VAR=value` in the same command. `stats` counts them in `Files modified` and
+  adds `Files modified via Bash: N`. On the transcript that found this: 20 files, where it read 0.
+  Regression case 43d.
+
 ## [2.19.5] - 2026-10-11
 
 ### Fixed
