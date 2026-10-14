@@ -7,6 +7,17 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.7] - 2026-10-14
+
+### Fixed
+- **The recap's modified-files list named an option and cut paths as files.** 2.19.6's Bash
+  write-target scan took the second `-e` of `sed -i -e … -e … file` as the file, because its pattern
+  allowed one script before the file, and it listed `/tmp/x-$(date` for a target built from
+  `LOG=/tmp/x-$(date +%s).log`, because the `VAR=value` scan ends a value at its first space. On the
+  transcript that found it, 5 of the 66 entries in `Files modified via Bash` were not files. The
+  `sed -i` pattern now takes any number of scripts, each after its own options, and a target that
+  starts with `-` or holds a `$(` is dropped. Regression case 43e.
+
 ## [2.19.6] - 2026-10-13
 
 ### Fixed
