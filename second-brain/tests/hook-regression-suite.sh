@@ -1486,6 +1486,24 @@ PS43D=$("$PT43" "$PX43D" stats 2>/dev/null)
 chk "the count covers both tools and Bash"                     "$(printf '%s\n' "$PS43D" | grep -c '^Files modified: 6$')" "1"
 chk "and says how many came through Bash"                      "$(printf '%s\n' "$PS43D" | grep -c '^Files modified via Bash: 5$')" "1"
 
+echo "== 43e. the recap's modified-files list takes no option and no cut substitution for a file =="
+# On a real transcript, 5 of the 66 Bash entries were not files: `-e`, from a `sed -i -e … -e … file`
+# whose pattern allowed one script before the file, and four paths cut at `$(date`, from a
+# `LOG=/tmp/x-$(date +%s).log` assignment that the VAR=value scan ends at its first space.
+PX43E="$ROOT/parse-files-options-fixture.jsonl"
+{
+    jq -nc --arg c "sed -i -e 's/a/b/g' -e 's/c/d/g' -e \"s/e'f/g/g\" /tmp/fx/smoke.mjs" \
+        '{type:"assistant",timestamp:"2026-10-01T00:00:00Z",message:{content:[{type:"tool_use",id:"g1",name:"Bash",input:{command:$c}}]}}'
+    jq -nc --arg c 'LOG=/tmp/fx/build-$(date +%s).log; ( cd /tmp/fx && make ) > "$LOG" 2>&1; echo ok > /tmp/fx/ok.txt' \
+        '{type:"assistant",timestamp:"2026-10-01T00:00:01Z",message:{content:[{type:"tool_use",id:"g2",name:"Bash",input:{command:$c}}]}}'
+} > "$PX43E"
+PF43E=$("$PT43" "$PX43E" files-mod 2>/dev/null)
+chk "a sed -i with three -e scripts names its file"             "$(printf '%s\n' "$PF43E" | grep -c '^Bash: /tmp/fx/smoke.mjs$')" "1"
+chk "an option is never listed as a file"                       "$(printf '%s\n' "$PF43E" | grep -c '^Bash: -')" "0"
+chk "a target cut inside a command substitution is not listed"  "$(printf '%s\n' "$PF43E" | grep -cF '$(')" "0"
+chk "a plain redirect in the same command still is"             "$(printf '%s\n' "$PF43E" | grep -c '^Bash: /tmp/fx/ok.txt$')" "1"
+chk "and the Bash count holds the two files only"               "$("$PT43" "$PX43E" stats 2>/dev/null | grep -c '^Files modified via Bash: 2$')" "1"
+
 echo "== 44. a resumed session's second exit refreshes the memory snapshot in place =="
 # cp -r into a memory/ that already exists copies the source inside it, so every exit
 # after the first nested a fresh snapshot at memory/memory/ while the note kept linking

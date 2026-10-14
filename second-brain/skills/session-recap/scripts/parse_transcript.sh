@@ -77,7 +77,10 @@ extract_files_read() {
 # extension) and hold no `<`, `>`, quote or `*`, so `>` inside awk, sed or python scripts or a markdown
 # blockquote in a heredoc body is skipped;
 # explicit write APIs (tee, sed -i, open, Path.write_text) are taken as written. A `$VAR` or `${VAR}`
-# in a target is expanded from a `VAR=value` assignment in the same command.
+# in a target is expanded from a `VAR=value` assignment in the same command. `sed -i` takes any number
+# of scripts, each after its own options (`-e`), before its file. A target that starts with `-` is an
+# option, and one that holds a `$(` was cut inside a command substitution (the assignment scan ends a
+# value at its first space), so neither is listed.
 PT_JQ_DEFS=$(cat <<'JQ'
 def pt_unquote: if length >= 2 and ((startswith("\"") and endswith("\"")) or (startswith("'") and endswith("'"))) then .[1:-1] else . end;
 def pt_pathlike: test("^(\\$|/|~|\\.{1,2}/|[A-Za-z0-9_.-]+/|[A-Za-z0-9_.-]+\\.[A-Za-z0-9]{1,6}$)");
@@ -87,13 +90,13 @@ def pt_bash_write_targets:
   | def pt_expand: reduce $vars[] as $kv (.; gsub("\\$\\{" + $kv.k + "\\}|\\$" + $kv.k + "(?![A-Za-z0-9_])"; $kv.v));
     ( [ $c | scan("(?<![0-9=<>-])>{1,2}\\s*(\"[^\"]+\"|'[^']+'|[^\\s;&|)]+)") | .[0] | pt_unquote | pt_expand | select(pt_pathlike) ]
     + [ $c | scan("\\btee\\s+(?:-a\\s+)?(\"[^\"]+\"|'[^']+'|[^\\s;&|)]+)") | .[0] | pt_unquote | pt_expand ]
-    + [ $c | scan("\\bsed\\s+(?:-[A-Za-z]+\\s+)*-i\\S*\\s+(?:-e\\s+)?(?:'[^']*'|\"[^\"]*\")\\s+([^\\s;&|]+)") | .[0] | pt_expand ]
+    + [ $c | scan("\\bsed\\s+(?:-[A-Za-z]+\\s+)*-i\\S*\\s+(?:(?:-[A-Za-z]+\\s+)*(?:'[^']*'|\"[^\"]*\")\\s+)+([^\\s;&|]+)") | .[0] | pt_expand ]
     + [ $c | scan("\\bopen\\(\\s*([\"'])([^\"']+)\\1\\s*,\\s*[\"'][wa]") | .[1] ]
     + [ $c | scan("Path\\(\\s*([\"'])([^\"']+)\\1\\s*\\)\\.write_(?:text|bytes)") | .[1] ]
     + [ $c | scan("\\bopen\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*,\\s*[\"'][wa]") | .[0] as $v
         | ($c | [scan("\\b" + $v + "\\s*=\\s*([\"'])([^\"']+)\\1")] | if length > 0 then .[0][1] else empty end) ]
     )
-  | map(select(. != "/dev/null" and (startswith("&") | not) and (startswith("$(") | not) and (test("[<>'\"*]") | not)))
+  | map(select(. != "/dev/null" and (startswith("&") | not) and (startswith("-") | not) and (contains("$(") | not) and (test("[<>'\"*]") | not)))
   | unique;
 JQ
 )
