@@ -87,7 +87,8 @@ to promote it to a knowledge-bank concept doc, preserving the analogy under a
 
 `wdym debrief` (or asked at task end): walk the ladder over the whole task — what changed,
 where it came from, new terms, why this shape, and the verification evidence — pre-answering
-the questions the person would otherwise ask one by one.
+the questions the person would otherwise ask one by one. Close with next steps: every pending
+item, one line each, naming who holds it, or `none`.
 
 ## Boundaries
 

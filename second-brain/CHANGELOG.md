@@ -7,6 +7,15 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.8] - 2026-10-19
+
+### Changed
+- **`wdym debrief` closes with next steps** (wdym 1.0.2): every pending item, one line each,
+  naming who holds it — the person, the agent on the person's word, something in flight, or a
+  blocker — or `none`. The compact debrief block a person's own instructions may add at the end
+  of a turn carries the same rung, so the two stay one definition; GLOSSARY.md's Debrief entry
+  says so.
+
 ## [2.19.7] - 2026-10-14
 
 ### Fixed

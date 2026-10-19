@@ -96,9 +96,10 @@ skill's job, not a decode's. The person climbs the ladder; the agent delivers a 
 
 ## Debrief
 
-The agent's end-of-task account that pre-answers the [[#Interrogation ladder]] in one go:
-what changed, where it came from, new terms, why this shape, the proof. Compact when it
-closes a task unasked, full when asked for (`wdym debrief`). Not a ladder: nobody climbs it.
+The agent's end-of-task account that pre-answers the [[#Interrogation ladder]] in one go —
+what changed, where it came from, new terms, why this shape, the proof — and closes with what
+remains: the next steps, each held by someone, or "none". Compact when it closes a task
+unasked, full when asked for (`wdym debrief`). Not a ladder: nobody climbs it.
 
 ## Promotion
 
