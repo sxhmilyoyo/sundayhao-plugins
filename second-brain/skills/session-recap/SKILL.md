@@ -91,7 +91,7 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
 
    | `recap_status` | Meaning | Action |
    |---|---|---|
-   | `done` | already recapped | skip; only a person's `--force requested` reopens it |
+   | `done` | already recapped | skip; a person's `--force requested` reopens it, and so does the end hook when the subject's transcript has grown by five assistant records since the recap (then the inventory of Phase 1.0 is non-empty and Phase 3.0 updates in place) |
    | `exempt` | deliberately never recapped | skip |
    | `running` | a recap holds the claim, unless it is this session's own subject | skip, unless your `recap_of` names it, in which case the claim is yours and you proceed |
    | `requested` or `failed` | waiting, or stalled | candidate; claim each one as you reach it |
@@ -160,7 +160,7 @@ SUBJECT_STATUS=$(read_frontmatter_prop "$SUBJECT/session.md" "recap_status")
 |---|---|---|
 | `running`, and step 1 matched your `recap_of` to this subject | your own wrapper claimed it | **proceed**, and make no writer call |
 | `requested` or `failed` | the wrapper never claimed: it died first, or the command was pasted without the child script | claim it now with `recap_status.sh "$SUBJECT" running`, and stop if that is refused |
-| `done` | already recapped | **stop**; only a person's `--force requested` reopens it |
+| `done` | already recapped | **stop**; a person's `--force requested` reopens it, as does the end hook once the transcript has grown by five assistant records since the recap, and either lands here as `requested` |
 | `running`, but your `recap_of` names a different subject, or you have none | another recap holds it | **stop** |
 | empty | nothing requested this | **stop**; a recap should not invent its own subject |
 

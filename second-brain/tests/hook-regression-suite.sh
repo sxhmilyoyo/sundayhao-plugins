@@ -600,6 +600,36 @@ endrun x "$TP9" prompt_input_exit
 wait
 chk "a done written under the rewrite survives" "$(prop "$MP9" recap_status)" "done"
 
+echo "== 26c. a done subject that keeps working is requested again =="
+# fe3c98d2 was recapped done on 2026-10-13 and ran five more days with every exit reading done
+# and stamping nothing. The done stamp now records the transcript's assistant records, and the
+# end hook re-requests when the live count has grown by the trivial band, five.
+P7=aaaaaaaa-0000-0000-0000-000000000007; TP7="$H/.claude/projects/proj/$P7.jsonl"
+turns "$TP7" 10; start $P7 startup regrowth /tmp/mapped >/dev/null
+MP7="$KB/_sessions/$TODAY/$P7/session.md"; FP7="$KB/_sessions/$TODAY/$P7"
+endrun x "$TP7" prompt_input_exit
+chk "requested on its first exit"            "$(prop "$MP7" recap_status)" "requested"
+st "$FP7" running; st "$FP7" done --summary "recapped once"
+chk "done stamps the assistant records"      "$(prop "$MP7" recap_assistant_records)" "10"
+turns "$TP7" 14
+endrun x "$TP7" prompt_input_exit
+chk "four more records keep it done"         "$(prop "$MP7" recap_status)" "done"
+chk "and the stamp survives the rewrite"     "$(prop "$MP7" recap_assistant_records)" "10"
+turns "$TP7" 15
+endrun x "$TP7" prompt_input_exit
+chk "five more records re-request it"        "$(prop "$MP7" recap_status)" "requested"
+chk "with the reason in recap.log"           "$(grep -c 'grew by 5 assistant records since the recap (10 -> 15), re-requesting' "$FP7/recap.log")" "1"
+chk "the description is kept"                "$(prop "$MP7" summary)" "recapped once"
+# A note recapped before the stamp existed carries no evidence, so it stays done however it grows.
+P8=aaaaaaaa-0000-0000-0000-000000000008; TP8="$H/.claude/projects/proj/$P8.jsonl"
+turns "$TP8" 10; start $P8 startup old-done /tmp/mapped >/dev/null
+MP8="$KB/_sessions/$TODAY/$P8/session.md"; FP8="$KB/_sessions/$TODAY/$P8"
+endrun x "$TP8" prompt_input_exit; st "$FP8" running; st "$FP8" done
+sed -i '/^recap_assistant_records:/d' "$MP8"
+turns "$TP8" 40
+endrun x "$TP8" prompt_input_exit
+chk "no stamp, no re-request"                "$(prop "$MP8" recap_status)" "done"
+
 echo "== 27. the notice reaches the user, and lists only what stalled =="
 # Its own vault, so the notes the earlier cases stamped do not leak into the listing.
 NKB="$ROOT/nkb"; NH="$ROOT/nhome"

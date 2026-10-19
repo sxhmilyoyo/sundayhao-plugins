@@ -7,6 +7,11 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.9] - 2026-10-19
+
+### Fixed
+- A subject marked `done` that kept working was never recapped again: the end hook read `done` and stamped nothing, so a session recapped once and run for five more days (fe3c98d2, 2026-10-13 to 18) left those days with no recap and nothing to say so. `recap_status.sh … done` now stamps `recap_assistant_records`, the transcript's assistant-record count at the recap, and `session_end.sh` moves a `done` note back to `requested` (forced past the transition table, with a `grew by N assistant records` line in `recap.log`) once the live count exceeds the stamp by the trivial band of five; a note without the stamp is left alone. Regression suite case 26c. The recap skill's status tables say so (proposal `2026-10-19-a-subject-marked-done-that-keeps-working-is-never-re-requested-so-five-days-of-the-dispatchers-work-have-no-recap`).
+
 ## [2.19.8] - 2026-10-19
 
 ### Changed

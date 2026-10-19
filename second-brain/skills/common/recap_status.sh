@@ -204,6 +204,16 @@ set_frontmatter_prop "$MD" recap_status "$STATE"
 if [ "$STATE" = "done" ]; then
     set_frontmatter_prop "$MD" recapped_at "$(date -u +%Y-%m-%dT%H:%M:%S)"
     [ -n "$RECAP_SESSION" ] && set_frontmatter_prop "$MD" recap_session "$RECAP_SESSION"
+    # The transcript's size at the recap, as assistant records, so session_end.sh can tell a
+    # subject that kept working after its recap from one that merely exited again: done was
+    # final, and a session that was recapped once and then ran five more days left them with
+    # no recap and nothing to say so (fe3c98d2, 2026-10-13 to 18). Read from the note's own
+    # transcript pointer; no pointer or no file means no stamp, and the hook then leaves done alone.
+    TRANSCRIPT=$(sed -n '/^---$/,/^---$/p' "$MD" | sed -n 's/^transcript_source: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' | head -1)
+    if [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
+        RECORDS=$(grep -c '"type":"assistant"' "$TRANSCRIPT" 2>/dev/null)
+        case "$RECORDS" in ''|*[!0-9]*) : ;; *) set_frontmatter_prop "$MD" recap_assistant_records "$RECORDS" ;; esac
+    fi
 fi
 
 log_line "set ${FROM:-empty}->$STATE pid=$$"

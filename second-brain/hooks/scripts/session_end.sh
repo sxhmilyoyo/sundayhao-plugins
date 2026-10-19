@@ -77,8 +77,8 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
     # in 0.1 s rather than queueing behind a recap mid-write for a stamp the transition
     # table would refuse anyway.
     export SECOND_BRAIN_LOCK_ATTEMPTS=2
-    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; } \
-        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of)
+    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; IFS= read -r RECAPPED; } \
+        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of recap_assistant_records)
     if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
         # RECAP_OF is what decides whether this is a recap session, never
         # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
@@ -136,6 +136,29 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
                        "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
                    fi ;;
             esac
+        fi
+    elif [ "$CURRENT" = "done" ] && [ -z "$RECAP_OF" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+        # A recapped subject that kept working. The recap stamped the transcript's assistant
+        # records when it marked the note done (recap_status.sh); a live count higher by the
+        # same band that separates a trivial session from a real one is knowledge the recap
+        # never saw, so the note goes back to requested, forced past the table because done
+        # is otherwise final. Measured before this branch existed: fe3c98d2 was recapped on
+        # 2026-10-13 and ran to 2026-10-18 with every exit reading done and stamping nothing.
+        # A note without the stamp was recapped before it existed and is left alone: no
+        # evidence, no stamp. The count here is unbounded, one grep over the whole file,
+        # about 20 ms on an 18 MB transcript. The recap skill's Phase 3.0 then updates the
+        # subject's existing documents in place rather than writing a second daily log.
+        case "$RECAPPED" in ''|*[!0-9]*) RECAPPED="" ;; esac
+        NOW=$(grep -c '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
+        case "$NOW" in ''|*[!0-9]*) NOW="" ;; esac
+        if [ -n "$RECAPPED" ] && [ -n "$NOW" ] && [ "$((NOW - RECAPPED))" -ge 5 ]; then
+            printf '%s grew by %d assistant records since the recap (%d -> %d), re-requesting\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((NOW - RECAPPED))" "$RECAPPED" "$NOW" >> "$SESSION_FOLDER/recap.log"
+            "$STATUS" "$SESSION_FOLDER" requested --force >/dev/null 2>&1
+            if [ "$MODE" = "on" ]; then
+                spawn_detached "$SCRIPT_DIR/recap_launcher.sh" \
+                    --auto "$SESSION_FOLDER"
+            fi
         fi
     fi
 fi
