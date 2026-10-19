@@ -1,0 +1,9 @@
+{
+  "name": "debrief",
+  "version": "0.1.0",
+  "description": "A debrief block closes substantial turns; the band above the prompt draws the latest one as a card, with Copy and Pin.",
+  "author": {
+    "name": "sundayhao"
+  },
+  "types": "./types/index.d.ts"
+}

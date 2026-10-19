@@ -16,6 +16,7 @@
 | Plugin | Description | Version | Docs |
 |--------|-------------|---------|------|
 | [second-brain](second-brain/) | Agentic workflow with memory and tribal knowledge. Transforms Claude from goldfish to elephant with persistent knowledge across sessions. | 2.0.0 | [README](second-brain/README.md) |
+| [debrief](debrief/) | A ▤ Debrief block closes substantial turns; a band above the prompt draws the latest one as a card with Copy and Pin. A function-hook mod. | 0.1.0 | [README](debrief/README.md) |
 
 ---
 

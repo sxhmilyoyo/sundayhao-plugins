@@ -5,5 +5,9 @@ second-brain/docs/
 # Local Claude config
 CLAUDE.local.md
 
+# Engine-written editor types for the debrief mod (per machine)
+debrief/.claude-plugin/types/
+debrief/tsconfig.json
+
 # OS files
 .DS_Store

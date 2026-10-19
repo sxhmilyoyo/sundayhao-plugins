@@ -12,7 +12,27 @@
       "source": "./second-brain",
       "description": "Agentic workflow with memory and tribal knowledge. Transforms Claude from goldfish to elephant with persistent knowledge across sessions.",
       "version": "2.19.9",
-      "keywords": ["memory", "knowledge-bank", "session-recap", "tribal-knowledge", "second-brain"],
+      "keywords": [
+        "memory",
+        "knowledge-bank",
+        "session-recap",
+        "tribal-knowledge",
+        "second-brain"
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "debrief",
+      "source": "./debrief",
+      "description": "A \u25a4 Debrief block closes substantial turns; a band above the prompt draws the latest one as a card with Copy and Pin. Function-hook mod: hot-reloads, needs no shell.",
+      "version": "0.1.0",
+      "keywords": [
+        "debrief",
+        "mod",
+        "band",
+        "comprehension",
+        "second-brain"
+      ],
       "license": "Apache-2.0"
     }
   ]
