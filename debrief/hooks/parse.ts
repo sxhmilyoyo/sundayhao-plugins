@@ -17,9 +17,9 @@ export const len = (s: string) => [...s].length
 function step(s: string): Step {
   const m = ACTOR.exec(s)
   if (m) {
-    const head = m[1].toLowerCase()
+    const head = (m[1] ?? '').toLowerCase()
     const actor: Step['actor'] = head.startsWith('me') ? 'me' : (head as Step['actor'])
-    return { actor, text: m[2].trim() }
+    return { actor, text: (m[2] ?? '').trim() }
   }
   if (/^none\b/i.test(s)) return { actor: 'none', text: s.trim() }
   return { actor: 'other', text: s.trim() }
@@ -30,7 +30,7 @@ export function findBlock(text: string): Found | null {
   const lines = text.split('\n')
   let open = -1
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (OPEN.test(lines[i])) {
+    if (OPEN.test(lines[i] ?? '')) {
       open = i
       break
     }
@@ -38,7 +38,7 @@ export function findBlock(text: string): Found | null {
   if (open < 0) return null
   let close = -1
   for (let i = open + 1; i < lines.length; i++) {
-    if (CLOSE.test(lines[i])) {
+    if (CLOSE.test(lines[i] ?? '')) {
       close = i
       break
     }
@@ -52,7 +52,7 @@ export function findBlock(text: string): Found | null {
   for (const line of lines.slice(open + 1, close)) {
     const b = BULLET.exec(line)
     if (b) {
-      cur = { label: b[1].trim(), value: b[2].trim() }
+      cur = { label: (b[1] ?? '').trim(), value: (b[2] ?? '').trim() }
       inNext = /^next steps$/i.test(cur.label)
       if (inNext) {
         if (cur.value) next.push(step(cur.value))
@@ -63,11 +63,12 @@ export function findBlock(text: string): Found | null {
     }
     const s = SUB.exec(line)
     if (s && inNext) {
-      next.push(step(s[1].trim()))
+      next.push(step((s[1] ?? '').trim()))
       continue
     }
     if (cur && line.trim()) {
-      if (inNext && next.length) next[next.length - 1].text += ' ' + line.trim()
+      const tail = next[next.length - 1]
+      if (inNext && tail) tail.text += ' ' + line.trim()
       else if (!inNext) cur.value += ' ' + line.trim()
     }
   }
@@ -80,9 +81,9 @@ export function collapse(text: string): string | null {
   if (!f) return null
   const lines = text.split('\n')
   let start = f.start
-  while (start > 0 && lines[start - 1].trim() === '') start--
+  while (start > 0 && (lines[start - 1] ?? '').trim() === '') start--
   let end = f.end
-  while (end + 1 < lines.length && lines[end + 1].trim() === '') end++
+  while (end + 1 < lines.length && (lines[end + 1] ?? '').trim() === '') end++
   lines.splice(start, end - start + 1)
   return lines.join('\n')
 }
@@ -193,4 +194,15 @@ export const plain = (runs: Run[]) => runs.map(r => r.text).join('')
 /** Greedy word wrap of plain text; kept for the tests of the layout arithmetic. */
 export function wrap(text: string, width: number): string[] {
   return wrapRuns([{ text }], width).map(plain)
+}
+
+/** How long a draft prompt may be, in code points. */
+const DRAFT_MAX = 600
+
+/** The prompt a `me, on your word:` step drafts, `go ahead: ` and the step's text; '' for any other step. */
+export function draft(step: Step): string {
+  if (step.actor !== 'me') return ''
+  const text = `go ahead: ${step.text.trim()}`
+  const points = [...text]
+  return points.length > DRAFT_MAX ? `${points.slice(0, DRAFT_MAX - 1).join('')}…` : text
 }

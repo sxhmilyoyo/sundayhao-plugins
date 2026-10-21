@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { Actor, Debrief } from '../types'
-import { collapse, findBlock, inline, len, wrapRuns } from './parse'
+import { collapse, draft, findBlock, inline, len, wrapRuns } from './parse'
 import type { Run } from './parse'
 
 const last = atom({ plugin: 'debrief', key: 'last' } as const, null)
@@ -29,9 +29,12 @@ const RULE = [
 
 const LABEL_W = 14
 const GUTTER = 2 + LABEL_W + 2
+/** How long the ghost text waits before a second offer, when the box could not show the first. */
+const GHOST_RETRY_MS = 400
 
 type Seg = { text: string; color?: string; bold?: boolean; dim?: boolean; italic?: boolean }
-type Row = Seg[]
+/** One row of the card: its gutter, its body, and for a pressable row the draft a press puts in the prompt box. */
+type Row = { lead: Seg[]; body: Seg[]; press?: { key: string; draft: string } }
 
 const ACTOR_STYLE: Record<Actor, Pick<Seg, 'color' | 'bold' | 'dim'>> = {
   you: { color: 'warning', bold: true },
@@ -62,24 +65,17 @@ function seg(r: Run, extra: Partial<Seg> = {}): Seg {
 function lines(value: string, width: number, oneLine: boolean): Run[][] {
   const all = wrapRuns(inline(value), width)
   if (!oneLine || all.length <= 1) return all
-  return [[...all[0], { text: '…' }]]
-}
-
-/** One bordered row: `│` + the segments + padding to `width` + `│`. */
-function bordered(width: number, inner: Seg[]): Row {
-  const used = inner.reduce((n, s) => n + len(s.text), 0)
-  return [{ text: '│', color: 'subtle' }, ...inner, { text: ' '.repeat(Math.max(0, width - 2 - used)) }, { text: '│', color: 'subtle' }]
+  return [[...(all[0] ?? []), { text: '…' }]]
 }
 
 function rungRows(width: number, label: string, value: string, oneLine: boolean): Row[] {
-  return lines(value, width - GUTTER - 3, oneLine).map((runs, i) =>
-    bordered(width, [
-      { text: i === 0 ? `  ${pad(label, LABEL_W)}  ` : ' '.repeat(GUTTER), bold: i === 0 },
-      ...runs.map(r => seg(r)),
-    ]),
-  )
+  return lines(value, width - GUTTER - 3, oneLine).map((runs, i) => ({
+    lead: [{ text: i === 0 ? `  ${pad(label, LABEL_W)}  ` : ' '.repeat(GUTTER), bold: i === 0 }],
+    body: runs.map(r => seg(r)),
+  }))
 }
 
+/** The Next steps rows; the first row of a `me` step is pressable and drafts its prompt. */
 function nextRows(width: number, d: Debrief, oneLine: boolean): Row[] {
   const steps = d.next.length ? d.next : [{ actor: 'none' as Actor, text: 'none' }]
   const shown = oneLine ? steps.slice(0, 1) : steps
@@ -87,27 +83,44 @@ function nextRows(width: number, d: Debrief, oneLine: boolean): Row[] {
   shown.forEach((s, k) => {
     const tag = s.actor === 'other' || s.actor === 'none' ? '' : s.actor
     const head = tag ? `${tag} ▸ ` : ''
+    const prompt = draft(s)
     lines(s.text, width - GUTTER - 3 - len(head), oneLine).forEach((runs, i) => {
       const first = k === 0 && i === 0
-      const segs: Seg[] = [{ text: first ? `  ${pad('Next steps', LABEL_W)}  ` : ' '.repeat(GUTTER), bold: first }]
+      const segs: Seg[] = []
       if (tag) segs.push(i === 0 ? { text: tag, ...ACTOR_STYLE[s.actor] } : { text: ' '.repeat(len(tag)) }, i === 0 ? { text: ' ▸ ', dim: true } : { text: '   ' })
       segs.push(...runs.map(r => seg(r, s.actor === 'none' ? { dim: true } : {})))
-      rows.push(bordered(width, segs))
+      const row: Row = { lead: [{ text: first ? `  ${pad('Next steps', LABEL_W)}  ` : ' '.repeat(GUTTER), bold: first }], body: segs }
+      if (i === 0 && prompt) row.press = { key: `me-${k}`, draft: prompt }
+      rows.push(row)
     })
   })
   return rows
 }
 
-/** The card's body: one group of rows per section, an empty bordered row between groups. */
+/** The card's body: one group of rows per section, an empty row between groups. */
 function body(width: number, d: Debrief, compact: boolean): Row[] {
   const picked = compact ? d.rungs.filter(r => /^what changed$/i.test(r.label)) : d.rungs
   const groups = [...picked.map(r => rungRows(width, r.label, r.value, compact)), nextRows(width, d, compact)]
   const rows: Row[] = []
   groups.forEach((g, i) => {
-    if (i > 0) rows.push(bordered(width, []))
+    if (i > 0) rows.push({ lead: [], body: [] })
     rows.push(...g)
   })
   return rows
+}
+
+/** Puts `text` in the prompt box as the person's draft; says so when the box would not take it. */
+function fill($: EngineInterface, text: string): void {
+  void $.prompt.fill({ text }).then(
+    r => r.isFilled || $.ui.toast('the prompt box did not take the draft'),
+    err => $.ui.toast(`could not draft: ${String(err)}`),
+  )
+}
+
+/** Offers `text` as the prompt box's ghost text, once more a moment later when the box could not show it yet. */
+async function ghost($: EngineInterface, text: string): Promise<void> {
+  const r = await $.prompt.suggest({ text }).catch(() => ({ isShown: false }))
+  if (!r.isShown) $.clock.after(GHOST_RETRY_MS, () => void $.prompt.suggest({ text }).catch(() => undefined))
 }
 
 export const register: Register = on => {
@@ -123,14 +136,17 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId || e.reason !== 'answer') return next(e)
+    const r = await next(e)
+    if (e.agentId || e.reason !== 'answer') return r
     const found = findBlock(e.answer)
     if (found) {
       const d: Debrief = { turn: await read($, turn), at: await $.clock.now(), rungs: found.rungs, next: found.next, raw: found.raw }
       await update($, last, () => d)
       if (await read($, pinned)) await update($, newer, k => k + 1)
+      const first = d.next.map(draft).find(t => t !== '')
+      if (first) void ghost($, first)
     }
-    return next(e)
+    return r
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
@@ -142,6 +158,7 @@ export const register: Register = on => {
     const held = await read($, pinned)
     const shown = held ?? (await read($, last))
     if (!shown || e.props.hasSurvey || e.props.isWorking || e.props.view.agentId) return next(e)
+    const below = await next(e)
     const more = held ? await read($, newer) : 0
     const { Box, Text, Button } = $.ui.resolve(e)
 
@@ -157,6 +174,10 @@ export const register: Register = on => {
       void update($, newer, () => 0)
       void update($, pinned, p => (p ? null : shown))
     }
+    const draw = (s: Seg) => (
+      <Text color={s.color} bold={s.bold} dimColor={s.dim} italic={s.italic} wrap="truncate">{s.text}</Text>
+    )
+    const rest = (row: Row) => ' '.repeat(Math.max(0, width - 2 - [...row.lead, ...row.body].reduce((n, s) => n + len(s.text), 0)))
 
     return (
       <Box flexDirection="column">
@@ -170,14 +191,26 @@ export const register: Register = on => {
           <Button key="pin" label={pinLabel} onPress={togglePin} />
           <Text color="subtle"> ─╮</Text>
         </Box>
-        {rows.map(row => (
-          <Box>
-            {row.map(s => (
-              <Text color={s.color} bold={s.bold} dimColor={s.dim} italic={s.italic} wrap="truncate">{s.text}</Text>
-            ))}
-          </Box>
-        ))}
+        {rows.map(row => {
+          const press = row.press
+          return (
+            <Box>
+              <Text color="subtle">│</Text>
+              {row.lead.map(draw)}
+              {press ? (
+                <Button key={press.key} plain onPress={() => fill($, press.draft)}>
+                  {row.body.map(draw)}
+                </Button>
+              ) : (
+                row.body.map(draw)
+              )}
+              <Text>{rest(row)}</Text>
+              <Text color="subtle">│</Text>
+            </Box>
+          )
+        })}
         <Text color="subtle">{'╰' + '─'.repeat(width - 2) + '╯'}</Text>
+        {below}
       </Box>
     )
   })

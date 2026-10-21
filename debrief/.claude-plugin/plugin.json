@@ -1,9 +1,17 @@
 {
   "name": "debrief",
-  "version": "0.1.0",
-  "description": "A debrief block closes substantial turns; the band above the prompt draws the latest one as a card, with Copy and Pin.",
+  "version": "0.2.0",
+  "description": "A debrief block closes substantial turns; the band above the prompt draws the latest one as a card, with Copy and Pin, and a \"me, on your word\" step is a draft prompt.",
   "author": {
     "name": "sundayhao"
   },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "license": "Apache-2.0",
+  "keywords": [
+    "debrief",
+    "mod",
+    "band",
+    "comprehension",
+    "second-brain"
+  ]
 }

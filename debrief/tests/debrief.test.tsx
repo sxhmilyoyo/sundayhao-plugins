@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { collapse, findBlock, inline, plain, wrap, wrapRuns } from '../hooks/parse'
+import { collapse, draft, findBlock, inline, plain, wrap, wrapRuns } from '../hooks/parse'
 
 const BLOCK = [
   '▤ Debrief ────────────────────────────────────',
@@ -16,6 +16,8 @@ const BLOCK = [
 ].join('\n')
 
 const ANSWER = 'Published: b68ecfc is on GitHub main.\n\n' + BLOCK
+const NONE = 'Nothing pending.\n\n▤ Debrief ─────\n- **What changed:** x\n- **Next steps:** none\n──────'
+const DRAFT = 'go ahead: commit the knowledge-bank profile'
 
 const BAND = {
   hasSurvey: false,
@@ -36,11 +38,21 @@ const COMPOSE = {
 }
 
 /** What the engine's core would answer beneath the plugin: the kit answers only $.state. */
-function core(on: On) {
+function core(on: On, { ghostRefusals = 0 } = {}) {
+  const suggested: string[] = []
+  const filled: string[] = []
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
-  mock.clock(on, { now: 1760000000000 })
+  const clock = mock.clock(on, { now: 1760000000000 })
   on('prompt.compose', () => ({ sections: [{ id: 'system', text: 'core', scope: 'shared' as const }] }))
+  on('prompt.suggest', (_$, e) => {
+    suggested.push(e.text)
+    return { isShown: suggested.length > ghostRefusals }
+  })
+  on('prompt.fill', (_$, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine band</Text>
@@ -49,9 +61,13 @@ function core(on: On) {
     const { Text } = $.ui.resolve(e)
     return <Text>{e.props.text}</Text>
   })
+  return { clock, suggested, filled }
 }
 
-async function completed($: Parameters<Parameters<typeof test>[1]>[0], answer: string, turnId = 't1') {
+/** The engine a test body is handed: the kit's `$`. */
+type Engine = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]
+
+async function completed($: Engine, answer: string, turnId = 't1') {
   await $.turn.start({ text: 'go', turnId })
   await $.turn.complete({ answer, durationMs: 10, isAborted: false, turnId, reason: 'answer' })
 }
@@ -62,7 +78,7 @@ describe('parse', () => {
     expect(f).not.toBeNull()
     expect(f!.rungs.map(r => r.label)).toEqual(['What changed', 'Where from', 'Why this shape', 'Proof'])
     expect(f!.next.map(s => s.actor)).toEqual(['you', 'me'])
-    expect(f!.next[1].text).toBe('commit the knowledge-bank profile')
+    expect(f!.next[1]?.text).toBe('commit the knowledge-bank profile')
   })
 
   test('a lone none is one next step with the none actor', () => {
@@ -93,12 +109,19 @@ describe('parse', () => {
   test('wrapRuns keeps a style across a line break', () => {
     const lines = wrapRuns(inline('aaa **bbb ccc** ddd'), 8)
     expect(lines.map(plain)).toEqual(['aaa bbb', 'ccc ddd'])
-    expect(lines[1][0]).toEqual({ text: 'ccc', bold: true })
+    expect(lines[1]?.[0]).toEqual({ text: 'ccc', bold: true })
   })
 
   test('wrap fills to the width and cuts a word longer than it', () => {
     expect(wrap('one two three four', 9)).toEqual(['one two', 'three', 'four'])
     expect(wrap('abcdefghijkl', 8)).toEqual(['abcdefgh', 'ijkl'])
+  })
+
+  test('a me step drafts go ahead; any other step drafts nothing; a long one is cut', () => {
+    expect(draft({ actor: 'me', text: 'commit the knowledge-bank profile' })).toBe(DRAFT)
+    expect(draft({ actor: 'you', text: 'watch for the block' })).toBe('')
+    expect(draft({ actor: 'pending', text: 'the cold-start check' })).toBe('')
+    expect([...draft({ actor: 'me', text: 'x'.repeat(700) })]).toHaveLength(600)
   })
 })
 
@@ -107,15 +130,40 @@ describe('system prompt', () => {
     core(on)
     const r = await $.prompt.compose(COMPOSE)
     const section = r.sections[r.sections.length - 1]
-    expect(section.id).toBe('debrief:rule')
-    expect(section.scope).toBe('session')
-    expect(section.text).toContain('▤ Debrief')
+    expect(section?.id).toBe('debrief:rule')
+    expect(section?.scope).toBe('session')
+    expect(section?.text).toContain('▤ Debrief')
   })
 
   test('leaves a print or bare prompt alone', async ($, on) => {
     core(on)
     const r = await $.prompt.compose({ ...COMPOSE, traits: ['print'] })
     expect(r.sections.some(s => s.id === 'debrief:rule')).toBe(false)
+  })
+})
+
+describe('ghost text', () => {
+  test("offers the first me step as the prompt box's ghost text", async ($, on) => {
+    const { clock, suggested } = core(on)
+    await completed($, ANSWER)
+    await clock.advance(0)
+    expect(suggested).toEqual([DRAFT])
+  })
+
+  test('offers nothing when no step is mine', async ($, on) => {
+    const { clock, suggested } = core(on)
+    await completed($, NONE)
+    await clock.advance(0)
+    expect(suggested).toEqual([])
+  })
+
+  test('offers once more a moment later when the box could not show it yet', async ($, on) => {
+    const { clock, suggested } = core(on, { ghostRefusals: 1 })
+    await completed($, ANSWER)
+    await clock.advance(0)
+    expect(suggested).toEqual([DRAFT])
+    await clock.advance(400)
+    expect(suggested).toEqual([DRAFT, DRAFT])
   })
 })
 
@@ -138,6 +186,24 @@ describe('band', () => {
     expect(await ui.find({ text: /^you$/ })).toBeDefined()
     expect(await ui.find({ type: 'Button', text: 'Copy' })).toBeDefined()
     expect(await ui.find({ type: 'Button', text: 'Pin' })).toBeDefined()
+  })
+
+  test('keeps what else draws in the band beneath the card', async ($, on) => {
+    core(on)
+    await completed($, ANSWER)
+    const ui = await $.ui.mount({ plugin: 'debrief', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect(await ui.find({ text: /▤ Debrief/ })).toBeDefined()
+    expect(await ui.find({ text: /engine band/ })).toBeDefined()
+  })
+
+  test('a me step is a pressable row that drafts go ahead into the prompt box', async ($, on) => {
+    const { filled } = core(on)
+    await completed($, ANSWER)
+    const ui = await $.ui.mount({ plugin: 'debrief', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect(await ui.find({ type: 'Button', key: 'me-0' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'me-1' })).toBeDefined()
+    await ui.press({ key: 'me-1' })
+    expect(filled).toEqual([DRAFT])
   })
 
   test('draws inline code and bold in a value without their markers', async ($, on) => {
@@ -176,10 +242,12 @@ describe('band', () => {
   })
 
   test('ignores a subagent turn', async ($, on) => {
-    core(on)
+    const { clock, suggested } = core(on)
     await $.turn.complete({ answer: ANSWER, durationMs: 10, isAborted: false, turnId: 'a1', agentId: 'agent-1', reason: 'answer' })
+    await clock.advance(0)
     const ui = await $.ui.mount({ plugin: 'debrief', surface: 'terminal', component: 'AbovePrompt', props: BAND })
     expect(await ui.find({ text: /Debrief/ })).toBeUndefined()
+    expect(suggested).toEqual([])
   })
 
   test('pin holds the card and counts newer debriefs', async ($, on) => {
