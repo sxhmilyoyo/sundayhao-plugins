@@ -7,6 +7,23 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.20.0] - 2026-10-27
+
+### Added
+- **A launcher can declare the session it starts exempt from the automatic recap.** The ticket dispatcher
+  ends each ticket session with `/exit` typed through Herdr, which reaches the end hook as
+  `prompt_input_exit`, the same reason as the owner's own `/exit`, so with `auto_recap: on` every one of
+  them was recapped in the pane it left: 29 of the 96 sessions registered on 2026-10-27, most of them
+  ticket sessions whose work the dispatcher already records. A launcher now sets
+  `SECOND_BRAIN_RECAP_EXEMPT=1` in the launched session's environment, inline on the command or through
+  `claude --settings '{"env":{...}}'` where the terminal manager passes none; `session_start.sh` records
+  `recap_exempt: launcher` on the note at a genuine startup, and `session_end.sh` stamps such a note
+  `exempt`, with the reason in `recap.log`, at every exit: never `requested`, never promoted on growth,
+  never re-requested after a hand recap. Global `auto_recap: off` still stamps nothing, and a hand recap
+  stays `recap_launcher.sh --manual <folder>`. Verified end to end with a print-mode probe carrying the
+  marker in `--settings`. Regression case 26d (15 checks); ADR-0009; CONTEXT.md's *Exempt session* and
+  *Launching session*; README property table and section; the recap skill's triage table (3.6.3).
+
 ## [2.19.9] - 2026-10-19
 
 ### Fixed

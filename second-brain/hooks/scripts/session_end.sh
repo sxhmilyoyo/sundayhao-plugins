@@ -58,8 +58,8 @@ fi
 # point leaves a note missing `ended_at` and `duration_seconds`, which is visible and
 # which the recap can work around, but the session is still going to be recapped.
 #
-# Two reads happen outside the lock, deliberately. `recap_of` is written once at
-# registration and never changes, so it cannot be read stale. A stale `recap_status` only
+# Two reads happen outside the lock, deliberately. `recap_of` and `recap_exempt` are
+# written once at registration and never change, so they cannot be read stale. A stale `recap_status` only
 # means the compare-and-set writer refuses a transition, which is the safe direction. The
 # rewrite below picks the new status up through the unknown-property preserve loop,
 # because that loop reads the note after this block has written to it.
@@ -77,8 +77,8 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
     # in 0.1 s rather than queueing behind a recap mid-write for a stamp the transition
     # table would refuse anyway.
     export SECOND_BRAIN_LOCK_ATTEMPTS=2
-    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; IFS= read -r RECAPPED; } \
-        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of recap_assistant_records)
+    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; IFS= read -r RECAPPED; IFS= read -r EXEMPT_BY; } \
+        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of recap_assistant_records recap_exempt)
     if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
         # RECAP_OF is what decides whether this is a recap session, never
         # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
@@ -89,6 +89,18 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
         if [ -n "$RECAP_OF" ]; then
             # A recap session: exempt for good, so a recap never recaps itself.
             [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+        elif [ -n "$EXEMPT_BY" ]; then
+            # Declared exempt by its launcher at registration (ADR-0009), and like recap_of
+            # read off the note, never the environment. Exempt for good as well: this branch
+            # sits before the record count, so the session is never promoted to `requested`
+            # however much it did, which is the point for a dispatcher that ends its own
+            # sessions and keeps its own record of them. The reason goes to recap.log,
+            # because the status alone cannot say whether a session was exempt for being
+            # small or for being declared so.
+            if [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1; then
+                printf '%s exempt: declared by its %s at launch (recap_exempt)\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EXEMPT_BY" >> "$SESSION_FOLDER/recap.log"
+            fi
         elif [ ! -f "$TRANSCRIPT_PATH" ]; then
             # Nothing to recap, ever. A permanent `requested` would nag forever.
             [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
@@ -137,7 +149,7 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
                    fi ;;
             esac
         fi
-    elif [ "$CURRENT" = "done" ] && [ -z "$RECAP_OF" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+    elif [ "$CURRENT" = "done" ] && [ -z "$RECAP_OF" ] && [ -z "$EXEMPT_BY" ] && [ -f "$TRANSCRIPT_PATH" ]; then
         # A recapped subject that kept working. The recap stamped the transcript's assistant
         # records when it marked the note done (recap_status.sh); a live count higher by the
         # same band that separates a trivial session from a real one is knowledge the recap
@@ -148,6 +160,8 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
         # evidence, no stamp. The count here is unbounded, one grep over the whole file,
         # about 20 ms on an 18 MB transcript. The recap skill's Phase 3.0 then updates the
         # subject's existing documents in place rather than writing a second daily log.
+        # A subject its launcher declared exempt is left alone here too, whoever recapped
+        # it: a hand recap is final, and nothing automatic requests one of it (ADR-0009).
         case "$RECAPPED" in ''|*[!0-9]*) RECAPPED="" ;; esac
         NOW=$(grep -c '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
         case "$NOW" in ''|*[!0-9]*) NOW="" ;; esac
@@ -220,7 +234,7 @@ fi
 # 1.5-second budget with a memory copy, two transcript scans and a rewrite — enough on a
 # real session to have the whole hook cancelled after doing its work.
 #
-# recap_status and recap_of are deliberately absent: the predicate above already read them
+# recap_status, recap_of and recap_exempt are deliberately absent: the predicate above read them
 # and has since written the status, so re-reading here would either waste a pass or, worse,
 # invite someone to use a value that is now stale. The rewrite carries the new status
 # through the unknown-property preserve loop instead.

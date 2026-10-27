@@ -242,10 +242,22 @@ The status lives on the session's own note, next to everything else you already 
 | `recap_status` | `requested`, `running`, `done`, `failed`, or `exempt` |
 | `recapped_at`, `recap_session` | When the recap finished, and which session did it |
 | `recap_of` | On a recap session, the session it describes |
+| `recap_exempt` | On a session its launcher declared exempt from the automatic recap: who declared it, `launcher` |
 
 Once a recap finishes it writes the subject's `project`, `tags` and `summary` as well, since by then it has
 read the whole conversation. Nothing is ever deleted: a retry updates the documents from the first attempt
 in place. To turn it all off again, `--set auto_recap off`; the properties already written are inert.
+
+**A launcher can keep the sessions it starts out of the automatic recap.** A tool that starts sessions and
+ends them itself, such as a dispatcher that types `/exit` into each ticket session once its ticket is closed,
+usually keeps its own record of the work, and the end hook cannot tell its `/exit` from yours. Such a launcher
+sets `SECOND_BRAIN_RECAP_EXEMPT=1` in the session's environment at launch: inline on the command, or through
+`claude --settings '{"env":{"SECOND_BRAIN_RECAP_EXEMPT":"1"}}'` where the terminal manager passes no
+environment. The start hook records `recap_exempt: launcher` on the note, and every exit of that session
+stamps `exempt` with the reason in `recap.log`, never `requested`, however much the session did; a recap you
+make of it by hand is final. Like `recap_of`, the marker counts on a genuine startup only and the exit reads
+the note, so a variable that leaked into a shell cannot exempt real work. To recap such a session anyway, run
+`recap_launcher.sh --manual <folder>` ([ADR-0009](../docs/adr/0009-a-launcher-can-declare-its-delegate-exempt-from-the-automatic-recap.md)).
 
 **To recap a session again**, clear its status and it will be requested at its next exit:
 

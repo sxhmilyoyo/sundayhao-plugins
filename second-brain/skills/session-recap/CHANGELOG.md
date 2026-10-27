@@ -5,6 +5,12 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.3] - 2026-10-27
+
+### Changed
+- The triage table names the third kind of exempt subject, one its launcher declared exempt (`recap_exempt`
+  on its note), and says the end hook never re-requests such a subject after a hand recap (ADR-0009).
+
 ## [3.6.2] - 2026-10-07
 
 ### Fixed

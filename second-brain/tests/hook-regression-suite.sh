@@ -630,6 +630,56 @@ turns "$TP8" 40
 endrun x "$TP8" prompt_input_exit
 chk "no stamp, no re-request"                "$(prop "$MP8" recap_status)" "done"
 
+echo "== 26d. a launcher can declare the session it starts exempt (ADR-0009) =="
+# The dispatcher ends its ticket sessions with /exit typed through Herdr, which the end hook
+# cannot tell from the owner's own: both arrive as prompt_input_exit. So the launcher declares
+# the exemption on the launch, the way a recap session carries its subject: SECOND_BRAIN_RECAP_EXEMPT
+# on a genuine startup becomes `recap_exempt: launcher` on the note, and every exit reads the note.
+PD1=aaaaaaaa-0000-0000-0000-0000000026d1; TPD1="$H/.claude/projects/proj/$PD1.jsonl"
+turns "$TPD1" 10; start $PD1 startup declared-exempt /tmp/mapped SECOND_BRAIN_RECAP_EXEMPT=1 >/dev/null
+MPD1="$KB/_sessions/$TODAY/$PD1/session.md"; FPD1="$KB/_sessions/$TODAY/$PD1"
+chk "startup records who declared it"              "$(prop "$MPD1" recap_exempt)" "launcher"
+endrun x "$TPD1" prompt_input_exit
+chk "ten records are exempt, not requested"        "$(prop "$MPD1" recap_status)" "exempt"
+chk "with the reason in recap.log"                 "$(grep -c 'exempt: declared by its launcher at launch (recap_exempt)' "$FPD1/recap.log")" "1"
+turns "$TPD1" 20
+endrun x "$TPD1" prompt_input_exit
+chk "growth never promotes it"                     "$(prop "$MPD1" recap_status)" "exempt"
+chk "and the reason is logged once"                "$(grep -c 'recap_exempt' "$FPD1/recap.log")" "1"
+# Recapped by hand (exempt -> running is allowed), then kept working: a hand recap is final.
+st "$FPD1" running; st "$FPD1" done --summary "by hand"
+chk "done stamps the records it saw"               "$(prop "$MPD1" recap_assistant_records)" "20"
+turns "$TPD1" 40
+endrun x "$TPD1" prompt_input_exit
+chk "a hand recap that grew stays done"            "$(prop "$MPD1" recap_status)" "done"
+chk "with no re-request in recap.log"              "$(grep -c 'grew by' "$FPD1/recap.log")" "0"
+chk "the property survives every rewrite"          "$(prop "$MPD1" recap_exempt)" "launcher"
+# Undeclared, the same session is requested: the marker is what made the difference.
+PD2=aaaaaaaa-0000-0000-0000-0000000026d2; TPD2="$H/.claude/projects/proj/$PD2.jsonl"
+turns "$TPD2" 10; start $PD2 startup undeclared /tmp/mapped >/dev/null
+endrun x "$TPD2" prompt_input_exit
+chk "undeclared, the same session is requested"    "$(prop "$KB/_sessions/$TODAY/$PD2/session.md" recap_status)" "requested"
+chk "and its note carries no property"             "$(grep -c '^recap_exempt:' "$KB/_sessions/$TODAY/$PD2/session.md")" "0"
+# Honoured on a genuine startup only, like recap_of; and at exit only off the note (ADR-0005).
+PD3=aaaaaaaa-0000-0000-0000-0000000026d3; TPD3="$H/.claude/projects/proj/$PD3.jsonl"
+turns "$TPD3" 10; start $PD3 startup plain /tmp/mapped >/dev/null
+start $PD3 resume plain /tmp/mapped SECOND_BRAIN_RECAP_EXEMPT=1 >/dev/null
+chk "a marker on a resume is ignored"              "$(prop "$KB/_sessions/$TODAY/$PD3/session.md" recap_exempt)" ""
+endrun x "$TPD3" prompt_input_exit SECOND_BRAIN_RECAP_EXEMPT=1
+chk "a stray marker at exit exempts nothing"       "$(prop "$KB/_sessions/$TODAY/$PD3/session.md" recap_status)" "requested"
+# A note that already exists at a declared startup, a restart under the same id, is stamped too.
+PD4=aaaaaaaa-0000-0000-0000-0000000026d4; TPD4="$H/.claude/projects/proj/$PD4.jsonl"
+turns "$TPD4" 10; start $PD4 startup restarted /tmp/mapped >/dev/null
+start $PD4 startup restarted /tmp/mapped SECOND_BRAIN_RECAP_EXEMPT=1 >/dev/null
+chk "a pre-existing note is stamped at a declared startup" "$(prop "$KB/_sessions/$TODAY/$PD4/session.md" recap_exempt)" "launcher"
+# Global off still skips the whole block: the feature off means nothing is tracked.
+env HOME="$H" "$SK" --set auto_recap off >/dev/null 2>&1
+PD5=aaaaaaaa-0000-0000-0000-0000000026d5; TPD5="$H/.claude/projects/proj/$PD5.jsonl"
+turns "$TPD5" 10; start $PD5 startup feature-off /tmp/mapped SECOND_BRAIN_RECAP_EXEMPT=1 >/dev/null
+endrun x "$TPD5" prompt_input_exit
+chk "with auto_recap off a declared session is stamped nothing" "$(prop "$KB/_sessions/$TODAY/$PD5/session.md" recap_status)" ""
+env HOME="$H" "$SK" --set auto_recap notify >/dev/null 2>&1
+
 echo "== 27. the notice reaches the user, and lists only what stalled =="
 # Its own vault, so the notes the earlier cases stamped do not leak into the listing.
 NKB="$ROOT/nkb"; NH="$ROOT/nhome"

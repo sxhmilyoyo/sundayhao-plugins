@@ -172,6 +172,7 @@ is the only writer while a session runs, and the recap writes the session's desc
 | `session_name` | hooks at launch, session-manager after | the session's name |
 | `project`, `tags`, `summary` | session-manager during, the recap after | the description |
 | `recap_of` | the start hook, for a recap session only | the subject folder this session recaps |
+| `recap_exempt` | the start hook, for a session its launcher declared exempt only | who declared it: `launcher` |
 | `recap_status` | `recap_status.sh`, nothing else | `requested`, `running`, `done`, `failed`, `exempt` |
 | `recapped_at`, `recap_session` | `recap_status.sh` on `done` | when it was recapped, and by which session |
 
@@ -181,7 +182,7 @@ is refused and logged to the session folder's `recap.log`:
 | From | To | Written by |
 |---|---|---|
 | empty | `requested`, `exempt` | the SessionEnd hook |
-| `exempt` | `requested` | the SessionEnd hook, when the session has since grown |
+| `exempt` | `requested` | the SessionEnd hook, when the session has since grown and no launcher declared it exempt |
 | `exempt` | `running` | a manual launch, so a person can always recap a small session |
 | `requested` | `running`, `failed` | a recap claiming it; its wrapper on exit |
 | `running` | `done`, `failed` | the recap's last phase; its wrapper on exit |
@@ -189,7 +190,9 @@ is refused and logged to the session folder's `recap.log`:
 | `done` | none | terminal; a deliberate `--force requested` is the only exit |
 
 A recap session is never itself recapped: `recap_of` on its note identifies it, and its own exit stamps it
-`exempt`. A session too small to carry knowledge is `exempt` too, so it is never mistaken for a missed one.
+`exempt`. A session too small to carry knowledge is `exempt` too, so it is never mistaken for a missed one. So is
+a session its launcher declared exempt, `recap_exempt` on its note: `exempt` at every exit whatever it did, and a
+recap made of it by hand is final (ADR-0009).
 
 ## Quality Standards
 

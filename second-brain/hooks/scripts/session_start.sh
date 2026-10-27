@@ -272,6 +272,16 @@ if [ "$SOURCE" = "startup" ]; then
     while [ "${RECAP_OF%/}" != "$RECAP_OF" ] && [ "$RECAP_OF" != "/" ]; do RECAP_OF="${RECAP_OF%/}"; done
 fi
 
+# A launcher can declare the session it starts exempt from the automatic recap, with
+# SECOND_BRAIN_RECAP_EXEMPT set on the launched command (ADR-0009): a dispatcher that ends
+# its own sessions keeps its own record of their work. Presence alone counts, and only on
+# a genuine startup, for the reasons above. The note records who declared it, and
+# session_end.sh reads that off the note at every exit, never this variable.
+RECAP_EXEMPT=""
+if [ "$SOURCE" = "startup" ] && [ -n "${SECOND_BRAIN_RECAP_EXEMPT:-}" ]; then
+    RECAP_EXEMPT="launcher"
+fi
+
 # Resolved here rather than inside the note-creation branch below, because the
 # marker exists only for this one process: if the note already exists, nothing
 # later can recover the launcher's name, and the end hook has no marker to read.
@@ -361,6 +371,11 @@ if [ ! -f "$SESSION_MD" ]; then
     [ -n "$RECAP_OF" ] && RECAP_YAML="recap_of: \"$(yaml_escape "$RECAP_OF")\"
 "
 
+    # Likewise written only for a session its launcher declared exempt, so an ordinary
+    # note gains no empty property and the end hook can act on presence alone.
+    [ -n "$RECAP_EXEMPT" ] && RECAP_YAML="${RECAP_YAML}recap_exempt: \"$RECAP_EXEMPT\"
+"
+
     # Create session.md with full frontmatter in one atomic filesystem write.
     # Bypasses Obsidian CLI for reliability — CLI create can fail silently.
     FRONTMATTER="schema_version: \"2.1\"
@@ -402,6 +417,11 @@ if [ -n "$DELEGATED_BY" ] \
    && [ -z "$(read_frontmatter_prop "$SESSION_MD" "delegated_by")" ]; then
     set_frontmatter_prop "$SESSION_MD" "delegated_by" "$DELEGATED_BY"
     set_frontmatter_prop "$SESSION_MD" "delegated_by_name" "$DELEGATED_BY_NAME"
+fi
+# The exemption too, for the same reason: at exit the note is all there is to read.
+if [ -n "$RECAP_EXEMPT" ] \
+   && [ -z "$(read_frontmatter_prop "$SESSION_MD" "recap_exempt")" ]; then
+    set_frontmatter_prop "$SESSION_MD" "recap_exempt" "$RECAP_EXEMPT"
 fi
 
 # A delegate or a recap whose launcher passed no name is named here, which is its only

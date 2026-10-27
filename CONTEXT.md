@@ -57,8 +57,9 @@ _Avoid_: sub session, child session, spawned session, background session
 
 **Launching session**:
 The session that started a delegated session. Named on the delegate, alongside its id, so work can be
-traced back to the request that caused it.
-_Avoid_: parent session, caller, owner, orchestrator
+traced back to the request that caused it. A launching session may also declare its delegate exempt from
+the automatic recap.
+_Avoid_: parent session, caller, owner, orchestrator, dispatcher
 
 **Subagent**:
 A helper the model runs inside a session, sharing that session's id and transcript. Not a session, so
@@ -115,6 +116,7 @@ or running far longer than a recap takes. A judgement made from elapsed time, no
 _Avoid_: stuck, hung, timed out, zombie, orphaned recap
 
 **Exempt session**:
-A session that is deliberately never recapped: a recap session itself, or a session too small to carry
-knowledge worth distilling. Exemption is recorded, so an exempt session is never mistaken for a missed one.
+A session that is deliberately never recapped: a recap session itself, a session too small to carry
+knowledge worth distilling, or a delegated session its launching session declared exempt. Exemption is
+recorded, so an exempt session is never mistaken for a missed one.
 _Avoid_: skipped session, trivial session, ignored session, noise

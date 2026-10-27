@@ -91,8 +91,8 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
 
    | `recap_status` | Meaning | Action |
    |---|---|---|
-   | `done` | already recapped | skip; a person's `--force requested` reopens it, and so does the end hook when the subject's transcript has grown by five assistant records since the recap (then the inventory of Phase 1.0 is non-empty and Phase 3.0 updates in place) |
-   | `exempt` | deliberately never recapped | skip |
+   | `done` | already recapped | skip; a person's `--force requested` reopens it, and so does the end hook when the subject's transcript has grown by five assistant records since the recap, unless the note carries `recap_exempt` (then the inventory of Phase 1.0 is non-empty and Phase 3.0 updates in place) |
+   | `exempt` | deliberately never recapped: a recap session, a session too small to hold knowledge, or one its launcher declared exempt (`recap_exempt` on its note) | skip |
    | `running` | a recap holds the claim, unless it is this session's own subject | skip, unless your `recap_of` names it, in which case the claim is yours and you proceed |
    | `requested` or `failed` | waiting, or stalled | candidate; claim each one as you reach it |
    | empty | never requested | candidate if it has a transcript |
