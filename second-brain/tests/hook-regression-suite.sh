@@ -1634,6 +1634,141 @@ chk "the gate reaches its summary"                 "$(printf '%s\n' "$V46" | gre
 chk "and counts the apostrophe document's links"   "$(printf '%s\n' "$V46" | grep -c "Graph's  Schema.md: 12 cross-references")" "1"
 chk "and checks the apostrophe proposal"           "$(printf '%s\n' "$V46" | grep -c "what's-left.md: complete proposal, pending")" "1"
 
+echo "== 47. a done recap ends its own session, and nothing else does (ADR-0010) =="
+# The exit watcher types /exit through Herdr once the recap is done, the session has gone
+# idle, nobody has stepped in for the grace, and the prompt box is empty or holds only dim
+# ghost text. A stub herdr answers each of those from a file and records every call, so each
+# refusal is pinned to the check that makes it rather than passing on the happy path.
+WB="$ROOT/wbin"; mkdir -p "$WB"
+cat > "$WB/herdr" << 'WSTUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$HOME/herdr-calls.log"
+case "$*" in
+    "agent wait "*"--until idle"*) echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+    "agent wait "*"--until working"*)
+        case "$(cat "$HOME/w-grace")" in
+            stepped) echo '{"result":{"agent":{"agent_status":"working"}}}'; exit 0 ;;
+            # A person re-requests the recap while the grace runs.
+            rerequested) env HOME="$HOME" "$(cat "$HOME/w-rst")" "$(cat "$HOME/w-subj")" clear --force >/dev/null 2>&1
+                         env HOME="$HOME" "$(cat "$HOME/w-rst")" "$(cat "$HOME/w-subj")" requested >/dev/null 2>&1 ;;
+        esac
+        echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}'; exit 1 ;;
+    "agent explain "*)
+        [ "$(cat "$HOME/w-box")" = empty ] && b='❯\n' || b='❯ go ahead: land it\n'
+        printf '{"state":"idle","visible_idle":true,"evaluated_rules":[{"id":"live_prompt_box","matched":true,"evidence":{"region_preview":"%s"}}]}\n' "$b" ;;
+    "agent read "*)
+        # The ghost as Claude Code draws it: the cursor inverse on its first letter, the rest dim.
+        case "$(cat "$HOME/w-box")" in
+            empty) printf 'the recap is done\n❯ \n' ;;
+            ghost) printf 'the recap is done\n❯ \033[7mg\033[27m\033[2mo ahead: land it\033[22m\n' ;;
+            text)  printf 'the recap is done\n❯ go ahead: land it\n' ;;
+        esac ;;
+    "agent prompt "*) : > "$HOME/w-exited" ;;
+esac
+exit 0
+WSTUB
+chmod +x "$WB/herdr"
+# A stub claude that does what a recap does to its subject, then sits at its prompt until the
+# watcher's /exit arrives, as the real session does; a file bounds how long it sits.
+cat > "$WB/claude" << 'WCL'
+#!/bin/bash
+printf 'claude %s\n' "$*" >> "$HOME/claude-calls.log"
+subj="${*: -1}"; subj="${subj#/second-brain:session-recap }"
+[ "$(cat "$HOME/w-claude-done" 2>/dev/null)" = no ] ||
+    "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/recap_status.sh" "$subj" done >/dev/null 2>&1
+i=0; n=$(cat "$HOME/w-claude-wait" 2>/dev/null || echo 100)
+while [ ! -f "$HOME/w-exited" ] && [ "$i" -lt "$n" ]; do sleep 0.1; i=$((i+1)); done
+[ -f "$HOME/w-exited" ] && echo "exited-by-watcher" >> "$HOME/claude-calls.log"
+exit 0
+WCL
+chmod +x "$WB/claude"
+nmk 2026-09-14 f4747474-4747-4747-4747-474747474747 w47-subject ''
+WSUBJ="$NKB/_sessions/2026-09-14/f4747474-4747-4747-4747-474747474747"
+printf '%s' "$RST" > "$NH/w-rst"; printf '%s' "$WSUBJ" > "$NH/w-subj"
+WCALLS="$NH/herdr-calls.log"; WLOG="$WSUBJ/recap.log"
+# grace answer, box, and the status the subject is left at: requested, running or done.
+wset(){ printf '%s' "$1" > "$NH/w-grace"; printf '%s' "$2" > "$NH/w-box"; printf '100' > "$NH/w-claude-wait"
+    printf 'yes' > "$NH/w-claude-done"
+    rm -f "$NH/w-exited"; : > "$WCALLS"; : > "$NH/claude-calls.log"; : > "$WLOG"
+    env HOME="$NH" "$RST" "$WSUBJ" clear --force >/dev/null 2>&1
+    env HOME="$NH" "$RST" "$WSUBJ" requested >/dev/null 2>&1
+    case "$3" in running|done) env HOME="$NH" "$RST" "$WSUBJ" running >/dev/null 2>&1 ;; esac
+    [ "$3" = done ] && env HOME="$NH" "$RST" "$WSUBJ" done >/dev/null 2>&1; }
+# The watcher alone, against a stand-in for the recap child that lives $1 seconds.
+wwatch(){ sleep "$1" & local kid=$!
+    env HOME="$NH" PATH="$WB:$PATH" SECOND_BRAIN_RECAP_EXIT_POLL_S=1 \
+        "$PLUGIN/hooks/scripts/recap_exit_watch.sh" "$WSUBJ" w9:pW "$kid" >/dev/null 2>&1
+    kill "$kid" 2>/dev/null; wait "$kid" 2>/dev/null; }
+wexits(){ grep -c '^agent prompt w9:pW /exit$' "$WCALLS"; }
+
+wset quiet empty done; wwatch 30
+chk "W1 a done, idle, unattended recap gets /exit"  "$(wexits)" "1"
+chk "W1 after the turn it was in had ended"         "$(grep -c '^agent wait w9:pW --until idle --until done' "$WCALLS")" "1"
+chk "W1 and after a grace nobody broke"             "$(grep -c '^agent wait w9:pW --until working --until blocked' "$WCALLS")" "1"
+chk "W1 the log says why it typed"                  "$(grep -c 'exit-watch typing /exit into w9:pW: done, idle through the grace, prompt box empty' "$WLOG")" "1"
+
+# The debrief mod's `go ahead: ...` is placeholder text, so /exit typed over it is clean. Read
+# as plain text it is indistinguishable from a person's half-typed line; the dim attribute is
+# the whole difference, and this pins the styled read rather than the text one.
+wset quiet ghost done; wwatch 30
+chk "W2 dim ghost text does not hold the session"   "$(wexits)" "1"
+chk "W2 and the log names the ghost"                "$(grep -c 'prompt box ghost' "$WLOG")" "1"
+
+wset quiet text done; wwatch 30
+chk "W3 text a person typed keeps the session"      "$(wexits)" "0"
+chk "W3 and the log says so"                        "$(grep -c 'left open: the prompt box holds text' "$WLOG")" "1"
+
+# A person who types in the pane starts a turn, and from then on the session is theirs.
+wset stepped empty done; wwatch 30
+chk "W4 a person stepping in keeps the session"     "$(wexits)" "0"
+chk "W4 and the box is never even read"             "$(grep -c '^agent explain' "$WCALLS")" "0"
+chk "W4 and the log says a person stepped in"       "$(grep -c 'a person stepped in' "$WLOG")" "1"
+
+# ADR-0007 asks its domain question while the status is still running, so a recap waiting on
+# a person is never ended, and the watcher leaves with the child, having asked Herdr nothing.
+wset quiet empty running; wwatch 2
+chk "W5 a recap that never reaches done is left be" "$(wc -l < "$WCALLS" | tr -d ' ')" "0"
+
+wset rerequested empty done; wwatch 30
+chk "W6 a re-request during the grace is honoured"  "$(wexits)" "0"
+chk "W6 and the log says what it found"             "$(grep -c 'left open: the subject is requested now' "$WLOG")" "1"
+
+# End to end through the child: it starts the watcher itself, behind the launcher's gate.
+wset quiet empty requested
+WCOUT=$(env HOME="$NH" PATH="$WB:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pW \
+    SECOND_BRAIN_RECAP_OF="$WSUBJ" SECOND_BRAIN_RECAP_NAME=recap-w47 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" \
+    SECOND_BRAIN_RECAP_EXIT_POLL_S=1 bash "$PLUGIN/hooks/scripts/recap_child.sh" "$WSUBJ" 2>&1)
+chk "W7 the child's own watcher ends the session"   "$(grep -c '^exited-by-watcher$' "$NH/claude-calls.log")" "1"
+chk "W7 the recap runs under its own name"          "$(grep -c -- '-n recap-w47 /second-brain:session-recap' "$NH/claude-calls.log")" "1"
+chk "W7 the subject stays done"                     "$(prop "$WSUBJ/session.md" recap_status)" "done"
+chk "W7 the child logs the exit"                    "$(grep -c 'exit status=done' "$WLOG")" "1"
+chk "W7 and the pane says what happened"            "$(printf '%s\n' "$WCOUT" | grep -c 'ended: recap_status done')" "1"
+chk "W7 no watcher outlives the child"              "$(pgrep -f "recap_exit_watch.sh $WSUBJ" | wc -l | tr -d ' ')" "0"
+
+# Outside Herdr there is nothing to type /exit through, so no watcher starts and the session
+# ends only the way it always has. The pane id is set on purpose: the gate is HERDR_ENV, the
+# launcher's own, and with both cleared the watcher's usage check would refuse first and
+# hide a gate that had gone missing. The stub sits for 3 s, long enough for a watcher that
+# should not exist to poll, find done and type; at 0.5 s it would be stopped before it acted.
+wset quiet empty requested; printf '30' > "$NH/w-claude-wait"
+env HOME="$NH" PATH="$WB:$PATH" HERDR_ENV= HERDR_PANE_ID=w9:pW \
+    SECOND_BRAIN_RECAP_OF="$WSUBJ" SECOND_BRAIN_RECAP_NAME=recap-w47 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" \
+    SECOND_BRAIN_RECAP_EXIT_POLL_S=1 bash "$PLUGIN/hooks/scripts/recap_child.sh" "$WSUBJ" >/dev/null 2>&1
+chk "W8 outside Herdr no watcher starts"            "$(grep -c '^agent ' "$WCALLS")" "0"
+chk "W8 and nothing ends the session for it"        "$(grep -c '^exited-by-watcher$' "$NH/claude-calls.log")" "0"
+
+# A recap that ends without reaching done stops its watcher on the way out. The poll is long
+# here on purpose, so a watcher left to notice by itself would still be running when this looks.
+wset quiet empty requested; printf 'no' > "$NH/w-claude-done"; printf '5' > "$NH/w-claude-wait"
+env HOME="$NH" PATH="$WB:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pW \
+    SECOND_BRAIN_RECAP_OF="$WSUBJ" SECOND_BRAIN_RECAP_NAME=recap-w47 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" \
+    SECOND_BRAIN_RECAP_EXIT_POLL_S=37 bash "$PLUGIN/hooks/scripts/recap_child.sh" "$WSUBJ" >/dev/null 2>&1
+sleep 0.3
+chk "W9 the child stops its watcher on the way out" "$(pgrep -f "recap_exit_watch.sh $WSUBJ" | wc -l | tr -d ' ')" "0"
+chk "W9 and its sleep goes with it"                 "$(pgrep -u "$(id -u)" -f '^sleep 37$' | wc -l | tr -d ' ')" "0"
+chk "W9 a recap that never got done is failed"      "$(prop "$WSUBJ/session.md" recap_status)" "failed"
+chk "W9 and the watcher asked Herdr nothing"        "$(grep -c '^agent ' "$WCALLS")" "0"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are

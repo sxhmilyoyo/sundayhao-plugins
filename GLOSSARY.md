@@ -29,7 +29,8 @@ description (`project`, `tags`, `summary`) and final `recap_status`.
 ## Recap session
 
 A dedicated session, started by the launcher, that recaps exactly one [[#Subject]] (or a
-batch of them). Registered by `recap_of` on its own note; never recapped itself.
+batch of them). Registered by `recap_of` on its own note; never recapped itself. Ends itself
+once its recap is done, unless a person has stepped in.
 
 ## Reflection
 

@@ -11,7 +11,8 @@
 # Its job is to claim the subject, run the recap, and make sure the subject never sits
 # in `running` after this process is gone. It marks `failed` on the way out if the
 # recap did not reach `done`, so a closed pane or a crashed model surfaces in the
-# start-of-session notice instead of looking like a recap still in flight.
+# start-of-session notice instead of looking like a recap still in flight. A done recap
+# does not keep its session either: the exit watcher ends it (ADR-0010).
 
 SUBJECT="${1:-}"
 if [ -z "$SUBJECT" ] || [ -z "${SECOND_BRAIN_PLUGIN_ROOT:-}" ]; then
@@ -41,11 +42,16 @@ fi
 # An exit 3 here is harmless: it means the subject already reached a terminal state,
 # which is exactly the case that needs no correction.
 post_check() {
+    # The exit watcher has nothing left to watch once the recap's session is gone.
+    [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null
     if [ "$(read_frontmatter_prop "$SUBJECT/session.md" recap_status)" != "done" ]; then
         "$STATUS" "$SUBJECT" failed >/dev/null 2>&1
     fi
     printf '%s exit status=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "$(read_frontmatter_prop "$SUBJECT/session.md" recap_status)" >> "$LOG" 2>/dev/null || true
+    # The session may have ended itself, so the pane says what happened instead of leaving a
+    # person at a bare prompt.
+    echo "Recap of $(basename "$SUBJECT") ended: recap_status $(read_frontmatter_prop "$SUBJECT/session.md" recap_status). Log: $LOG"
 }
 # EXIT alone. Adding HUP, TERM or INT runs post_check twice when a pane is closed,
 # because the signal handler returns and the shell then exits.
@@ -123,6 +129,17 @@ KB_PATH=$(get_kb_path 2>/dev/null)
 if [ -z "$KB_PATH" ] || ! cd "$KB_PATH" 2>/dev/null; then
     printf '%s no vault to run in, staying in %s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PWD" >> "$LOG" 2>/dev/null || true
+fi
+
+# A recap session ends itself once the recap is done, unless a person has stepped in
+# (ADR-0010). The exit watcher types /exit through Herdr, so it starts only behind the
+# launcher's own Herdr gate; anywhere else the session stays open as it always has. Its stdio
+# stays off the pane's TTY, where it would draw over the recap or take its keys.
+HERDR_BIN=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
+if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ -x "$HERDR_BIN" ]; then
+    bash "$SECOND_BRAIN_PLUGIN_ROOT/hooks/scripts/recap_exit_watch.sh" \
+        "$SUBJECT" "$HERDR_PANE_ID" "$$" < /dev/null > /dev/null 2>&1 &
+    WATCH_PID=$!
 fi
 
 # Interactive and in the foreground, on this pane's TTY, so a person can watch it and

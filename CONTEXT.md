@@ -93,7 +93,8 @@ _Avoid_: compact point, checkpoint, truncation
 
 **Recap session**:
 A session whose only purpose is to produce the recap of another session. It is a real session and ends
-like any other; it is never the session it describes.
+like any other, with `/exit`, which it types itself once its recap is done unless a person has stepped in; it
+is never the session it describes.
 _Avoid_: separate session, child session, recap child, background recap
 
 **Recap**:

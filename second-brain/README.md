@@ -298,7 +298,9 @@ Once it fires, the recap runs **in the pane you just left**, which is normally s
 by then, and the pane takes the recap's name. If you have already started something else there it splits
 instead and runs beside it, so reuse never takes a pane out from under you. You can watch it, interrupt it,
 or close the pane; closing it marks the subject `failed` so the notice picks it up rather than leaving it
-looking like a recap still in flight.
+looking like a recap still in flight. Once the recap is done and its session has sat idle for two minutes, the
+session ends itself with `/exit`, so a finished recap stops holding memory; type anything in the pane first
+and it stays yours.
 
 ---
 

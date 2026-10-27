@@ -7,6 +7,23 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.21.0] - 2026-10-27
+
+### Added
+- **A recap session ends itself once its recap is done.** Recap sessions are interactive so a person can step
+  in, and nothing ended one: a finished recap held about 2.5 GiB until its pane was closed, once for 66 hours,
+  and on 2026-10-27 the host ran out of memory with 24 recap sessions open. `recap_child.sh` now starts
+  `hooks/scripts/recap_exit_watch.sh` beside `claude`, behind the launcher's Herdr gate. Once the subject's
+  note reads `done`, the session has finished its turn, two minutes pass with no new turn, and the prompt box
+  is empty or holds only dim ghost text, the watcher types `/exit` through Herdr, the dispatcher's own end
+  path; any check that fails leaves the session open, with the reason in `recap.log`. The box is read with
+  its attributes, a port of the ticket dispatcher's own ghost-text check, because the debrief mod's `go ahead: ...` ghost and
+  Claude's own suggestions read as typed text otherwise. `post_check` stops the watcher, and the pane prints
+  one line when the session ends. Verified live in a Herdr pane with a real Claude session and a scratch
+  subject: `/exit` typed at the end of the grace, the session gone about two seconds later. Regression case 47
+  (26 checks), each refusal pinned by a deliberate break the suite catches; ADR-0010; README; CONTEXT.md and
+  GLOSSARY.md *Recap session*.
+
 ## [2.20.0] - 2026-10-27
 
 ### Added
