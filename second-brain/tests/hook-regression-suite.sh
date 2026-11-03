@@ -62,15 +62,22 @@ CFG
 # A case that wants the Herdr path puts its own stub earlier on PATH (see case 34).
 # The tripwire log is asserted empty at the end: reaching the real Herdr is a test
 # failure, not a surprise in someone's terminal.
+#
+# The Herdr app is guarded the same way, and needs it more: ccfind drives the app's window
+# from any hc terminal that can find `herdr-app`, and this suite is usually run from one. So
+# `herdr-app` and `hc` get tripwires too, and $HC_TERMINAL_ID, the app's gate, is cleared
+# with the others below (cases 40b and 40c open it with stubs of their own).
 mkdir -p "$ROOT/bin"
 TRIPWIRE="$ROOT/herdr-tripwire.log"
-cat > "$ROOT/bin/herdr" << TRIP
+for bin in herdr herdr-app hc; do
+cat > "$ROOT/bin/$bin" << TRIP
 #!/bin/bash
-printf 'REAL HERDR REACHED: %s\n' "\$*" >> "$TRIPWIRE"
-echo "herdr: the regression suite must never call the real binary" >&2
+printf 'REAL %s REACHED: %s\n' "$bin" "\$*" >> "$TRIPWIRE"
+echo "$bin: the regression suite must never call the real binary" >&2
 exit 1
 TRIP
-chmod +x "$ROOT/bin/herdr"
+chmod +x "$ROOT/bin/$bin"
+done
 export PATH="$ROOT/bin:$PATH"
 # Six variables, not four. HERDR_SOCKET_PATH is the channel to the running daemon, so the
 # real binary reaches the live workspace through it whatever pane id it was handed, which
@@ -80,6 +87,9 @@ export PATH="$ROOT/bin:$PATH"
 # rather than live, and exactly the kind of thing to clear before it becomes live.
 export HERDR_ENV= HERDR_PANE_ID= HERDR_TAB_ID= HERDR_WORKSPACE_ID= \
        HERDR_SOCKET_PATH= HERDR_BIN_PATH= TMUX_PANE=
+# The Herdr app's gate is $HC_TERMINAL_ID. CCFIND_REPORT=labels would turn a pick into an hc
+# label on the caller's own terminal instead (case 40c).
+export HC_TERMINAL_ID= CCFIND_REPORT=
 # ── The recap markers are cleared for the same reason ────────────────────────────
 # Run from inside a recap session, this suite reported 8 false failures and said
 # nothing about why: 266 passed / 12 failed against 274 / 4 from an ordinary shell.
@@ -1064,6 +1074,8 @@ chk "Herdr detection is off by default"  "${HERDR_ENV-MISSING}${HERDR_PANE_ID-MI
 # one a PATH tripwire cannot defend against. Both must be cleared, not merely unset.
 chk "the daemon socket is unreachable"   "${HERDR_SOCKET_PATH-MISSING}" ""
 chk "and the binary path is not handed over" "${HERDR_BIN_PATH-MISSING}" ""
+# The Herdr app's: from an hc terminal, ccfind would otherwise drive the real window.
+chk "and the Herdr app's gate is shut too"   "${HC_TERMINAL_ID-MISSING}${CCFIND_REPORT-MISSING}" ""
 
 echo "== 37. a person can re-request a subject, and nothing automatic can =="
 # The status only moves forwards, so `requested`, `done` and `failed` are dead ends to the
@@ -1278,8 +1290,8 @@ echo "== 40. ccfind's actions do not require pbcopy or tmux =="
 # let it fire would set the clipboard of whoever runs the suite.
 CBIN="$ROOT/ccbin"; mkdir -p "$CBIN"
 for t in bash cut dirname sed; do ln -sf "$(command -v "$t")" "$CBIN/$t"; done
-CFNS=$(sed -n '/^copy_to_clipboard()/,/^}/p; /^copy_session_path()/,/^}/p; /^open_alongside()/,/^}/p' \
-    "$PLUGIN/tools/ccfind/ccfind.sh")
+CFNS=$(sed -n '/^copy_to_clipboard()/,/^}/p; /^copy_session_path()/,/^}/p; /^json_array()/,/^}/p;
+    /^herdr_app_argv()/,/^}/p; /^open_alongside()/,/^}/p' "$PLUGIN/tools/ccfind/ccfind.sh")
 CROW=$(printf 'disp\tid9\t/tmp/work\t%s/_sessions/2026-09-18/id9/session.md\t-\t-\t-' "$KB")
 # pbcopy first when it exists: upstream macOS behaviour is unchanged.
 cat > "$CBIN/pbcopy" << PB
@@ -1359,6 +1371,74 @@ M40=$(env PATH="$CBIN" TMUX= HERDR_ENV= CFNS="$CFNS" bash -c \
     'eval "$CFNS"; open_alongside /tmp/work claude -r id9' 2>&1); M40RC=$?
 chk "no multiplexer is refused"        "$M40RC" "1"
 chk "and the refusal names both"       "$(printf '%s' "$M40" | grep -c 'tmux or herdr')" "1"
+
+echo "== 40b. in the Herdr app, Enter and Ctrl-O split the pane under the popup =="
+# The Herdr app is neither tmux nor herdr: herdr-core gives every terminal $HC_TERMINAL_ID,
+# and the herdr-app CLI drives the window. ccfind's popup there is not a pane, so the split
+# names the pane underneath, which `status` reports as focused_pane, and the new pane's
+# command changes into the folder itself, since pane.split takes none. A new tab is the
+# fallback, and when that fails too, the reason is printed. The stub answers `status` in the
+# real CLI's shape (pretty JSON, a space after the colon), fails where the real one does when
+# asked to, and brackets each argument, so a folder with a space has to arrive as one. Run
+# under set -euo pipefail, as ccfind runs: a failing `status` once ended ccfind silently.
+ABIN="$ROOT/abin"; mkdir -p "$ABIN"
+cat > "$ABIN/herdr-app" << HA
+#!/bin/bash
+{ printf herdr-app; printf ' [%s]' "\$@"; printf '\n'; } >> "$ROOT/cc-app.log"
+case "\$1 \${2-}" in
+    "status ")
+        [ -z "\${APP_NO_WINDOW-}" ] || { echo "herdr-app: no Herdr window" >&2; exit 2; }
+        printf '{\n  "focused_pane": %s,\n  "overlays": []\n}\n' "\${APP_PANE:-null}" ;;
+    "do pane.split")
+        [ -z "\${APP_SPLIT_FAILS-}" ] || { echo '{ "error": "no such pane" }'; exit 1; } ;;
+    "do tab.new")
+        [ -z "\${APP_NO_WINDOW-}" ] || { echo '{ "error": "no Herdr window" }'; exit 1; } ;;
+esac
+exit 0
+HA
+chmod +x "$ABIN/herdr-app"
+# The new pane's command as herdr_app_argv prints it, up to the folder: cd, run, leave a shell.
+WRAP40='"sh","-c","sleep 0.2; cd \"$1\" && shift && \"$@\"; exec \"${SHELL:-sh}\"","sh"'
+app40() {
+    : > "$ROOT/cc-app.log"
+    env PATH="$ABIN:$CBIN" TMUX= HERDR_ENV= HC_TERMINAL_ID=t9 "$@" CFNS="$CFNS" \
+        bash -c 'set -euo pipefail; eval "$CFNS"; open_alongside "/tmp/a b" claude -r id9' 2>&1
+}
+A40=$(app40 APP_PANE='"p5"'); A40RC=$?
+chk "a pick in the Herdr app exits zero"   "$A40RC" "0"
+chk "the pane under the popup splits right, into the folder" \
+    "$(grep -cxF "herdr-app [do] [pane.split] [--pane] [p5] [--direction] [right] [--argv] [[$WRAP40,\"/tmp/a b\",\"claude\",\"-r\",\"id9\"]]" "$ROOT/cc-app.log")" "1"
+chk "and no tab opens as well"             "$(grep -c '\[tab.new\]' "$ROOT/cc-app.log")" "0"
+A40=$(app40 APP_PANE='"p5"' APP_SPLIT_FAILS=1)
+chk "a split that fails falls back to a tab in the folder" \
+    "$(grep -cxF 'herdr-app [do] [tab.new] [--folder] [/tmp/a b] [--argv] [["claude","-r","id9"]]' "$ROOT/cc-app.log")" "1"
+A40=$(app40)
+chk "with no focused pane, a tab opens"    "$(grep -c '\[tab.new\]' "$ROOT/cc-app.log")" "1"
+A40=$(app40 APP_NO_WINDOW=1); A40RC=$?
+chk "with no window at all, the pick fails" "$A40RC" "1"
+chk "and says why"                         "$(printf '%s' "$A40" | grep -c 'no Herdr window')" "1"
+
+echo "== 40c. a popup on another machine gets the pick as labels, and opens nothing =="
+# The Herdr app's popup over a clouddesk space runs ccfind on the clouddesk, which has no
+# herdr-app and no route back to the window. With CCFIND_REPORT=labels the pick is left as
+# labels on ccfind's own hc terminal, for the popup to read after ccfind exits: the new pane's
+# argv, exactly as case 40b's split gets it, and its folder. Nothing is opened here even where
+# it could be: a herdr-app that would answer is on PATH. The stub brackets each argument.
+cat > "$ABIN/hc" << HCS
+#!/bin/bash
+{ printf hc; printf ' [%s]' "\$@"; printf '\n'; } >> "$ROOT/cc-app.log"
+HCS
+chmod +x "$ABIN/hc"
+: > "$ROOT/cc-app.log"
+R40=$(env PATH="$ABIN:$CBIN" TMUX= HERDR_ENV= HC_TERMINAL_ID=t9 APP_PANE='"p5"' CCFIND_REPORT=labels \
+    CFNS="$CFNS" bash -c 'set -euo pipefail; eval "$CFNS"
+        open_alongside "/tmp/a b" claude -r id9; open_alongside /tmp/work nvim .' 2>&1); R40RC=$?
+chk "a reported pick exits zero"           "$R40RC" "0"
+chk "Enter labels the new pane's argv and its folder" \
+    "$(grep -cxF "hc [label] [t9] [ccfind.cwd=/tmp/a b] [ccfind.argv=[$WRAP40,\"/tmp/a b\",\"claude\",\"-r\",\"id9\"]]" "$ROOT/cc-app.log")" "1"
+chk "Ctrl-O labels nvim in the session folder" \
+    "$(grep -cxF "hc [label] [t9] [ccfind.cwd=/tmp/work] [ccfind.argv=[$WRAP40,\"/tmp/work\",\"nvim\",\".\"]]" "$ROOT/cc-app.log")" "1"
+chk "and nothing is opened here"           "$(grep -vc '^hc \[label\] ' "$ROOT/cc-app.log")" "0"
 
 echo "== 41. ccfind finds fzf off the minimal PATH a popup launcher runs with =="
 # The same fact case 40 records for the herdr binary, one call earlier: a keybinding's
@@ -1452,6 +1532,39 @@ T42=$(env PATH="$CBIN" TMUX= HERDR_ENV=1 HERDR_BIN_PATH="$TBIN/herdr" CFNS="$CFN
 chk "a popup split still succeeds"        "$T42RC" "0"
 chk "the split targets the front pane"    "$(grep -c 'pane split --pane w9:pFRONT' "$ROOT/cc-tab.log")" "1"
 chk "and never the last tab's pane"       "$(grep -c 'pane split --pane w9:pBACK' "$ROOT/cc-tab.log")" "0"
+
+echo "== 42b. the picker reads fzf's answer without a pipe that can break =="
+# fzf --expect answers with two lines, the key and the pick, and the picker took the key with
+# `printf | head -1`. head exits after one line; a printf still writing then dies of SIGPIPE,
+# pipefail makes that 141, and set -e ended ccfind there: no message, nothing opened. Live it
+# was a race (on the clouddesk all 3 traced Enter presses died there) that a quiet run hits
+# too rarely to test. This stub makes it certain: a third line longer than any pipe buffer
+# keeps printf writing after head has its line. It is a line of its own because bash's
+# pattern removal is quadratic on a long line it has to scan, and the pick is not long.
+SBIN="$ROOT/sbin"; mkdir -p "$SBIN"
+# head stays on PATH, so the old line fails as it did live, with 141, not with 127.
+ln -sf "$(command -v head)" "$SBIN/head"
+cat > "$SBIN/fzf" << 'FZ'
+#!/bin/bash
+while IFS= read -r _; do :; done
+printf '%s\n%s\n%*s\n' "$PICK_KEY" "$PICK_ROW" 200000 ''
+FZ
+chmod +x "$SBIN/fzf"
+PFNS=$(sed -n '/^pick_session_from()/,/^}/p' "$PLUGIN/tools/ccfind/ccfind.sh")
+for k42 in ctrl-o ""; do
+    S42=$(env PATH="$SBIN:$CBIN" PICK_KEY="$k42" PICK_ROW="$CROW" PFNS="$PFNS" bash -c '
+        set -euo pipefail
+        eval "$PFNS"
+        require_fzf() { :; }
+        resume_session() { printf "resume %s\n" "$1"; }
+        open_session_folder() { printf "nvim %s\n" "$1"; }
+        PREVIEW_SCRIPT=:
+        FZF_NAV_HEADER=
+        FZF_NAV_BINDS=(--no-op)
+        printf "row\n" | pick_session_from' 2>&1); S42RC=$?
+    chk "${k42:-Enter}: a long answer does not end the picker" "$S42RC" "0"
+    chk "${k42:-Enter}: and the action gets the pick" "$S42" "$([ -n "$k42" ] && echo nvim || echo resume) $CROW"
+done
 
 # ── create_domain.sh: the one sanctioned domain invention (ADR-0007) ─────────────
 # A fresh fixture home, so the map written here cannot leak into earlier fixtures.
@@ -1769,6 +1882,14 @@ chk "W9 and its sleep goes with it"                 "$(pgrep -u "$(id -u)" -f '^
 chk "W9 a recap that never got done is failed"      "$(prop "$WSUBJ/session.md" recap_status)" "failed"
 chk "W9 and the watcher asked Herdr nothing"        "$(grep -c '^agent ' "$WCALLS")" "0"
 
+# The tripwire once more, after the last case that could reach it: case 36 runs before the
+# ccfind cases, the only callers of herdr-app and hc.
+if [ -s "$TRIPWIRE" ]; then
+    no "no case reached the real herdr, herdr-app or hc"
+    echo "         attempts:"; sed 's/^/           /' "$TRIPWIRE"
+else
+    ok "no case reached the real herdr, herdr-app or hc"
+fi
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 # The hooks cache a folder path per session id under /tmp, and the ids here are

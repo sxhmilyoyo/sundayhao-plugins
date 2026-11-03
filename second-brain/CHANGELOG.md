@@ -7,6 +7,36 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.0] - 2026-11-02
+
+### Added
+- **ccfind opens its pick in the Herdr app, and reports it from a space on another machine.** In a Herdr app
+  pane, Enter and Ctrl-O printed `Not inside tmux or herdr; cannot open a new pane.` and exited 1:
+  `open_alongside` knew only `$TMUX` and the herdr TUI's `HERDR_ENV=1`, and an app pane is an hc terminal with
+  neither. A Herdr-app branch, taken when `$HC_TERMINAL_ID` is set and `herdr-app` is on `$PATH`, splits the
+  pane `herdr-app status` reports as `focused_pane` (under ccfind's popup, the pane it covers), falls back to a
+  new tab in the folder, and prints herdr-app's reason when that fails too. `herdr_app_argv` builds the new
+  pane's command: `pane.split` takes no folder and runs it directly, so it changes into the folder itself,
+  waits 0.2 s for the pane's size (without that, nvim kept drawing at the stale 40×120 in 1 of 4 runs; 0 of 16
+  with it) and leaves a shell. A space on another machine has no `herdr-app` and no route back to the window,
+  so a caller can set `CCFIND_REPORT=labels`: ccfind then opens nothing and leaves the pick on its own hc
+  terminal as two labels, `ccfind.argv` (that same command, as JSON) and `ccfind.cwd` (its folder). An
+  environment variable rather than a flag, because the picker's `^a`/`^n`/`^t`/`^r` binds re-exec the script
+  through fzf's `become`. The Herdr app's ccfind popup uses it in clouddesk spaces: it reads the labels once
+  ccfind exits and makes the split itself. Verified live on the clouddesk with the real fzf, bash 4.2 and hc:
+  Enter, Ctrl-O and Esc leave the expected labels, or none, and the reported command, run there, changes into
+  the folder and leaves a shell. Regression cases 40b (7 checks) and 40c (4). The suite's guard against the
+  real Herdr now has tripwires for `herdr-app` and `hc` too, clears `$HC_TERMINAL_ID`, and reads the tripwire
+  log again after the last case, since case 36 runs before the ccfind cases.
+
+### Fixed
+- **Enter and Ctrl-O no longer end ccfind silently with 141.** The picker took fzf's key line with
+  `printf | head -1` under `set -euo pipefail`: `head` exits after one line, a `printf` still writing then dies
+  of SIGPIPE, and `set -e` ended ccfind before anything opened, with nothing on screen. A race: on the clouddesk
+  all three traced Enter presses died there, yet 2,000 quiet runs on either host never hit it. The key and the
+  pick are now taken apart by parameter expansion, with no pipe. Regression case 42b makes the race certain
+  with an answer longer than a pipe buffer; the old line fails it with 141.
+
 ## [2.21.0] - 2026-10-27
 
 ### Added

@@ -42,7 +42,7 @@ Options:
   -h, --help      Show this help
 
 Keybindings (in fzf):
-  Enter           Resume session alongside (herdr pane right / tmux window)
+  Enter           Resume session alongside (herdr or Herdr app pane right / tmux window)
   Ctrl-O          Open session folder in nvim, alongside
   Ctrl-Y          Copy session folder path to clipboard
   Ctrl-A          Switch to all sessions
@@ -179,20 +179,69 @@ copy_to_clipboard() {
     fi
 }
 
-# Opens $@ next to the caller, at cwd $1: a right-hand split under herdr, a new window
-# under tmux. Each multiplexer is detected by the variable it owns, not by which binaries
-# exist: a host can have tmux installed with no server running (herdr is not tmux and
-# sets no $TMUX). Neither herdr verb takes a command, so the pane is made first and the
-# id is read from the reply — ids must never be predicted. --focus is explicit because
-# herdr places new panes in the background, while tmux switches to the new window:
-# without it the editor really does open, somewhere you never see.
+# Prints its arguments as a JSON array of strings, for herdr-app's --argv. They are commands,
+# paths and session ids, so escaping \ and " is all they need.
+json_array() {
+    local out="" arg
+    for arg in "$@"; do
+        arg=${arg//\\/\\\\}
+        out+="${out:+,}\"${arg//\"/\\\"}\""
+    done
+    printf '[%s]' "$out"
+}
+
+# Prints, as a JSON argv, a new Herdr app pane's command: $2... in folder $1. pane.split takes
+# no folder and runs the command directly, so the command changes into the folder itself and
+# then leaves a shell there, as a pane run under herdr does. It also starts before the pane has
+# its size: Herdr resizes it ~20 ms later, and nvim, if still starting then, keeps drawing at
+# the first size (40x120). So the command waits 0.2 s first.
+herdr_app_argv() {
+    json_array sh -c 'sleep 0.2; cd "$1" && shift && "$@"; exec "${SHELL:-sh}"' sh "$@"
+}
+
+# Opens $@ next to the caller, at cwd $1: a right-hand split under herdr and in the Herdr
+# app, a new window under tmux. Each multiplexer is detected by the variable it owns, not by
+# which binaries exist: a host can have tmux installed with no server running (herdr is not
+# tmux and sets no $TMUX). Neither herdr verb takes a command, so the pane is made first and
+# the id is read from the reply — ids must never be predicted. --focus is explicit because
+# herdr places new panes in the background, while tmux switches to the new window: without
+# it the editor really does open, somewhere you never see.
 open_alongside() {
     local cwd="$1"; shift
+    # CCFIND_REPORT=labels: the caller opens the pick, not ccfind. The Herdr app's popup over a
+    # space on another machine runs ccfind there, and that machine has no herdr-app and no
+    # route back to the window. So the pick is left on this hc terminal as two labels, which
+    # the popup reads once ccfind has exited: ccfind.argv, the new pane's argv exactly as the
+    # Herdr app branch below hands it to pane.split, and ccfind.cwd, its folder, for a new tab
+    # when there is no pane to split. An environment variable rather than a flag, because the
+    # ^a/^n/^t/^r binds re-exec this script through fzf's `become`, and a child inherits the
+    # environment, not the arguments.
+    if [ "${CCFIND_REPORT:-}" = labels ]; then
+        hc label "$HC_TERMINAL_ID" "ccfind.cwd=$cwd" "ccfind.argv=$(herdr_app_argv "$cwd" "$@")" >/dev/null
+        return
+    fi
     if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
         tmux new-window -c "$cwd" "$*"
         return
     fi
     if [ "${HERDR_ENV:-}" != 1 ]; then
+        # The Herdr app: herdr-core gives every terminal $HC_TERMINAL_ID, and herdr-app drives
+        # the window. As under herdr, ccfind's popup (ctrl-b shift-c) is not a pane, so the
+        # split names the one underneath: status reports it as focused_pane, and the new pane
+        # takes the focus. A new tab, which takes the folder, is the fallback, and when that
+        # fails too, herdr-app's reason is printed. status itself fails when no window is
+        # running, which under set -e would otherwise end ccfind here without a word.
+        if [ -n "${HC_TERMINAL_ID:-}" ] && command -v herdr-app >/dev/null 2>&1; then
+            local pane out
+            pane=$(herdr-app status 2>/dev/null | sed -n 's/.*"focused_pane": *"\([^"]*\)".*/\1/p') || pane=
+            if [ -n "$pane" ] && herdr-app do pane.split --pane "$pane" --direction right \
+                --argv "$(herdr_app_argv "$cwd" "$@")" >/dev/null 2>&1; then
+                return
+            fi
+            out=$(herdr-app do tab.new --folder "$cwd" --argv "$(json_array "$@")" 2>&1) && return
+            printf '%s\n' "$out" >&2
+            return 1
+        fi
         echo "Not inside tmux or herdr; cannot open a new pane." >&2
         return 1
     fi
@@ -343,9 +392,17 @@ pick_session_from() {
         "${FZF_NAV_BINDS[@]}" \
         --expect=ctrl-o,ctrl-y) || exit 0
 
-    local key selected
-    key=$(printf '%s' "$fzf_output" | head -1)
-    selected=$(printf '%s' "$fzf_output" | sed -n '2p')
+    # The two lines --expect prints, the key and the pick, taken apart without a pipe. This was
+    # `printf | head -1`: head exits after one line, a printf still writing then dies of
+    # SIGPIPE, pipefail makes that 141 and set -e ends ccfind there, silently and before
+    # anything opens. A race (traced on the clouddesk, where all 3 Enter presses died there);
+    # case 42b makes it certain.
+    local key selected=""
+    key=${fzf_output%%$'\n'*}
+    if [[ $fzf_output == *$'\n'* ]]; then
+        selected=${fzf_output#*$'\n'}
+        selected=${selected%%$'\n'*}
+    fi
 
     [ -z "$selected" ] && exit 0
 
