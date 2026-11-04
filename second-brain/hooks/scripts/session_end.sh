@@ -177,6 +177,16 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
     fi
 fi
 
+# The hosting terminal's session label comes off here, straight after the stamp and before
+# the slow work below, at every real ending; ENDING already leaves /clear and resume out,
+# and the SessionStart that follows each of those re-sets the label (ADR-0012). After the
+# stamp, never before it: the removal costs milliseconds, and the only slow case is a core
+# that is down or restarting, when hc waits up to the helper's half-second bound. A stale
+# label then costs nothing, because the Herdr app, a client of that same core, shows
+# nothing either, whereas a lost recap request is the one silent failure this hook exists
+# to prevent.
+if [ -n "$ENDING" ]; then unlabel_hc_terminal; fi
+
 # Everything from the property reads to the rewrite below is one transaction, because
 # a recap marking this subject `done` in between would have its write read, discarded
 # and overwritten. Two deliberate limits on that.

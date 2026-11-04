@@ -7,6 +7,60 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.0] - 2026-11-03
+
+### Added
+- **A session labels the hc terminal hosting it with its session folder.** A session's plans, reviews and
+  handoffs land in its session folder, and nothing outside the session could say which folder that was:
+  inferring it from a working directory is ambiguous, since six sessions shared one in three days. The
+  session now declares it (ADR-0012) as the hc label `second-brain.session=<absolute session folder on that
+  machine>`. `session_start.sh` sets it at every startup, `/clear` and fork, and `session_resume.sh` at every
+  resume and compaction; `/clear` keeps the id and so sets the same value again. `session_end.sh` removes it
+  in hc's `key=` form at a real end, right after the recap stamp and before the slow work: a stale label
+  costs nothing when hc cannot reach a core, since the Herdr app, a client of that core, shows nothing
+  either, while a lost recap request is the one silent failure that hook exists to prevent. The `clear` and
+  `resume` reasons leave the label, and the SessionStart that follows each sets it again. The helpers,
+  `label_hc_terminal` and `unlabel_hc_terminal`, sit beside `rename_terminal_window` in
+  `skills/common/obsidian_helpers.sh`: they act only when `$HC_TERMINAL_ID` is set, find hc on `$PATH` or at
+  `~/.local/bin/hc` (the clouddesk's non-interactive PATH lacks it), print nothing and never fail a hook.
+  Only the session the terminal runs may touch its label: with `$CLAUDE_PID` set, the helpers write only
+  when hc reports that pid as the terminal's foreground, so a nested `claude -p` run from a Bash tool, which
+  inherits `$HC_TERMINAL_ID`, can neither relabel the host nor take its label away. A claude started by a
+  wrapper that does not `exec` it, `recap_child.sh` among them, shows the wrapper in front and is not
+  labelled. The check and the write together are bounded at about half a second, because a core that is down
+  or restarting keeps hc waiting for seconds while it tries to start one and a hook that overruns its budget
+  is cancelled. Measured, a label costs 8–17 ms on the clouddesk and 55–75 ms on the Mac.
+  Verified against a scratch hc terminal with the real hooks: the label appeared at startup, survived an end
+  for `/clear` and was gone after a real end, with only the JSON payload on stdout and nothing on stderr.
+  Regression case 48 (16 checks), with an hc stub ahead of the suite's tripwire that answers `get` with a
+  given foreground pid: a nested claude asks and then touches nothing, without `$CLAUDE_PID` the label is
+  set ungated, without `$HC_TERMINAL_ID` no hook reaches hc at all, a hung hc holds neither hook for long and
+  the recap stamp still lands, and the helpers survive a caller's `set -e` and `set -u`.
+- **The Herdr app's Files panel shows that folder, as a mod of this plugin.** `tools/herdr-app/mods/session-folder/`
+  is a clone of the app's shipped `files` mod, which Herdr restores on every start, so it cannot be edited in
+  place. It reads the label off the focused pane's own terminal and nothing else (no label, no section), and
+  trusts it only while claude is that terminal's foreground: a session that dies without its end hook leaves
+  its label behind, and measured in the app, `program.agent` and `status` keep a dead agent's last report
+  (still agent and idle 35 s after a SIGKILL left zsh in front) while `foreground` follows within a second.
+  It shows the folder as a collapsible Session section above the Project tree, named from the note's
+  `session_name`, else `<date> · <id8>`, with `docs/` open, and each section is drawn as soon as it is listed
+  rather than after both and the project's git status. Files preview as before; a folder on another
+  machine is listed and read on that machine, the one the terminal's address names; local folders are
+  watched, one watch per folder however often focus moves, and remote ones refresh on the 10 s timer; a
+  session folder that cannot be listed keeps its header and says "Session folder unavailable", and an opened
+  subfolder that has gone is closed. Verified live in the app with labels set by hand: the section appeared
+  0.39 s after a label was set and was gone 0.42 s after it was removed; a file written under `docs/`
+  appeared within 0.6 s, twice in a row, which the 10 s timer cannot explain; a shell split beside the
+  session hid the section and focusing back showed it; a clouddesk session's folder was listed under its
+  name and its `session.md` previewed; and the same label showed the section for a running claude and
+  nothing for the shell a SIGKILLed claude left behind. Install on the Mac, where the app runs:
+  `cp -R tools/herdr-app/mods/session-folder ~/.config/herdr-app/mods/`, then
+  `herdr-app check ~/.config/herdr-app/mods/session-folder`, then point a personal layout's `files` block at
+  it, `"mod": "files"` to `"mod": "session-folder"` (the shipped `main` is replaced on every start, so clone
+  it first: `herdr-app do layout.clone '{"name":"main","as":"<yours>"}'`). The tab bar's Files button targets
+  the block id `files`, not the mod, so it keeps working. To roll back, point the block at `files` again and
+  delete the folder.
+
 ## [2.22.0] - 2026-11-02
 
 ### Added

@@ -39,6 +39,11 @@ else
     mkdir -p "$SESSION_FOLDER/docs"
 fi
 
+# The hosting hc terminal is relabelled here too: a resume brings a session into a
+# terminal that was labelled for whatever ran there before, or for nothing, and a
+# compaction re-sets the same value (ADR-0012).
+label_hc_terminal "$SESSION_FOLDER"
+
 # Rename terminal container (tmux window / Herdr pane) if session has a name
 SESSION_NAME=$(read_frontmatter_prop "$SESSION_FOLDER/session.md" "session_name")
 rename_terminal_window "$SESSION_NAME"

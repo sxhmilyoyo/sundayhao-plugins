@@ -247,6 +247,13 @@ DOCS_PATH="$SESSION_FOLDER/docs"
 SESSION_MD="$SESSION_FOLDER/session.md"
 mkdir -p "$DOCS_PATH"
 
+# Label the hc terminal hosting this session with its folder, for every source rather
+# than only a startup like the rename below: a /clear keeps the id and re-sets the same
+# value, and a fork labels its own terminal with its own folder. The Herdr app's Files
+# panel shows the folder from this label and from nothing else (ADR-0012); outside an hc
+# terminal the call is a no-op.
+label_hc_terminal "$SESSION_FOLDER"
+
 # Cache folder path so SessionEnd/PreCompact can skip folder search
 echo "$SESSION_FOLDER" > "/tmp/second-brain-folder-$SESSION_ID"
 

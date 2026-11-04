@@ -21,6 +21,33 @@ A domain that does not yet exist, derived by a recap from the session it is reca
 to a person for approval before anything is created or filed under it. Only a person's
 approval turns a proposed domain into a [[#Domain]].
 
+## Session folder
+
+The knowledge-bank folder that belongs to one Claude Code session, filed by day under
+`_sessions/` and named by the session id: a `/clear` keeps the same id and so the same folder;
+a fork has its own. It holds the [[#Session note]], the [[#Docs path]] and the plugin's own
+records of the session (compaction points, a copy of its memory, the recap's log and lock).
+
+## Session note
+
+The `session.md` at the root of a [[#Session folder]]: the session's frontmatter record (name,
+[[#Project (property)]], tags, summary, lineage, recap status) and what the plugin reads a
+session's metadata from; when it is lost, the hooks rebuild it from the transcript. "Note" alone,
+in hook comments, means this file.
+
+## Docs path
+
+The `docs/` folder inside a [[#Session folder]], where the session writes its working documents
+(designs, plans, reviews, SOPs and issues each in a subfolder of their own; handoffs and the rest
+at its root).
+
+## Session label
+
+The hc label `second-brain.session` that a session's hooks keep on the terminal hosting it,
+valued with that machine's absolute path to the [[#Session folder]]. Present while the session
+runs, gone when it ends, so whatever shows the terminal can show its folder without guessing
+from a working directory. Declared by the session itself, never detected.
+
 ## Subject
 
 The session a recap is about: the one whose transcript is read and whose note receives the

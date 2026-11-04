@@ -66,7 +66,7 @@ CFG
 # The Herdr app is guarded the same way, and needs it more: ccfind drives the app's window
 # from any hc terminal that can find `herdr-app`, and this suite is usually run from one. So
 # `herdr-app` and `hc` get tripwires too, and $HC_TERMINAL_ID, the app's gate, is cleared
-# with the others below (cases 40b and 40c open it with stubs of their own).
+# with the others below (cases 40b, 40c and 48 open it with stubs of their own).
 mkdir -p "$ROOT/bin"
 TRIPWIRE="$ROOT/herdr-tripwire.log"
 for bin in herdr herdr-app hc; do
@@ -1882,8 +1882,85 @@ chk "W9 and its sleep goes with it"                 "$(pgrep -u "$(id -u)" -f '^
 chk "W9 a recap that never got done is failed"      "$(prop "$WSUBJ/session.md" recap_status)" "failed"
 chk "W9 and the watcher asked Herdr nothing"        "$(grep -c '^agent ' "$WCALLS")" "0"
 
+echo "== 48. the hooks label the hosting hc terminal with the session folder (ADR-0012) =="
+# The Herdr app's Files panel shows a session's folder from one hc label on the terminal
+# hosting it, `second-brain.session=<folder>`, declared by the session's own hooks and never
+# detected. A stub hc ahead of the tripwire records every call, one bracket per argument so a
+# folder split in two would show, and answers `get` with the foreground pid it is given. Two
+# gates: $HC_TERMINAL_ID, and, when $CLAUDE_PID is set, that pid being the terminal's
+# foreground, so a nested claude can neither relabel the host nor take its label away. Every
+# SessionStart sets the label (a /clear re-sets the same value, so the panel never flickers),
+# a real end removes it in hc's `key=` form, and the clear and resume reasons leave it, since
+# the SessionStart that follows each relabels. Without $HC_TERMINAL_ID no hook calls hc at
+# all, which is what keeps a terminal without hc a silent no-op: that run goes through the
+# suite's own PATH, where the tripwire would record a call. Every run below sets CLAUDE_PID or
+# unsets it, because a suite run from inside a Claude session inherits that session's.
+LBIN="$ROOT/lbin"; mkdir -p "$LBIN"
+cat > "$LBIN/hc" << 'STUB'
+#!/bin/bash
+{ printf hc; printf ' [%s]' "$@"; printf '\n'; } >> "$HOME/hc-calls.log"
+[ -z "${HC_STUB_SLEEP-}" ] || sleep "$HC_STUB_SLEEP"
+if [ "$1" = get ]; then
+    if [ -n "${HC_STUB_FG_PID-}" ]; then printf '{"foreground":{"pid":%s}}\n' "$HC_STUB_FG_PID"
+    else printf '{"foreground":null}\n'; fi
+fi
+exit "${HC_STUB_EXIT:-0}"
+STUB
+chmod +x "$LBIN/hc"
+L48=48484848-4848-4848-4848-484848484848; LT="$H/.claude/projects/proj/$L48.jsonl"
+LF="$KB/_sessions/$TODAY/$L48"; LON=(PATH="$LBIN:$PATH" HC_TERMINAL_ID=t9 CLAUDE_PID=4242 HC_STUB_FG_PID=4242)
+lcount(){ grep -cxF "$1" "$H/hc-calls.log"; }
+lverbs(){ grep -c "^hc \[$1\] " "$H/hc-calls.log"; }
+lresume(){ printf '{"session_id":"%s","cwd":"/tmp/mapped","transcript_path":"%s","source":"resume"}' "$L48" "$LT" \
+    | env HOME="$H" HERDR_PANE_ID= TMUX_PANE= "${LON[@]}" "$PLUGIN/hooks/scripts/session_resume.sh" >/dev/null 2>&1; }
+: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" >/dev/null
+chk "a launch labels its terminal with the folder"    "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
+: > "$H/hc-calls.log"; start $L48 clear labelled /tmp/mapped "${LON[@]}" >/dev/null
+chk "a /clear sets the same label again"              "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
+: > "$H/hc-calls.log"; lresume
+chk "a resume labels too"                             "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
+: > "$H/hc-calls.log"; endrun x "$LT" clear "${LON[@]}"
+chk "an end for /clear leaves the label"              "$(grep -c 'second-brain.session' "$H/hc-calls.log")" "0"
+: > "$H/hc-calls.log"; endrun x "$LT" resume "${LON[@]}"
+chk "an end for a resume leaves it too"               "$(grep -c 'second-brain.session' "$H/hc-calls.log")" "0"
+: > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}"
+chk "a real end removes it"                           "$(lcount 'hc [label] [t9] [second-brain.session=]')" "1"
+chk "and asks hc only for the foreground before it"   "$(paste -sd'|' "$H/hc-calls.log")" "hc [get] [t9] [--json]|hc [label] [t9] [second-brain.session=]"
+# A claude whose pid is not the terminal's foreground is a nested one, a `claude -p` from a
+# Bash tool say: it asks, and then touches nothing, at its start or at its end.
+: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID=4243 >/dev/null
+chk "a nested claude asks who runs the terminal"      "$(lverbs get)" "1"
+chk "and does not relabel the host"                   "$(lverbs label)" "0"
+: > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}" CLAUDE_PID=4243
+chk "nor take the host's label away at its end"       "$(lverbs label)" "0"
+# No CLAUDE_PID means nothing to compare, so the call goes ahead as it did before the gate.
+: > "$H/hc-calls.log"; ( unset CLAUDE_PID; start $L48 startup labelled /tmp/mapped PATH="$LBIN:$PATH" HC_TERMINAL_ID=t9 >/dev/null )
+chk "without CLAUDE_PID the label is set ungated"     "$(lcount "hc [label] [t9] [second-brain.session=$LF]")|$(lverbs get)" "1|0"
+TRIP48=$(cat "$TRIPWIRE" 2>/dev/null | wc -l | tr -d ' ')
+start $L48 startup labelled /tmp/mapped HC_TERMINAL_ID= >/dev/null; endrun x "$LT" other HC_TERMINAL_ID=
+chk "without HC_TERMINAL_ID the hooks reach no hc at all" "$(cat "$TRIPWIRE" 2>/dev/null | wc -l | tr -d ' ')" "$TRIP48"
+# A core that is down or restarting keeps hc waiting for seconds, and a hook that overruns its
+# budget is cancelled. So the whole call, the foreground check included, is bounded: a hung hc
+# must hold neither hook for long, and the recap stamp, which the end hook writes before the
+# removal, must still land.
+env HOME="$H" "$SK" --set auto_recap notify >/dev/null 2>&1
+L48B=48484848-4848-4848-4848-48484848484b; LTB="$H/.claude/projects/proj/$L48B.jsonl"; turns "$LTB" 9
+S48=$(date +%s)
+start $L48B startup hung-hc /tmp/mapped "${LON[@]}" HC_STUB_SLEEP=8 >/dev/null
+endrun x "$LTB" prompt_input_exit "${LON[@]}" HC_STUB_SLEEP=8
+E48=$(date +%s)
+chk "a hung hc holds neither hook for long" "$([ $((E48 - S48)) -lt 8 ] && echo bounded || echo "took $((E48 - S48)) s")" "bounded"
+chk "and the end hook still stamps its recap request" "$(prop "$KB/_sessions/$TODAY/$L48B/session.md" recap_status)" "requested"
+# The helpers keep their promise under a caller's set -e and set -u: an hc that fails, or no
+# terminal id at all, must not end the caller.
+HL48="$PLUGIN/skills/common/obsidian_helpers.sh"
+chk "a failing hc does not end a set -e caller" \
+    "$(env HOME="$H" "${LON[@]}" HC_STUB_EXIT=3 bash -c 'source "$1" >/dev/null 2>&1; set -e; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
+chk "an unset terminal id does not end a set -u caller" \
+    "$(env -u HC_TERMINAL_ID HOME="$H" bash -c 'source "$1" >/dev/null 2>&1; set -u; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
+
 # The tripwire once more, after the last case that could reach it: case 36 runs before the
-# ccfind cases, the only callers of herdr-app and hc.
+# ccfind cases and case 48, the callers of herdr-app and hc.
 if [ -s "$TRIPWIRE" ]; then
     no "no case reached the real herdr, herdr-app or hc"
     echo "         attempts:"; sed 's/^/           /' "$TRIPWIRE"

@@ -489,6 +489,67 @@ rename_herdr_agent() {
     return 0
 }
 
+# Label the hc terminal hosting this session with its session folder, so whatever shows
+# the terminal (the Herdr app's Files panel) can show the folder without guessing it
+# from a working directory (ADR-0012). Declared, never detected: outside an hc terminal
+# nothing is set. Idempotent, so every SessionStart re-sets the same value and a /clear
+# changes nothing.
+# Args: $1=absolute session folder (empty → no-op)
+# Never returns non-zero and prints nothing: a hook's stdout is its JSON payload, and a
+# label is never worth failing a hook for.
+label_hc_terminal() {
+    [ -n "${1:-}" ] || return 0
+    _hc_session_label "$1"
+}
+
+# Remove that label at a real SessionEnd, in hc's documented `key=` form. The key is
+# all removal needs, so the end hook can call this before it resolves the folder.
+# Returns: always 0; output suppressed, as above
+unlabel_hc_terminal() {
+    _hc_session_label ""
+}
+
+# The one place that knows the key and how to reach hc, so setting and removing cannot
+# drift apart. Hooks may run with a minimal PATH; hc installs to ~/.local/bin, which the
+# clouddesk's non-interactive PATH lacks.
+#
+# Only the session the terminal runs may touch its label. A nested claude, such as a
+# `claude -p` run from a Bash tool, inherits $HC_TERMINAL_ID as well, and without this
+# gate it would relabel the host with its own folder and then remove the host's label at
+# its own end. So when $CLAUDE_PID is set, the label is written only if hc reports that pid
+# as the terminal's foreground process. That takes hc's `foreground` to be the claude
+# process itself, which holds for a direct launch and for `env … claude`; a wrapper script
+# that runs claude without exec would show its own pid, and for that user the label would
+# never be set. Without $CLAUDE_PID there is nothing to compare, so the call goes ahead.
+#
+# The whole job, the check and the write together, is bounded at about half a second: a
+# core that is down or restarting keeps hc waiting for seconds while it tries to start one,
+# and a hook that overruns its budget is cancelled. The check runs as a plain pipeline, not
+# inside $(...), so its hc and jq are direct children of the job and go with it when it is
+# cut off. It all runs in a subshell with its output discarded, because bash reports a
+# background job it killed on the shell's own stderr.
+# Args: $1=value (empty → remove)
+_hc_session_label() {
+    [ -n "${HC_TERMINAL_ID:-}" ] || return 0
+    (
+        hc_bin=$(command -v hc 2>/dev/null || echo "$HOME/.local/bin/hc")
+        [ -x "$hc_bin" ] || exit 0
+        {
+            if [ -n "${CLAUDE_PID:-}" ]; then
+                "$hc_bin" get "$HC_TERMINAL_ID" --json \
+                    | jq -e --arg pid "$CLAUDE_PID" '(.foreground.pid | tostring) == $pid' || exit 0
+            fi
+            exec "$hc_bin" label "$HC_TERMINAL_ID" "second-brain.session=$1"
+        } &
+        pid=$! n=0
+        while kill -0 "$pid" 2>/dev/null; do
+            [ "$n" -lt 18 ] || { pkill -P "$pid"; kill "$pid"; break; }
+            sleep 0.02; n=$((n + 1))
+        done
+    ) >/dev/null 2>&1 || true
+    return 0
+}
+
 # Resolve an existing session folder. Never creates anything, never guesses a
 # date: returns empty when the session has no folder yet, so callers decide.
 # Args: $1=kb_path, $2=session_id
@@ -701,6 +762,9 @@ export -f reverse_lines
 export -f read_custom_title
 export -f rename_terminal_window
 export -f rename_herdr_agent
+export -f label_hc_terminal
+export -f unlabel_hc_terminal
+export -f _hc_session_label
 export -f resolve_session_folder
 export -f transcript_forked_from
 export -f rebuild_session_md
