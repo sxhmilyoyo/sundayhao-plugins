@@ -494,24 +494,65 @@ rename_herdr_agent() {
 # from a working directory (ADR-0012). Declared, never detected: outside an hc terminal
 # nothing is set. Idempotent, so every SessionStart re-sets the same value and a /clear
 # changes nothing.
+#
+# The write runs in a background job that the hook does not wait for, and retries for about
+# ten seconds. Made inside the start hook, it landed in one start of four on the clouddesk:
+# a session start is that machine's busiest moment (Claude Code's first render, a dozen MCP
+# servers spawning, every plugin's start hooks), and hc stalled or missed the half-second
+# bound. The job leaves the hook's process group through spawn_detached's double fork,
+# because Claude Code kills that group when it cancels a hook: measured on both machines, a
+# plain `&` child and a `( … & )` child died at a 2 s hook timeout and the double fork lived,
+# while a hook that exits normally leaves all three alone. Its stdin, stdout and stderr are
+# /dev/null, so Claude Code is never left waiting on the hook's output pipe.
 # Args: $1=absolute session folder (empty → no-op)
 # Never returns non-zero and prints nothing: a hook's stdout is its JSON payload, and a
 # label is never worth failing a hook for.
 label_hc_terminal() {
-    [ -n "${1:-}" ] || return 0
-    _hc_session_label "$1"
+    [ -n "${1:-}" ] && [ -n "${HC_TERMINAL_ID:-}" ] || return 0
+    command -v hc >/dev/null 2>&1 || [ -x "$HOME/.local/bin/hc" ] || return 0
+    spawn_detached "${BASH:-bash}" -c '. "$1" >/dev/null 2>&1; _hc_session_label_retry "$2"' \
+        _ "$_SB_COMMON_DIR/obsidian_helpers.sh" "$1" || true
+    return 0
 }
 
-# Remove that label at a real SessionEnd, in hc's documented `key=` form. The key is
-# all removal needs, so the end hook can call this before it resolves the folder.
+# Remove that label at a real SessionEnd, in hc's documented `key=` form. Synchronous and
+# bounded, unlike the write: the gate needs this claude alive and in the terminal's
+# foreground, which it still is while its end hook runs and is not a moment later, so a
+# removal left to a background job would be refused. Finishing first also means a session
+# started next in the same terminal always labels after it. It landed in every test.
 # Returns: always 0; output suppressed, as above
 unlabel_hc_terminal() {
-    _hc_session_label ""
+    [ -n "${HC_TERMINAL_ID:-}" ] || return 0
+    ( _hc_session_label_once "" ) >/dev/null 2>&1 || true
+    return 0
 }
 
-# The one place that knows the key and how to reach hc, so setting and removing cannot
-# drift apart. Hooks may run with a minimal PATH; hc installs to ~/.local/bin, which the
-# clouddesk's non-interactive PATH lacks.
+# The background half of label_hc_terminal: an attempt of up to about two seconds, then
+# another a second later, until the label is written, claude is gone, or about ten seconds
+# have passed
+# (SECOND_BRAIN_LABEL_RETRY_S shortens that for tests). Each attempt runs the whole gate
+# again, so a session that has exited is never labelled late, and a claude that is not in
+# the foreground group is refused on every attempt rather than once: a nested one keeps
+# being refused until it exits or the window closes, at the cost of a few quick `hc get`
+# calls, and a view of the foreground that lags a moment cannot lose the label for good,
+# as a single refusal would. One race remains: an attempt
+# whose gate has just passed can land after claude exits and its end hook removes the
+# label. That is harmless, because the panel trusts a label only while claude is the
+# terminal's foreground program.
+# Args: $1=value
+_hc_session_label_retry() {
+    local deadline=$(( $(date +%s) + ${SECOND_BRAIN_LABEL_RETRY_S:-10} ))
+    while :; do
+        _hc_session_label_once "$1" 70
+        [ $? -eq 2 ] || return 0
+        [ "$(date +%s)" -lt "$deadline" ] || return 0
+        sleep 1
+    done
+}
+
+# One attempt at the label, the one place that knows the key and how to reach hc, so
+# setting and removing cannot drift apart. Hooks may run with a minimal PATH; hc installs
+# to ~/.local/bin, which the clouddesk's non-interactive PATH lacks.
 #
 # Only the session the terminal runs may touch its label. A nested claude, such as a
 # `claude -p` run from a Bash tool, inherits $HC_TERMINAL_ID as well, and without this
@@ -530,35 +571,40 @@ unlabel_hc_terminal() {
 # $CLAUDE_PID that names no live process is refused as well, and without $CLAUDE_PID there
 # is nothing to compare, so the call goes ahead.
 #
-# The whole job, the check and the write together, is bounded at about half a second: a
-# core that is down or restarting keeps hc waiting for seconds while it tries to start one,
-# and a hook that overruns its budget is cancelled. The check runs as a plain pipeline, not
-# inside $(...), so its hc and jq are direct children of the job and go with it when it is
-# cut off; the ps before it is local and does not hang, so a capture is fine there. It all
-# runs in a subshell with its output discarded, because bash reports a background job it
-# killed on the shell's own stderr.
-# Args: $1=value (empty → remove)
-_hc_session_label() {
-    [ -n "${HC_TERMINAL_ID:-}" ] || return 0
-    (
-        hc_bin=$(command -v hc 2>/dev/null || echo "$HOME/.local/bin/hc")
-        [ -x "$hc_bin" ] || exit 0
-        {
-            if [ -n "${CLAUDE_PID:-}" ]; then
-                pg=$(ps -o pgid= -p "$CLAUDE_PID" | tr -d ' ')
-                [ -n "$pg" ] || exit 0
-                "$hc_bin" get "$HC_TERMINAL_ID" --json \
-                    | jq -e --arg pg "$pg" '(.foreground.pid | tostring) == $pg' || exit 0
-            fi
-            exec "$hc_bin" label "$HC_TERMINAL_ID" "second-brain.session=$1"
-        } &
-        pid=$! n=0
-        while kill -0 "$pid" 2>/dev/null; do
-            [ "$n" -lt 18 ] || { pkill -P "$pid"; kill "$pid"; break; }
-            sleep 0.02; n=$((n + 1))
-        done
-    ) >/dev/null 2>&1 || true
-    return 0
+# The attempt, the check and the write together, is bounded: a core that is down or
+# restarting keeps hc waiting for seconds while it tries to start one. About half a second
+# for the end hook's removal, which the hook waits on; about two seconds for an attempt in
+# the background job, which nothing waits on, and which a busy machine needs: there even a
+# working hc can take longer than half a second, and a bound that cuts every attempt short
+# would retry until the window closed without ever landing. The
+# check runs as a plain pipeline, not inside $(...), so its hc and jq are direct children of
+# the job and go with it when it is cut off; the ps before it is local and does not hang, so
+# a capture is fine there. jq reads the answer with `-n` and `input`, so an empty answer is an
+# error rather than a pass: jq 1.6, the clouddesk's, exits 0 under a plain `-e` when it reads
+# nothing at all, and a hc that answered nothing would have let the write through.
+# Args: $1=value (empty → remove), $2=bound in 20 ms polls (default 18, about half a second)
+# Returns: 0 written; 1 refused for good (no hc, or claude is gone); 2 not this time (no
+# answer in time, or claude not in the foreground group), so another attempt may land
+_hc_session_label_once() {
+    local hc_bin pid n=0 limit="${2:-18}"
+    hc_bin=$(command -v hc 2>/dev/null || echo "$HOME/.local/bin/hc")
+    [ -x "$hc_bin" ] || return 1
+    {
+        if [ -n "${CLAUDE_PID:-}" ]; then
+            pg=$(ps -o pgid= -p "$CLAUDE_PID" | tr -d ' ')
+            [ -n "$pg" ] || exit 1
+            "$hc_bin" get "$HC_TERMINAL_ID" --json \
+                | jq -en --arg pg "$pg" 'input | (.foreground.pid | tostring) == $pg' >/dev/null
+            [ $? -eq 0 ] || exit 2
+        fi
+        "$hc_bin" label "$HC_TERMINAL_ID" "second-brain.session=$1" || exit 2
+    } &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        [ "$n" -lt "$limit" ] || { pkill -P "$pid"; kill "$pid"; wait "$pid"; return 2; }
+        sleep 0.02; n=$((n + 1))
+    done
+    wait "$pid"
 }
 
 # Resolve an existing session folder. Never creates anything, never guesses a
@@ -775,7 +821,8 @@ export -f rename_terminal_window
 export -f rename_herdr_agent
 export -f label_hc_terminal
 export -f unlabel_hc_terminal
-export -f _hc_session_label
+export -f _hc_session_label_retry
+export -f _hc_session_label_once
 export -f resolve_session_folder
 export -f transcript_forked_from
 export -f rebuild_session_md

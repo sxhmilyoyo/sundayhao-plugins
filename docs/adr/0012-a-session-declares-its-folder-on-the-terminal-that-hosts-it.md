@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-11-03
 implementation: 2.24.0
-amended: 2026-11-03, in 2.24.1 (the hooks' guard compares process groups)
+amended: 2026-11-03, in 2.24.1 (the guard compares process groups) and 2.24.2 (a retrying start write)
 ---
 
 # A session declares its folder on the terminal that hosts it
@@ -61,6 +61,11 @@ after a SIGKILL left zsh in front, and neither is true for a fresh claude in its
 toolbox starts Claude Code as a shim that runs a wrapper that runs it, with no `exec` at any step, so hc
 reported the shim and the comparison refused every session there. Amended to the group comparison in 2.24.1.
 
+**Write the label inside the start hook.** Rejected after shipping in 2.24.1. A session start is a busy
+machine's busiest moment, Claude Code's first render with a dozen MCP servers spawning and every plugin's start
+hooks, and on the clouddesk a write made there landed in one start of four: hc stalled or missed the hook's
+half-second bound. Amended in 2.24.2 to a detached job that retries.
+
 **Remove the label first thing in the end hook.** Rejected. Removal costs milliseconds, and its only slow case
 is a core that is down or restarting, when a stale label costs nothing because the Herdr app, a client of that
 same core, shows nothing either. Ahead of the recap stamp, that case would risk the one silent failure the end
@@ -83,9 +88,11 @@ The key is a contract between two halves that version together: the hooks in thi
 from `tools/herdr-app/mods/session-folder/`, which is installed by copy. Renaming or reshaping it means
 changing both, on every machine, at once, which is why it is recorded here.
 
-Each SessionStart pays one hc call, and each real SessionEnd one more, after its stamp. A call is bounded at
-about half a second, the foreground check included, because a core that is down keeps hc waiting for seconds
-and a hook over its budget is cancelled. Measured, a call takes 8–17 ms on the Linux host and 55–75 ms on the
-Mac.
+A SessionStart pays almost nothing for the label: it hands the write to a detached job and returns. The job
+leaves the hook's process group, because Claude Code kills that group when it cancels a hook, and tries for
+about ten seconds, each attempt running the whole gate again with about two seconds to finish, until the label
+is written or claude is gone. A real SessionEnd still removes the label itself, after its stamp, bounded at
+about half a second: the gate needs claude alive and in front, which it is only while its end hook runs. On a
+quiet machine a call takes 8–17 ms on the Linux host and 55–75 ms on the Mac.
 
 Any other consumer can read the label without new plumbing; the Files panel is the first.

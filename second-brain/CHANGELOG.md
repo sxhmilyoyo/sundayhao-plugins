@@ -7,6 +7,31 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.2] - 2026-11-03
+
+### Fixed
+- **The start hook's label lands on a busy clouddesk: the write runs in a detached job that retries.** Made
+  inside the start hook, 2.24.1's write landed in one clouddesk start of four. A session start is that
+  machine's busiest moment, with Claude Code's first render, a dozen MCP servers spawning and every plugin's
+  start hooks, and hc stalled or missed the half-second bound. `label_hc_terminal`, at every start and resume,
+  now hands the write to a background job the hook does not wait for. The job leaves the hook's process group
+  through `spawn_detached`'s double fork, because Claude Code kills that group when it cancels a hook:
+  measured on both machines, a plain `&` child and a `( … & )` child died at a 2 s hook timeout and the double
+  fork lived, while a hook that exits normally leaves all three alone. Its stdin, stdout and stderr are
+  `/dev/null`. It tries for up to about ten seconds, each attempt running the whole gate again with about two
+  seconds to finish, since nothing waits on it, and a second's pause between; it stops as soon as the label is
+  written or claude is gone. The removal at a real end stays synchronous, bounded at about half a second,
+  because the gate needs claude alive and in front, which it is only while its end hook runs. Also fixed in
+  the gate: on jq 1.6, the clouddesk's, a plain `jq -e` reads no input as a pass, so an `hc get` that answered
+  nothing let the write through. The answer is now read with `jq -n` and `input`, which fails on no input.
+  Verified in real session starts launched the way a Herdr tab launches them, with a copy of this tree whose
+  label key was renamed: on the clouddesk, 5 consecutive starts of the final code at a load of 47 to 50, three
+  of them at once, all labelled within 10 s and cleared at exit, and 2 on the Mac. Regression case 48 (24
+  checks) now waits for the asynchronous write with a deadline and lets each check's jobs finish before the
+  next; it covers a write that fails at first and lands on a retry, a start hook that returns at once while hc
+  hangs, a job that gives up after its window with nothing left running, a nested claude refused on every
+  attempt, and an empty answer from hc. Against the 2.24.1 helper it fails the retry checks.
+
 ## [2.24.1] - 2026-11-03
 
 ### Fixed

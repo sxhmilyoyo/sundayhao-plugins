@@ -1902,12 +1902,27 @@ echo "== 48. the hooks label the hosting hc terminal with the session folder (AD
 # a pid that has already exited. They are started through perl inside $(...), never with a bare
 # `&` or a `( )` subshell, because a caller with job control on makes bash give those a group of
 # their own, and print a setpgid complaint wherever that is not permitted.
+#
+# The start write is a detached job that retries for about ten seconds, so a check waits for the
+# stub's call with a deadline rather than assume it happened when the hook returned, and a check
+# that nothing lands first waits out the job. The stub hangs for good under HC_STUB_SLEEP, with
+# exec so that killing it ends the hang, and fails its first HC_STUB_FAIL_FIRST calls without an
+# answer; SECOND_BRAIN_LABEL_RETRY_S shortens the job's window. The job's deadline is whole seconds
+# from `date +%s`, so an n-second window can close as little as n-1 seconds after the job starts,
+# depending on where in a second it started. A check that counts attempts therefore gets a 5 s
+# window: at least 4 s, which always leaves room for a second attempt after a hung first one of
+# about 2 s. At 3 s, whether a second attempt began depended on that phase.
 LBIN="$ROOT/lbin"; mkdir -p "$LBIN"
 cat > "$LBIN/hc" << 'STUB'
 #!/bin/bash
 { printf hc; printf ' [%s]' "$@"; printf '\n'; } >> "$HOME/hc-calls.log"
-[ -z "${HC_STUB_SLEEP-}" ] || sleep "$HC_STUB_SLEEP"
+[ -z "${HC_STUB_SLEEP-}" ] || exec sleep "$HC_STUB_SLEEP"
+if [ -n "${HC_STUB_FAIL_FIRST-}" ]; then
+    n=$(( $(cat "$HOME/hc-stub-calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$HOME/hc-stub-calls"
+    [ "$n" -gt "$HC_STUB_FAIL_FIRST" ] || exit 1
+fi
 if [ "$1" = get ]; then
+    [ -z "${HC_STUB_SILENT-}" ] || exit 0
     if [ -n "${HC_STUB_FG_PID-}" ]; then printf '{"foreground":{"pid":%s}}\n' "$HC_STUB_FG_PID"
     else printf '{"foreground":null}\n'; fi
 fi
@@ -1922,40 +1937,73 @@ L48=48484848-4848-4848-4848-484848484848; LT="$H/.claude/projects/proj/$L48.json
 LF="$KB/_sessions/$TODAY/$L48"; LON=(PATH="$LBIN:$PATH" HC_TERMINAL_ID=t9 CLAUDE_PID=$$ HC_STUB_FG_PID="$G48")
 lcount(){ grep -cxF "$1" "$H/hc-calls.log"; }
 lverbs(){ grep -c "^hc \[$1\] " "$H/hc-calls.log"; }
+lwait(){ # $1=exact call line; prints its count as soon as it is there, else 0 after about 5 s
+    local i=0
+    until [ "$(lcount "$1")" -gt 0 ] || [ "$i" -ge 50 ]; do sleep 0.1; i=$((i + 1)); done
+    lcount "$1"; }
+# A job can outlive its check, retrying on a loaded machine, and its calls would then land in the
+# next check's log, so every check starts once the last job has finished. The jobs carry their
+# value, which is under $KB, on their command line.
+ldrain(){ # until no label job of this case is left, up to about 15 s
+    local i=0
+    while pgrep -f "$KB/_sessions" >/dev/null 2>&1 && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done; }
+lreset(){ ldrain; : > "$H/hc-calls.log"; : > "$H/hc-stub-calls"; }
 lresume(){ printf '{"session_id":"%s","cwd":"/tmp/mapped","transcript_path":"%s","source":"resume"}' "$L48" "$LT" \
     | env HOME="$H" HERDR_PANE_ID= TMUX_PANE= "${LON[@]}" "$PLUGIN/hooks/scripts/session_resume.sh" >/dev/null 2>&1; }
-: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" >/dev/null
-chk "a launch labels its terminal with the folder"    "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
-: > "$H/hc-calls.log"; start $L48 clear labelled /tmp/mapped "${LON[@]}" >/dev/null
-chk "a /clear sets the same label again"              "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
-: > "$H/hc-calls.log"; lresume
-chk "a resume labels too"                             "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
-: > "$H/hc-calls.log"; endrun x "$LT" clear "${LON[@]}"
+lreset; start $L48 startup labelled /tmp/mapped "${LON[@]}" >/dev/null
+chk "a launch labels its terminal with the folder"    "$(lwait "hc [label] [t9] [second-brain.session=$LF]")" "1"
+lreset; start $L48 clear labelled /tmp/mapped "${LON[@]}" >/dev/null
+chk "a /clear sets the same label again"              "$(lwait "hc [label] [t9] [second-brain.session=$LF]")" "1"
+lreset; lresume
+chk "a resume labels too"                             "$(lwait "hc [label] [t9] [second-brain.session=$LF]")" "1"
+lreset; endrun x "$LT" clear "${LON[@]}"
 chk "an end for /clear leaves the label"              "$(grep -c 'second-brain.session' "$H/hc-calls.log")" "0"
-: > "$H/hc-calls.log"; endrun x "$LT" resume "${LON[@]}"
+lreset; endrun x "$LT" resume "${LON[@]}"
 chk "an end for a resume leaves it too"               "$(grep -c 'second-brain.session' "$H/hc-calls.log")" "0"
-: > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}"
+lreset; endrun x "$LT" other "${LON[@]}"
 chk "a real end removes it"                           "$(lcount 'hc [label] [t9] [second-brain.session=]')" "1"
 chk "and asks hc only for the foreground before it"   "$(paste -sd'|' "$H/hc-calls.log")" "hc [get] [t9] [--json]|hc [label] [t9] [second-brain.session=]"
 # Claude Code run by a wrapper that does not exec it is in the foreground group without leading
 # it: the clouddesk's toolbox runs a shim that runs a wrapper that runs it. The group is what
 # counts, and a pid comparison refused every session there.
-: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$W48" >/dev/null
-chk "a claude in the foreground group but not leading it labels" "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
+lreset; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$W48" >/dev/null
+chk "a claude in the foreground group but not leading it labels" "$(lwait "hc [label] [t9] [second-brain.session=$LF]")" "1"
 # A claude in a group of its own is a nested one, a `claude -p` from a Bash tool say: it asks,
-# and then touches nothing, at its start or at its end.
-: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$N48" >/dev/null
-chk "a nested claude asks who runs the terminal"      "$(lverbs get)" "1"
+# and then touches nothing, at its start or at its end. It is refused on every attempt rather
+# than once, so it keeps asking until its window closes, and never writes.
+lreset
+start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$N48" SECOND_BRAIN_LABEL_RETRY_S=5 >/dev/null; ldrain
+chk "a nested claude is asked about on every attempt" "$([ "$(lverbs get)" -ge 2 ] && echo each || echo "asked $(lverbs get)x")" "each"
 chk "and does not relabel the host"                   "$(lverbs label)" "0"
-: > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}" CLAUDE_PID="$N48"
+lreset; endrun x "$LT" other "${LON[@]}" CLAUDE_PID="$N48"
 chk "nor take the host's label away at its end"       "$(lverbs label)" "0"
 # A CLAUDE_PID that names no live process has no group, so it is refused before hc is asked.
-: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$D48" >/dev/null
+lreset; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$D48" >/dev/null; ldrain
 chk "a CLAUDE_PID that is not running is refused"     "$(lverbs label)|$(lverbs get)" "0|0"
 # No CLAUDE_PID means nothing to compare, so the call goes ahead as it did before the gate. The
 # helper reads an empty value as unset, which clears it here without a subshell.
-: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID= >/dev/null
-chk "without CLAUDE_PID the label is set ungated"     "$(lcount "hc [label] [t9] [second-brain.session=$LF]")|$(lverbs get)" "1|0"
+lreset; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID= >/dev/null
+chk "without CLAUDE_PID the label is set ungated"     "$(lwait "hc [label] [t9] [second-brain.session=$LF]")|$(lverbs get)" "1|0"
+# On a busy machine hc misses the first attempts or never answers at all. The start hook must not
+# wait either way, a write that fails at first must land on a retry, and a job that never gets an
+# answer must give up after its window with nothing left running.
+lreset
+start $L48 startup labelled /tmp/mapped "${LON[@]}" HC_STUB_FAIL_FIRST=2 >/dev/null
+chk "a write that fails at first lands on a retry"    "$(lwait "hc [label] [t9] [second-brain.session=$LF]")|$(lverbs get)" "1|3"
+# An hc that answers nothing at all, exit 0 and no output, must not pass the gate on any attempt:
+# under a plain `jq -e`, jq 1.6 (the clouddesk's) reads no input as a pass.
+lreset; start $L48 startup labelled /tmp/mapped "${LON[@]}" HC_STUB_SILENT=1 SECOND_BRAIN_LABEL_RETRY_S=5 >/dev/null; ldrain
+chk "an empty answer from hc never passes the gate"   "$(lverbs label)|$([ "$(lverbs get)" -ge 2 ] && echo asked || echo "asked $(lverbs get)x")" "0|asked"
+WIN48=5; lreset; S48=$(date +%s)
+start $L48 startup labelled /tmp/mapped "${LON[@]}" HC_STUB_SLEEP=41 SECOND_BRAIN_LABEL_RETRY_S=$WIN48 >/dev/null
+E48=$(date +%s)
+chk "a start hook returns promptly while hc hangs" "$([ $((E48 - S48)) -lt 3 ] && echo prompt || echo "took $((E48 - S48)) s")" "prompt"
+ldrain; T48=$(date +%s)
+chk "and its write retries, then gives up"            "$(lcount "hc [label] [t9] [second-brain.session=$LF]")|$([ "$(lverbs get)" -ge 2 ] && echo retried || echo "asked $(lverbs get)x")" "0|retried"
+# The window, then at most the one-second pause and one more attempt of about two seconds, plus
+# the start hook's own time and a second of rounding at each end: seven seconds over the window.
+chk "within its window and one more attempt"          "$([ $((T48 - S48)) -le $((WIN48 + 7)) ] && echo yes || echo "after $((T48 - S48)) s")" "yes"
+chk "leaving no process behind"                       "$(pgrep -f "$LF" | wc -l | tr -d ' ')|$(pgrep -fx 'sleep 41' | wc -l | tr -d ' ')" "0|0"
 TRIP48=$(cat "$TRIPWIRE" 2>/dev/null | wc -l | tr -d ' ')
 start $L48 startup labelled /tmp/mapped HC_TERMINAL_ID= >/dev/null; endrun x "$LT" other HC_TERMINAL_ID=
 chk "without HC_TERMINAL_ID the hooks reach no hc at all" "$(cat "$TRIPWIRE" 2>/dev/null | wc -l | tr -d ' ')" "$TRIP48"
@@ -1966,7 +2014,7 @@ chk "without HC_TERMINAL_ID the hooks reach no hc at all" "$(cat "$TRIPWIRE" 2>/
 env HOME="$H" "$SK" --set auto_recap notify >/dev/null 2>&1
 L48B=48484848-4848-4848-4848-48484848484b; LTB="$H/.claude/projects/proj/$L48B.jsonl"; turns "$LTB" 9
 S48=$(date +%s)
-start $L48B startup hung-hc /tmp/mapped "${LON[@]}" HC_STUB_SLEEP=8 >/dev/null
+start $L48B startup hung-hc /tmp/mapped "${LON[@]}" HC_STUB_SLEEP=8 SECOND_BRAIN_LABEL_RETRY_S=1 >/dev/null
 endrun x "$LTB" prompt_input_exit "${LON[@]}" HC_STUB_SLEEP=8
 E48=$(date +%s)
 chk "a hung hc holds neither hook for long" "$([ $((E48 - S48)) -lt 8 ] && echo bounded || echo "took $((E48 - S48)) s")" "bounded"
@@ -1975,7 +2023,7 @@ chk "and the end hook still stamps its recap request" "$(prop "$KB/_sessions/$TO
 # terminal id at all, must not end the caller.
 HL48="$PLUGIN/skills/common/obsidian_helpers.sh"
 chk "a failing hc does not end a set -e caller" \
-    "$(env HOME="$H" "${LON[@]}" HC_STUB_EXIT=3 bash -c 'source "$1" >/dev/null 2>&1; set -e; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
+    "$(env HOME="$H" "${LON[@]}" HC_STUB_EXIT=3 SECOND_BRAIN_LABEL_RETRY_S=0 bash -c 'source "$1" >/dev/null 2>&1; set -e; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
 chk "an unset terminal id does not end a set -u caller" \
     "$(env -u HC_TERMINAL_ID HOME="$H" bash -c 'source "$1" >/dev/null 2>&1; set -u; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
 kill "$W48" "$N48" 2>/dev/null
