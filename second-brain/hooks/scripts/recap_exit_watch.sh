@@ -1,17 +1,26 @@
 #!/bin/bash
 # recap_exit_watch.sh - end a recap session once its recap is done.
 #
-#   recap_exit_watch.sh <subject_session_folder> <herdr_pane> <recap_child_pid>
+#   recap_exit_watch.sh <subject_session_folder> <terminal> <recap_child_pid>
 #
-# Started in the background by recap_child.sh, and only under Herdr, never by hand. A recap
+# <terminal> is the Herdr TUI pane id or the Herdr app's hc terminal id, whichever host
+# owns the recap's terminal; the host is read from the environment (terminal_host).
+# Started in the background by recap_child.sh, and only under a terminal host, never by hand. A recap
 # session is interactive so a person can watch it and step in, and ADR-0007's one question is
 # answered there, so nothing ended it when the skill wrote `done`: a finished recap held its
 # memory until someone closed the pane, once for 66 hours (ADR-0010).
 #
-# It ends the session the way the ticket dispatcher ends its own: /exit typed through Herdr,
-# and only into a session Herdr shows visibly idle at a prompt box that is empty or holds only
+# It ends the session the way the ticket dispatcher ends its own: /exit typed through the
+# host, and only into a session the host shows idle at a prompt box that is empty or holds only
 # dim ghost text. Every check that fails leaves the session open, which is what happened
 # before this existed, with the reason in the subject's recap.log.
+#
+# Under the Herdr app (ADR-0011) the same five steps run through hc, with two differences
+# that are hc's. `hc read` is plain text, so dim ghost text and a typed line look the same:
+# only a box that is exactly empty takes /exit, and any text leaves the session open, with
+# the reason saying so. And /exit is typed as key presses with `hc keys`, never `hc send`:
+# send wraps what it pastes in hc's <hc> tag for a program that reports status, so the
+# session would receive a prompt, not a command (measured 2026-11-03).
 #
 # Exit: 0 always, once running; 2 usage.
 
@@ -19,7 +28,7 @@ SUBJECT="${1:-}"
 PANE="${2:-}"
 CHILD_PID="${3:-}"
 if [ -z "$SUBJECT" ] || [ -z "$PANE" ] || [ -z "$CHILD_PID" ]; then
-    echo "Usage: $0 <subject_folder> <herdr_pane> <recap_child_pid>" >&2
+    echo "Usage: $0 <subject_folder> <terminal> <recap_child_pid>" >&2
     exit 2
 fi
 
@@ -27,7 +36,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$PLUGIN_ROOT/skills/common/obsidian_helpers.sh"
 LOG="$SUBJECT/recap.log"
-HERDR_BIN=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
+HERDR_BIN=$(herdr_bin)
+HC_BIN=$(hc_bin)
+HOST=$(terminal_host)
 
 log() {
     printf '%s exit-watch %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG" 2>/dev/null || true
@@ -60,6 +71,8 @@ bg() {
 child_alive() { kill -0 "$CHILD_PID" 2>/dev/null; }
 status() { read_frontmatter_prop "$SUBJECT/session.md" recap_status; }
 herdr_error() { jq -r '.error.code // "no answer"' "$OUT" 2>/dev/null || echo "no answer"; }
+hc_error() { jq -r '.error.kind // .error.message // "no answer"' "$OUT" 2>/dev/null || echo "no answer"; }
+hc_state() { "$HC_BIN" get "$PANE" --json 2>/dev/null | jq -r '.status.state // "none"' 2>/dev/null || echo none; }
 
 # The prompt box, read the way the ticket dispatcher reads it before it types /exit. Herdr's
 # `live_prompt_box` rule gives the box as text, so a dim placeholder reads exactly like a
@@ -122,6 +135,69 @@ while [ "$(status)" != "done" ]; do
     bg sleep "$POLL_S"
 done
 log "recap done; waiting for the session to go idle"
+
+if [ "$HOST" = "herdr-app" ]; then
+    # 2. The session has finished its turn. `done` lands mid-turn, so the turn is waited out
+    # within the TUI's bound, and the session's state is always read back from `hc get`, never
+    # taken from the wait: on a live recap (2026-11-04) `hc wait` came back at once while the
+    # turn was still running. A wait that comes back early is repeated a poll later.
+    DEADLINE=$(( $(date +%s) + IDLE_MS / 1000 ))
+    S=$(hc_state)
+    while { [ "$S" = working ] || [ "$S" = blocked ]; } && [ "$(date +%s)" -lt "$DEADLINE" ]; do
+        LEFT=$(( DEADLINE - $(date +%s) )); [ "$LEFT" -ge 1 ] || LEFT=1
+        bg "$HC_BIN" wait "$PANE" --timeout "$LEFT" > "$OUT" 2>&1
+        child_alive || exit 0
+        S=$(hc_state)
+        if [ "$S" = working ] || [ "$S" = blocked ]; then
+            [ -n "${EARLY:-}" ] || { EARLY=1
+                log "hc wait came back with the session still $S ($(jq -r '.reason // .error.kind // "no answer"' "$OUT" 2>/dev/null || echo "no answer")); waiting again"; }
+            bg sleep "$POLL_S"
+            child_alive || exit 0
+        fi
+    done
+    case "$S" in
+        idle|done) ;;
+        *) log "left open: the session did not go idle after done (hc shows $S)"; exit 0 ;;
+    esac
+    # 3. Nobody steps in. hc has no wait for "working", so the grace is polled: a turn
+    # started in it makes the session a person's, exactly as under the TUI.
+    END=$(( $(date +%s) + GRACE_MS / 1000 ))
+    while [ "$(date +%s)" -lt "$END" ]; do
+        bg sleep "$POLL_S"
+        child_alive || exit 0
+        S=$(hc_state)
+        case "$S" in
+            idle|done) ;;
+            working|blocked) log "left open: the session went back to work within the grace, so a person stepped in"; exit 0 ;;
+            *) log "left open: hc stopped showing the session ($S)"; exit 0 ;;
+        esac
+    done
+    # 4. The box is exactly empty. The box line is the last line that starts with the prompt
+    # pointer at column one; the command menu Claude Code draws above it indents its own
+    # pointer. Empty is the pointer alone, or the pointer and the no-break space Claude Code
+    # draws after it, which is how hc reads an empty box back (measured 2026-11-04 on a done
+    # recap: bytes e2 9d af c2 a0); the comparison is exact. hc returns text without
+    # attributes, so a dim ghost and a typed line read the same here, and both keep the session
+    # open: typed into either, /exit would be sent as part of a prompt.
+    EMPTY_BOX="❯$(printf '\302\240')"
+    BOXLINE=$("$HC_BIN" read "$PANE" 2>/dev/null | sed 's/[[:space:]]*$//' | grep '^❯' | tail -1)
+    case "$BOXLINE" in
+        '')  log "left open: hc shows no prompt box"; exit 0 ;;
+        '❯'|"$EMPTY_BOX") ;;
+        *)   log "left open: the prompt box holds text, typed or ghost text hc cannot tell apart"; exit 0 ;;
+    esac
+    if [ "$(status)" != "done" ]; then
+        log "left open: the subject is $(status) now, not done"
+        exit 0
+    fi
+    # 5. /exit as key presses, never `hc send` (see the header). Logged before typing, for
+    # the reason the TUI path gives. `hc keys` waits for a person to pause before it types.
+    log "typing /exit into $PANE as key presses: done, idle through the grace, prompt box empty"
+    if ! bg "$HC_BIN" keys "$PANE" / e x i t enter > "$OUT" 2>&1; then
+        log "left open: hc refused the /exit ($(hc_error))"
+    fi
+    exit 0
+fi
 
 # 2. The session has finished its turn. `done` lands in the middle of the final turn, with
 # the closing message still to stream, so the turn is waited out rather than cut off.

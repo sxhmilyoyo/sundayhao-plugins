@@ -10,14 +10,19 @@
 # recapped afterwards, or the skill marks the note it is running in and that session's
 # real work is written off as exempt. Hence a launcher.
 #
-# Two ways in, one Herdr path:
+# Two ways in, one path per terminal host (GLOSSARY.md: Terminal host):
 #
 #   --manual <folder>   a person asking for a recap or a retry. Talks to the terminal:
 #                       opens a pane under Herdr, prints a paste-able command elsewhere.
 #   --auto <folder>     the SessionEnd hook, when auto_recap is `on`. Has no terminal to
 #                       talk to, so everything it would say goes to the subject's
-#                       recap.log, and outside Herdr it does nothing at all: the subject
-#                       stays `requested` and the start-of-session notice covers it.
+#                       recap.log, and without a terminal host it does nothing at all:
+#                       the subject stays `requested` and the start-of-session notice
+#                       covers it.
+#
+# Under the Herdr TUI the pane is driven with `herdr`; under the Herdr app, with `hc`
+# (ADR-0011). The rule is the same in both: run where the shell is free, otherwise beside
+# it, which under the app means a worker with no pane.
 #
 # There is deliberately no project precondition. The recap is where the domain for
 # work in an unmapped directory is decided, so refusing to launch without one would
@@ -39,9 +44,10 @@ usage() {
 Usage: recap_launcher.sh --manual <subject_session_folder>
        recap_launcher.sh --auto   <subject_session_folder>
 
-Starts a recap of that session in a session of its own. Inside Herdr it opens a
-pane; anywhere else --manual prints the command to paste into a terminal and
---auto does nothing, leaving the start-of-session notice to ask.
+Starts a recap of that session in a session of its own. Under the Herdr TUI or
+the Herdr app it runs in the pane you left, or beside it; anywhere else --manual
+prints the command to paste into a terminal and --auto does nothing, leaving the
+start-of-session notice to ask.
 USAGE
     exit 2
 }
@@ -133,19 +139,20 @@ CHILD="$PLUGIN_ROOT/hooks/scripts/recap_child.sh"
 CMD=$(printf 'SECOND_BRAIN_RECAP_OF=%q SECOND_BRAIN_RECAP_NAME=%q SECOND_BRAIN_PARENT_PID=%q SECOND_BRAIN_PLUGIN_ROOT=%q bash %q %q' \
     "$SUBJECT" "$NAME" "${PARENT_PID:-}" "$PLUGIN_ROOT" "$CHILD" "$SUBJECT")
 
-HERDR_BIN=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
+HERDR_BIN=$(herdr_bin)
+HOST=$(terminal_host)
 
-# Outside Herdr there is no pane to open. A person gets the command to run; the hook gets
-# nothing at all, deliberately, because `on` degrading to `notify` is the documented
-# behaviour and a half-started recap would be worse than none. The subject is already
-# stamped `requested` by this point, so the notice covers it either way.
-if [ "${HERDR_ENV:-}" != "1" ] || [ -z "${HERDR_PANE_ID:-}" ] || [ ! -x "$HERDR_BIN" ]; then
+# Without a terminal host there is no pane to open. A person gets the command to run; the
+# hook gets nothing at all, deliberately, because `on` degrading to `notify` is the
+# documented behaviour and a half-started recap would be worse than none. The subject is
+# already stamped `requested` by this point, so the notice covers it either way.
+if [ "$HOST" = "none" ]; then
     if [ "$MODE" = "auto" ]; then
-        say "not under Herdr, leaving the subject requested for the notice"
+        say "no terminal host to open a session in, leaving the subject requested for the notice"
         exit 0
     fi
     KB_PATH=$(get_kb_path 2>/dev/null) || KB_PATH=""
-    echo "Not running under Herdr. Run this in a new terminal:"
+    echo "Not running under the Herdr TUI or the Herdr app. Run this in a new terminal:"
     echo ""
     [ -n "$KB_PATH" ] && echo "  cd $(printf '%q' "$KB_PATH") && $CMD" || echo "  $CMD"
     exit 0
@@ -153,6 +160,100 @@ fi
 
 KB_PATH=$(get_kb_path 2>/dev/null)
 [ -n "$KB_PATH" ] || fail "knowledge bank not configured"
+
+# ── The Herdr app: the same rule, through hc (ADR-0011) ──────────────────────────
+# An app pane is an hc terminal, and the app's window lives on another machine: nothing
+# here can split a pane, and nothing needs to. The pane you left is $HC_TERMINAL_ID and
+# comes back to its shell prompt when the session exits, so a recap is typed into it with
+# `hc send`, which hands a shell its text raw. When that pane is busy the recap runs as a
+# worker of its own: an hc terminal with no pane, listed in the app's agents sidebar and
+# opened in peek from there.
+#
+# "Free" is `hc get`'s own fact, the foreground process being the pane's root shell, read
+# by hc_terminal_state. Under --manual from inside a Claude session the foreground is that
+# claude, so the pane reads busy and the recap becomes a worker, which is right.
+if [ "$HOST" = "herdr-app" ]; then
+    HC_BIN=$(hc_bin)
+    STATE=$(hc_terminal_state "$HC_TERMINAL_ID")
+    if [ "$MODE" = "auto" ]; then
+        # The same bounded wait as the TUI path below, for the same reason: this process
+        # descends from the ending session's claude, which still holds the pane's foreground
+        # on the first read. Validated, like the TUI's.
+        ATTEMPTS="${SECOND_BRAIN_PANE_WAIT_ATTEMPTS:-20}"
+        case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=20 ;; esac
+        i=0
+        while [ "$STATE" = "busy" ] && [ "$i" -lt "$ATTEMPTS" ]; do
+            sleep 0.5
+            i=$(( i + 1 ))
+            STATE=$(hc_terminal_state "$HC_TERMINAL_ID")
+        done
+    fi
+    if [ "$STATE" = "free" ]; then
+        if [ "$MODE" = "auto" ]; then
+            # `hc send` pastes the text and presses Enter once nobody has typed for about
+            # three seconds. A shell gets it as typed: the <hc> tag hc wraps around a
+            # message is added only for a program that reports status, and a shell reports
+            # none, which is also why a slash command can never be sent this way (the exit
+            # watcher types with `hc keys`). What reads as free here is what reads as free
+            # under the TUI, a line typed but not entered included, and it is left alone for
+            # the same reason: the shell reports a command it cannot find, the subject stays
+            # `requested`, the notice offers it.
+            if ! "$HC_BIN" send "$HC_TERMINAL_ID" "$CMD" >/dev/null 2>&1; then
+                fail "could not start the recap in terminal $HC_TERMINAL_ID"
+            fi
+            say "reusing terminal $HC_TERMINAL_ID for $NAME"
+            exit 0
+        fi
+        # --manual at a prompt: become the recap, exactly as under the TUI.
+        echo "Recapping $(basename "$SUBJECT") as $NAME in this pane"
+        export SECOND_BRAIN_RECAP_OF="$SUBJECT"
+        export SECOND_BRAIN_RECAP_NAME="$NAME"
+        export SECOND_BRAIN_PARENT_PID="$PARENT_PID"
+        export SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN_ROOT"
+        exec bash "$CHILD" "$SUBJECT"
+    fi
+    # Busy or gone: a worker. --no-notify, because hc otherwise types a note about the
+    # worker into its parent, and the parent here is a shell prompt, where a note runs as a
+    # command, or a session that did not ask. --outlive-parent, because the parent's program
+    # is the pane's shell: without it, closing the pane you left would end the recap
+    # mid-write. --cwd is the vault, for the reason the TUI split gives it. $CMD travels as
+    # one string, which hc runs under the shell, so the markers stay inline and the worker
+    # gets the core's environment and nothing of ours. A name is unique among live
+    # terminals; a taken one is retried once with a suffix, since the session is named by
+    # -n either way.
+    WORKER=""
+    RUN_JSON=""
+    RUN_ERR="${TMPDIR:-/tmp}/recap-launcher-$$.err"
+    for TRY in "$NAME" "$(printf '%s' "$NAME" | cut -c1-30)-2"; do
+        RUN_JSON=$("$HC_BIN" run --json --bg --no-notify --outlive-parent --name "$TRY" \
+            --cwd "$KB_PATH" -- "$CMD" 2>"$RUN_ERR")
+        WORKER=$(printf '%s' "$RUN_JSON" | jq -r '.address // empty' 2>/dev/null)
+        [ -n "$WORKER" ] && break
+        printf '%s %s' "$RUN_JSON" "$(cat "$RUN_ERR" 2>/dev/null)" | grep -q name_taken || break
+    done
+    if [ -z "$WORKER" ]; then
+        RUN_STDERR=$(cat "$RUN_ERR" 2>/dev/null)
+        rm -f "$RUN_ERR"
+        if [ "$MODE" = "auto" ]; then
+            fail "could not start a worker; hc said: $RUN_JSON $RUN_STDERR"
+        fi
+        printf 'recap_launcher.sh: could not start a worker; hc said: %s %s\n' \
+            "$RUN_JSON" "$RUN_STDERR" >&2
+        echo "Run this in a new terminal instead:" >&2
+        echo "  cd $(printf '%q' "$KB_PATH") && $CMD" >&2
+        exit 2
+    fi
+    rm -f "$RUN_ERR"
+    if [ "$MODE" = "auto" ]; then
+        say "started $NAME in hc terminal $WORKER (no pane; it is in the agents sidebar)"
+    else
+        echo "Recapping $(basename "$SUBJECT") as $NAME in hc terminal $WORKER"
+        echo "  it has no pane: open it from the Herdr app's agents sidebar, or hc attach $WORKER"
+    fi
+    exit 0
+fi
+
+# ── The Herdr TUI, through herdr ──────────────────────────────────────────────────
 
 # ── Where to run it: in this pane, or beside it ──────────────────────────────────
 # One rule for both modes: run where the shell is free, otherwise beside it. A person

@@ -5,6 +5,12 @@ Skill-specific changes. Hook and plugin-level changes are in the plugin's
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.13.1] - 2026-11-04
+
+### Changed
+- Step 3 says "the Herdr TUI" where it said "Herdr": the helper reads `$HERDR_PANE_ID`, which the Herdr app
+  does not set, and the two are different terminal hosts (GLOSSARY.md: Terminal host).
+
 ## [2.13.0] - 2026-09-15
 
 Automatic mode changes hands. See `docs/adr/0006-the-description-is-written-after-the-session-ends.md`.

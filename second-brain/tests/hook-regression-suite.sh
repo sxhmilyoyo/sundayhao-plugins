@@ -779,7 +779,7 @@ env HOME="$NH" "$PLUGIN/hooks/scripts/recap_launcher.sh" --manual /nope/nothing 
 AOUT=$(env HOME="$NH" HERDR_ENV= HERDR_PANE_ID= "$PLUGIN/hooks/scripts/recap_launcher.sh" --auto "$LSUBJ" 2>&1)
 chk "--auto outside Herdr exits 0"      "$?" "0"
 chk "and prints nothing at all"         "${AOUT:-empty}" "empty"
-chk "but records why in recap.log"      "$(grep -c 'not under Herdr' "$LSUBJ/recap.log")" "1"
+chk "but records why in recap.log"      "$(grep -c 'no terminal host' "$LSUBJ/recap.log")" "1"
 
 echo "== 29. a recap session registers as one, only at startup =="
 # The marker is honoured on a genuine launch and nowhere else, and it decides three
@@ -1785,7 +1785,7 @@ chmod +x "$WB/herdr"
 # watcher's /exit arrives, as the real session does; a file bounds how long it sits.
 cat > "$WB/claude" << 'WCL'
 #!/bin/bash
-printf 'claude %s\n' "$*" >> "$HOME/claude-calls.log"
+printf 'claude %s%s\n' "$*" "${CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION:+ suggestions=$CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION}" >> "$HOME/claude-calls.log"
 subj="${*: -1}"; subj="${subj#/second-brain:session-recap }"
 [ "$(cat "$HOME/w-claude-done" 2>/dev/null)" = no ] ||
     "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/recap_status.sh" "$subj" done >/dev/null 2>&1
@@ -1853,6 +1853,8 @@ WCOUT=$(env HOME="$NH" PATH="$WB:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pW \
     SECOND_BRAIN_RECAP_EXIT_POLL_S=1 bash "$PLUGIN/hooks/scripts/recap_child.sh" "$WSUBJ" 2>&1)
 chk "W7 the child's own watcher ends the session"   "$(grep -c '^exited-by-watcher$' "$NH/claude-calls.log")" "1"
 chk "W7 the recap runs under its own name"          "$(grep -c -- '-n recap-w47 /second-brain:session-recap' "$NH/claude-calls.log")" "1"
+chk "W7 and Claude Code's own suggestions stay on"  "$(grep -c 'suggestions=false' "$NH/claude-calls.log")" "0"
+chk "W7 and the TUI recap keeps debrief"            "$(grep -c 'debrief@' "$NH/claude-calls.log")" "0"
 chk "W7 the subject stays done"                     "$(prop "$WSUBJ/session.md" recap_status)" "done"
 chk "W7 the child logs the exit"                    "$(grep -c 'exit status=done' "$WLOG")" "1"
 chk "W7 and the pane says what happened"            "$(printf '%s\n' "$WCOUT" | grep -c 'ended: recap_status done')" "1"
@@ -2028,8 +2030,264 @@ chk "an unset terminal id does not end a set -u caller" \
     "$(env -u HC_TERMINAL_ID HOME="$H" bash -c 'source "$1" >/dev/null 2>&1; set -u; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
 kill "$W48" "$N48" 2>/dev/null
 
+echo "== 49. in the Herdr app the recap reuses the terminal it left, else runs as a worker (ADR-0011) =="
+# An app pane is an hc terminal: $HC_TERMINAL_ID, no TUI variable. The window lives on another
+# machine, so there is no pane to split; the launcher types into the pane it left with `hc send`
+# when that pane's shell is free, and starts a worker with `hc run` otherwise. One stub hc for
+# every app case: `get` answers from $HOME/hc-state (free, busy, settles, gone, refuses), its
+# status from $HOME/hc-status when present; `run` from $HOME/hc-run (ok, taken once, fails);
+# `read` draws a screen whose box comes from $HOME/w-box; `keys` with `enter` ends the stub
+# claude of case 47. Every call is recorded.
+AB="$NH/abin"; mkdir -p "$AB"
+cat > "$AB/hc" << 'HSTUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$HOME/hc-calls.log"
+st=$(cat "$HOME/hc-status" 2>/dev/null)
+case "$st" in
+    '') status='null' ;;
+    stepped) n=$(cat "$HOME/hc-status-gets" 2>/dev/null); n=$(( ${n:-0} + 1 )); printf '%s' "$n" > "$HOME/hc-status-gets"
+             [ "$n" -le 2 ] && status='{"state":"idle"}' || status='{"state":"working"}' ;;
+    settling) n=$(cat "$HOME/hc-status-gets" 2>/dev/null); n=$(( ${n:-0} + 1 )); printf '%s' "$n" > "$HOME/hc-status-gets"
+              [ "$n" -le 3 ] && status='{"state":"working"}' || status='{"state":"idle"}' ;;
+    *) status="{\"state\":\"$st\"}" ;;
+esac
+free="{\"pid\":5555,\"foreground\":{\"pid\":5555,\"name\":\"zsh\"},\"state\":\"live\",\"status\":$status}"
+busy="{\"pid\":5555,\"foreground\":{\"pid\":45612,\"name\":\"claude\"},\"state\":\"live\",\"status\":$status}"
+case "$1" in
+    get)
+        case "$(cat "$HOME/hc-state" 2>/dev/null)" in
+            busy) echo "$busy" ;;
+            settles) n=$(cat "$HOME/hc-gets" 2>/dev/null); n=$(( ${n:-0} + 1 )); printf '%s' "$n" > "$HOME/hc-gets"
+                     [ "$n" -ge 3 ] && echo "$free" || echo "$busy" ;;
+            gone) echo '{"error":{"kind":"not_found","message":"no terminal"}}' >&2; exit 3 ;;
+            *) echo "$free" ;;
+        esac ;;
+    send)
+        [ "$(cat "$HOME/hc-state" 2>/dev/null)" = refuses ] && { echo '{"error":{"kind":"not_found"}}' >&2; exit 3; }
+        echo '{"started":null,"status":null}' ;;
+    run)
+        case "$(cat "$HOME/hc-run" 2>/dev/null)" in
+            taken) printf 'ok' > "$HOME/hc-run"
+                   echo '{"error":{"kind":"name_taken","message":"a live terminal is already named"}}' >&2; exit 1 ;;
+            fails) echo '{"error":{"kind":"spawn_failed","message":"no holder"}}' >&2; exit 1 ;;
+        esac
+        echo '{"address":"t77","state":"live"}' ;;
+    wait) echo '{"status":"idle","reason":"timeout"}' ;;
+    read)
+        echo "the recap is done"
+        [ "$(cat "$HOME/w-box" 2>/dev/null)" = menu ] && echo "  ❯ /exit        Exit the CLI"
+        # The box as Claude Code draws it and hc reads it back (measured 2026-11-04 on a done
+        # recap): the pointer, a no-break space, then whatever the box holds.
+        case "$(cat "$HOME/w-box" 2>/dev/null)" in
+            empty|menu) printf '❯\302\240\n' ;;
+            *)          printf '❯\302\240go ahead: land it\n' ;;
+        esac
+        echo "  Model: Opus  Session: recap" ;;
+    keys) case "$*" in *enter*) : > "$HOME/w-exited" ;; esac ;;
+    kill) echo "hc stub: kill must never be called" >&2; exit 1 ;;
+esac
+exit 0
+HSTUB
+chmod +x "$AB/hc"
+HCALLS="$NH/hc-calls.log"
+aset(){ printf '%s' "$1" > "$NH/hc-state"; printf '%s' "${2:-ok}" > "$NH/hc-run"; printf '0' > "$NH/hc-gets"
+    rm -f "$NH/hc-status" "$NH/hc-status-gets"
+    env HOME="$NH" "$RST" "$RSUBJ" clear --force >/dev/null 2>&1
+    env HOME="$NH" "$RST" "$RSUBJ" requested >/dev/null 2>&1
+    : > "$HCALLS"; : > "$NH/herdr-calls.log"; : > "$NH/claude-calls.log"; : > "$RSUBJ/recap.log"; }
+# The TUI stub of case 38 stays on PATH behind hc, so a launcher that consulted herdr would be seen.
+alaunch(){ env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    SECOND_BRAIN_PANE_WAIT_ATTEMPTS=2 "$@"; }
+agets(){ grep -c '^get t9 --json$' "$HCALLS"; }
+
+aset settles
+AOUT=$(alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" 2>&1)
+chk "A1 a free terminal hosts the recap itself"   "$(grep -c '^send t9 .*recap_child.sh' "$HCALLS")" "1"
+chk "A1 and no worker is started"                 "$(grep -c '^run ' "$HCALLS")" "0"
+chk "A1 it waits for claude to let go"            "$(agets)" "3"
+chk "A1 the markers travel inline"                "$(grep -c 'SECOND_BRAIN_RECAP_OF=' "$HCALLS")" "1"
+chk "A1 --auto prints nothing"                    "${AOUT:-empty}" "empty"
+chk "A1 and the reuse is logged"                  "$(grep -c 'reusing terminal t9 for recap-inv-recap-hook' "$RSUBJ/recap.log")" "1"
+chk "A1 the launcher records nothing"             "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+chk "A1 and herdr is never consulted"             "$(grep -c '' "$NH/herdr-calls.log")" "0"
+
+aset busy
+alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" >/dev/null 2>&1
+chk "A2 a busy terminal gets a worker"            "$(grep -c '^run --json --bg --no-notify --outlive-parent --name recap-inv-recap-hook --cwd '"$NKB"' -- .*recap_child.sh' "$HCALLS")" "1"
+chk "A2 nothing is sent to the busy terminal"     "$(grep -c '^send ' "$HCALLS")" "0"
+chk "A2 it gives up waiting rather than queue"    "$(agets)" "3"
+chk "A2 the markers travel inline"                "$(grep -c 'SECOND_BRAIN_RECAP_OF=' "$HCALLS")" "1"
+chk "A2 and the ending session's pid travels"     "$(grep -c 'SECOND_BRAIN_PARENT_PID=31337' "$HCALLS")" "1"
+chk "A2 and the worker is logged"                 "$(grep -c 'started recap-inv-recap-hook in hc terminal t77' "$RSUBJ/recap.log")" "1"
+chk "A2 the launcher records nothing"             "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+
+aset busy taken
+alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" >/dev/null 2>&1
+chk "A3 a taken name is retried with a suffix"    "$(grep -c -- '--name recap-inv-recap-hook-2 ' "$HCALLS")" "1"
+chk "A3 after one refusal"                        "$(grep -c '^run ' "$HCALLS")" "2"
+chk "A3 and the retry is what is logged"          "$(grep -c 'started recap-inv-recap-hook in hc terminal t77' "$RSUBJ/recap.log")" "1"
+
+aset busy fails
+AFOUT=$(alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" 2>&1); AFRC=$?
+chk "A4 a worker that will not start exits 0"     "$AFRC" "0"
+chk "A4 and stays silent"                         "${AFOUT:-empty}" "empty"
+chk "A4 and says why in the log"                  "$(grep -c 'launcher failed: could not start a worker' "$RSUBJ/recap.log")" "1"
+chk "A4 and leaves the subject requested"         "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+
+aset free
+alaunch "$LAUNCH" --manual "$RSUBJ" >/dev/null 2>&1
+chk "A5 a prompt runs the recap inline"           "$(grep -c '^claude cwd=' "$NH/claude-calls.log")" "1"
+chk "A5 in the vault"                             "$(sed -n '1s/^claude cwd=\([^ ]*\) .*/\1/p' "$NH/claude-calls.log")" "$NKB"
+chk "A5 and hc is read, never told"               "$(grep -cE '^(send|run|keys) ' "$HCALLS")" "0"
+
+aset busy
+AMOUT=$(alaunch "$LAUNCH" --manual "$RSUBJ" 2>&1)
+chk "A6 a Claude session's Bash tool gets a worker" "$(grep -c '^run .*--name recap-inv-recap-hook ' "$HCALLS")" "1"
+chk "A6 the worker is not silenced of notes only"  "$(grep -c '^run .*--no-notify' "$HCALLS")" "1"
+chk "A6 nothing runs inline"                      "$(grep -c '^claude cwd=' "$NH/claude-calls.log")" "0"
+chk "A6 it asks once and does not wait on a person" "$(agets)" "1"
+chk "A6 and says where the recap went"            "$(printf '%s' "$AMOUT" | grep -c 'in hc terminal t77')" "1"
+
+aset gone
+alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" >/dev/null 2>&1; AGRC=$?
+chk "A7 a gone terminal exits 0 under --auto"     "$AGRC" "0"
+chk "A7 it is not waited on"                      "$(agets)" "1"
+chk "A7 and the recap becomes a worker"           "$(grep -c '^run ' "$HCALLS")" "1"
+
+aset refuses
+AROUT=$(alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" 2>&1); ARRC=$?
+chk "A8 a refused hand-off exits 0"               "$ARRC" "0"
+chk "A8 and stays silent"                         "${AROUT:-empty}" "empty"
+chk "A8 and says why in the log"                  "$(grep -c 'launcher failed: could not start the recap in terminal t9' "$RSUBJ/recap.log")" "1"
+chk "A8 and leaves the subject requested"         "$(prop "$RSUBJ/session.md" recap_status)" "requested"
+
+echo "== 50. in the Herdr app a done recap ends its own session through hc keys, and nothing else does (ADR-0011) =="
+# The five steps of case 47 through hc. Two differences are hc's: the box is read as plain
+# text, so any text in it leaves the session open, and /exit is typed with `hc keys`, never
+# `hc send`, which wraps what it pastes in hc's <hc> tag and would hand the session a prompt.
+hcset(){ wset "$1" "$2" "$3"; printf '%s' "${4:-idle}" > "$NH/hc-status"; rm -f "$NH/hc-status-gets"
+    printf 'free' > "$NH/hc-state"; : > "$HCALLS"; }
+# The grace ends on a whole second (`date +%s`), so a grace of G seconds polled every second gets
+# G-1 or G polls by the clock's phase: 3 s always gives the two grace polls H1 and H5 count, where
+# 2 s gave one whenever the grace began late in a second (measured 2026-11-04).
+hcwatch(){ sleep "$1" & local kid=$!
+    env HOME="$NH" PATH="$AB:$WB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+        SECOND_BRAIN_RECAP_EXIT_POLL_S=1 SECOND_BRAIN_RECAP_EXIT_GRACE_MS=3000 SECOND_BRAIN_RECAP_EXIT_IDLE_MS=5000 \
+        "$PLUGIN/hooks/scripts/recap_exit_watch.sh" "$WSUBJ" t9 "$kid" >/dev/null 2>&1
+    kill "$kid" 2>/dev/null; wait "$kid" 2>/dev/null; }
+hcexits(){ grep -c '^keys t9 / e x i t enter$' "$HCALLS"; }
+
+hcset quiet empty done; hcwatch 30
+chk "H1 a done, idle, unattended recap gets /exit as keys" "$(hcexits)" "1"
+chk "H1 and after a grace nobody broke"          "$(grep -c '^get t9 --json$' "$HCALLS" | awk '{print ($1 >= 3) ? "polled" : "not polled"}')" "polled"
+chk "H1 never with send"                         "$(grep -c '^send ' "$HCALLS")" "0"
+chk "H1 never with kill"                         "$(grep -c '^kill ' "$HCALLS")" "0"
+chk "H1 and the typing is logged first"          "$(grep -c 'typing /exit into t9 as key presses' "$WLOG")" "1"
+
+hcset quiet text done; hcwatch 30
+chk "H2 text in the box keeps the session open"  "$(hcexits)" "0"
+chk "H2 and the log says hc cannot tell a ghost" "$(grep -c 'the prompt box holds text, typed or ghost text' "$WLOG")" "1"
+
+hcset quiet ghost done; hcwatch 30
+chk "H3 a ghost reads as text under hc, so it keeps the session open" "$(hcexits)" "0"
+
+hcset quiet menu done; hcwatch 30
+chk "H4 the command menu's indented pointer is not the box" "$(hcexits)" "1"
+
+hcset quiet empty done stepped; hcwatch 30
+chk "H5 a turn started in the grace keeps the session" "$(hcexits)" "0"
+chk "H5 and the log says a person stepped in"    "$(grep -c 'a person stepped in' "$WLOG")" "1"
+
+hcset quiet empty done working; hcwatch 30
+chk "H6 a session still working after done is left alone" "$(hcexits)" "0"
+chk "H6 and the log says it never went idle"     "$(grep -c 'did not go idle after done' "$WLOG")" "1"
+
+hcset quiet empty requested; hcwatch 3
+chk "H7 a recap that is not done gets nothing"   "$(hcexits)" "0"
+chk "H7 and hc is never asked"                   "$(grep -c '' "$HCALLS")" "0"
+
+# `done` lands mid-turn, and on a live recap `hc wait` came back at once with the turn still
+# running (2026-11-04). The stub's wait never blocks, so this pins the retry: the state is read
+# back from `hc get`, and the wait repeated a poll apart until the turn has ended.
+hcset quiet empty done settling; hcwatch 30
+chk "H9 a turn still running when done lands is waited out" "$(hcexits)" "1"
+chk "H9 by waiting again when hc wait comes back early" "$(grep -c 'hc wait came back with the session still working' "$WLOG")" "1"
+chk "H9 and not taken for a session that never went idle" "$(grep -c 'did not go idle after done' "$WLOG")" "0"
+
+# The child starts the watcher under the app, by hc terminal id, and the watcher's /exit
+# reaches the stub claude of case 47 through the stub hc's `keys`.
+hcset quiet empty requested; printf '100' > "$NH/w-claude-wait"
+env HOME="$NH" PATH="$AB:$WB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    SECOND_BRAIN_RECAP_OF="$WSUBJ" SECOND_BRAIN_RECAP_NAME=recap-w49 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" \
+    SECOND_BRAIN_RECAP_EXIT_POLL_S=1 SECOND_BRAIN_RECAP_EXIT_GRACE_MS=1000 SECOND_BRAIN_RECAP_EXIT_IDLE_MS=2000 \
+    bash "$PLUGIN/hooks/scripts/recap_child.sh" "$WSUBJ" >/dev/null 2>&1
+chk "H8 the child's watcher ended the session"   "$(grep -c '^exited-by-watcher$' "$NH/claude-calls.log")" "1"
+chk "H8 through hc keys"                         "$(hcexits)" "1"
+chk "H8 and the start line names the hc terminal" "$(grep -c 'start pane=t9 ' "$WLOG")" "1"
+chk "H8 the app recap turns Claude Code's own suggestions off" "$(grep -c -- '-n recap-w49 /second-brain:session-recap .* suggestions=false$' "$NH/claude-calls.log")" "1"
+chk "H8 and runs without debrief, whose ghost draft reads as text" "$(grep -c -F -- '--settings {"enabledPlugins":{"debrief@sundayhao-plugins":false}} -n recap-w49 /second-brain:session-recap' "$NH/claude-calls.log")" "1"
+chk "H8 and herdr was never asked"               "$(grep -c '^agent ' "$WCALLS")" "0"
+
+# A watcher that left the session open was reaped long before its session ends, and on this host
+# the PID cursor wraps in minutes, so by then its PID may name another process (a thread's id
+# signals its whole process). The child stops only a watcher still running. A kill function passed
+# through the environment records what the child itself signals.
+hcset quiet text requested; printf '60' > "$NH/w-claude-wait"; : > "$NH/kill-calls.log"
+( kill() { printf '%s %s\n' "${0##*/}" "$*" >> "$HOME/kill-calls.log"; builtin kill "$@"; }; export -f kill
+  env HOME="$NH" PATH="$AB:$WB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    SECOND_BRAIN_RECAP_OF="$WSUBJ" SECOND_BRAIN_RECAP_NAME=recap-w49 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" \
+    SECOND_BRAIN_RECAP_EXIT_POLL_S=1 SECOND_BRAIN_RECAP_EXIT_GRACE_MS=1000 SECOND_BRAIN_RECAP_EXIT_IDLE_MS=2000 \
+    bash "$PLUGIN/hooks/scripts/recap_child.sh" "$WSUBJ" >/dev/null 2>&1 )
+chk "H10 the watcher left first, the box holding text" "$(grep -c 'left open: the prompt box holds text' "$WLOG")" "1"
+chk "H10 and the child signals no PID of a watcher already gone" "$(grep -c '^recap_child.sh ' "$NH/kill-calls.log")" "0"
+
+echo "== 51. in the Herdr app a delegate is an hc child that reports back (ADR-0011) =="
+DL="$PLUGIN/skills/common/launch_delegate.sh"
+dset(){ printf '%s' "${1:-ok}" > "$NH/hc-run"; printf 'busy' > "$NH/hc-state"; : > "$HCALLS"; : > "$NH/herdr-calls.log"; }
+dset
+DOUT=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" 2>&1); DRC=$?
+chk "D1 the delegate is an hc worker"            "$(grep -c '^run --json --bg --outlive-parent --name review-' "$HCALLS")" "1"
+chk "D1 in the launching session's folder"       "$(grep -c -- "--cwd $NH -- " "$HCALLS")" "1"
+chk "D1 with hc's notes on"                      "$(grep -c -- '--no-notify' "$HCALLS")" "0"
+chk "D1 the launcher marker travels inline"      "$(grep -c 'SECOND_BRAIN_DELEGATED_BY=f1111111-1111-1111-1111-111111111111 ' "$HCALLS")" "1"
+chk "D1 the prompt keeps its text"               "$(grep -c 'Check x.rs only' "$HCALLS")" "1"
+chk "D1 and gains hc's reach line"               "$(grep -c 'Report with hc send t9 when done or stuck' "$HCALLS")" "1"
+chk "D1 it exits 0"                              "$DRC" "0"
+chk "D1 and says where the delegate went"        "$(printf '%s' "$DOUT" | grep -c '^Launched review-.* in hc terminal t77')" "1"
+chk "D1 and how to reach it"                     "$(printf '%s' "$DOUT" | grep -c 'reachable as: hc send|wait|read review-')" "1"
+chk "D1 herdr is never consulted"                "$(grep -c '' "$NH/herdr-calls.log")" "0"
+
+dset taken
+DOUT2=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" 2>&1)
+chk "D2 a taken name is retried with a suffix"   "$(grep -c -- '--name review-[a-z0-9-]*-2 ' "$HCALLS")" "1"
+chk "D2 and the session is named the same"       "$(grep -c -- 'claude -n review-[a-z0-9-]*-2 ' "$HCALLS")" "1"
+chk "D2 and the retry is what is reported"       "$(printf '%s' "$DOUT2" | grep -c '^Launched review-.*-2 in hc terminal t77')" "1"
+
+dset fails
+DOUT3=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" 2>&1); DRC3=$?
+chk "D3 a worker that will not start exits 1"    "$DRC3" "1"
+chk "D3 and hands over the command instead"      "$(printf '%s' "$DOUT3" | grep -c 'Run this in a new terminal instead')" "1"
+
+# The TUI path is untouched: a pane split, as before, and hc never consulted.
+dset
+printf 'free' > "$PINFO"
+DOUT4=$(cd "$NH" && env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR_PANE_ID=w9:pOLD HC_TERMINAL_ID= \
+    CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" 2>&1)
+chk "D4 under the TUI the delegate still gets a pane" "$(grep -c 'pane split --pane w9:pOLD' "$NH/herdr-calls.log")" "1"
+chk "D4 and hc is never consulted"               "$(grep -c '' "$HCALLS")" "0"
+chk "D4 the TUI prompt carries no reach line"    "$(grep -c 'Report with hc send' "$NH/herdr-calls.log")" "0"
+
+# No host at all: the command is handed over, as before.
+DOUT5=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= \
+    CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" 2>&1)
+chk "D5 without a host the command is printed"   "$(printf '%s' "$DOUT5" | grep -c 'Not running under the Herdr TUI or the Herdr app')" "1"
+chk "D5 and nothing is started"                  "$(grep -c '' "$HCALLS")" "0"
+
 # The tripwire once more, after the last case that could reach it: case 36 runs before the
-# ccfind cases and case 48, the callers of herdr-app and hc.
+# ccfind cases and cases 48 to 51, the callers of herdr-app and hc.
 if [ -s "$TRIPWIRE" ]; then
     no "no case reached the real herdr, herdr-app or hc"
     echo "         attempts:"; sed 's/^/           /' "$TRIPWIRE"

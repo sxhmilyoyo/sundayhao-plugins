@@ -5,6 +5,13 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.4] - 2026-11-04
+
+### Changed
+- Step 2 names both terminal hosts: under the Herdr TUI or the Herdr app the launcher runs the recap in the
+  pane you typed it in, or beside it, a split pane in the TUI and a worker in the app's agents sidebar
+  (ADR-0011). "Herdr" alone named only the TUI.
+
 ## [3.6.3] - 2026-10-27
 
 ### Changed

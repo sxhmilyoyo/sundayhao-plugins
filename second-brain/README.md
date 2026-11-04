@@ -228,7 +228,7 @@ Set `auto_recap` and the plugin keeps track of which sessions still need one:
 |-------|----------------------------------|
 | `off` (default) | Nothing. No property is written and no notice appears |
 | `notify` | The session's note is stamped `recap_status: requested`, or `exempt` if the session was too small to hold knowledge. The next session you start shows what is waiting, with the command to run |
-| `on` | The same, and the recap starts itself: it runs in the pane you just left, if that pane is back at its shell prompt, and splits beside it if you have started something else there. Herdr only, and it needs the SessionEnd budget raised (see below); anywhere else it behaves as `notify` |
+| `on` | The same, and the recap starts itself: it runs in the pane you just left, if that pane is back at its shell prompt, and otherwise beside it, as a split pane in the Herdr TUI or as a worker listed in the agents sidebar in the Herdr app. Those two hosts only, and it needs the SessionEnd budget raised (see below); anywhere else it behaves as `notify` |
 
 The notice is shown to **you**, not added to Claude's context, because it carries a command to run and
 because a recap belongs in its own session rather than in the middle of your work. It lists recaps that
@@ -252,7 +252,7 @@ in place. To turn it all off again, `--set auto_recap off`; the properties alrea
 ends them itself, such as a dispatcher that types `/exit` into each ticket session once its ticket is closed,
 usually keeps its own record of the work, and the end hook cannot tell its `/exit` from yours. Such a launcher
 sets `SECOND_BRAIN_RECAP_EXEMPT=1` in the session's environment at launch: inline on the command, or through
-`claude --settings '{"env":{"SECOND_BRAIN_RECAP_EXEMPT":"1"}}'` where the terminal manager passes no
+`claude --settings '{"env":{"SECOND_BRAIN_RECAP_EXEMPT":"1"}}'` where the terminal host passes no
 environment. The start hook records `recap_exempt: launcher` on the note, and every exit of that session
 stamps `exempt` with the reason in `recap.log`, never `requested`, however much the session did; a recap you
 make of it by hand is final. Like `recap_of`, the marker counts on a genuine startup only and the exit reads
@@ -295,12 +295,16 @@ when that happens: the session stays `requested` and the next session's notice o
 it does mean `on` only fires reliably once the budget is raised.
 
 Once it fires, the recap runs **in the pane you just left**, which is normally sitting at its shell prompt
-by then, and the pane takes the recap's name. If you have already started something else there it splits
-instead and runs beside it, so reuse never takes a pane out from under you. You can watch it, interrupt it,
-or close the pane; closing it marks the subject `failed` so the notice picks it up rather than leaving it
-looking like a recap still in flight. Once the recap is done and its session has sat idle for two minutes, the
-session ends itself with `/exit`, so a finished recap stops holding memory; type anything in the pane first
-and it stays yours.
+by then, and the pane takes the recap's name. If you have already started something else there it runs
+beside it instead, so reuse never takes a pane out from under you: the Herdr TUI splits a pane for it, and
+the Herdr app, whose window is on another machine, starts it as a worker with no pane, listed in the window's
+agents sidebar and opened in peek from there (`hc attach <terminal>` reaches it too). You can watch it,
+interrupt it, or close the pane; closing it marks the subject `failed` so the notice picks it up rather than
+leaving it looking like a recap still in flight. Once the recap is done and its session has sat idle for two
+minutes, the session ends itself with `/exit`, so a finished recap stops holding memory; type anything in the
+pane first and it stays yours. In the Herdr app the box is read as plain text, so the recap session starts
+with Claude Code's own prompt suggestions off and with the debrief plugin off for that session, since its
+`go ahead` draft is ghost text too; any text left in the box keeps the session open.
 
 ---
 
@@ -466,9 +470,13 @@ To start a session that records who launched it:
 <plugin-path>/skills/common/launch_delegate.sh review "Review the auth refactor on this branch"
 ```
 
-Under Herdr this opens a pane and names the new session after its role and its launcher; elsewhere it
-prints the command to run. The delegate's note then carries `delegated_by`, so work can be traced back
-to the request that caused it.
+Under the Herdr TUI this opens a pane and names the new session after its role and its launcher. In the
+Herdr app it starts the delegate as an hc worker instead, a terminal with no pane that the window's agents
+sidebar lists: an hc child of your own pane, with hc's notes on, so you hear when it blocks or ends, and its
+prompt ends with hc's own reach line, `Report with hc send <your terminal> when done or stuck.`, so the
+delegate reports back the same way ([ADR-0011](../docs/adr/0011-the-herdr-app-is-driven-through-hc.md)).
+Elsewhere it prints the command to run. The delegate's note then carries `delegated_by`, so work can be
+traced back to the request that caused it.
 
 ---
 

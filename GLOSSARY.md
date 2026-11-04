@@ -59,6 +59,14 @@ A dedicated session, started by the launcher, that recaps exactly one [[#Subject
 batch of them). Registered by `recap_of` on its own note; never recapped itself. Ends itself
 once its recap is done, unless a person has stepped in.
 
+## Terminal host
+
+The program that owns the terminal a session runs in, and that the plugin can ask to start a
+session, type into one or watch one: the Herdr TUI, the Herdr app, tmux, or none. A
+[[#Recap session]] runs where its terminal host puts it, in the pane a person just left or in a
+terminal of its own, and ends itself only where the host can type into it. The Herdr TUI and the
+Herdr app are different hosts, so "Herdr" alone names neither.
+
 ## Reflection
 
 A backward-looking record of how a [[#Subject]]'s work went — what worked, what didn't,

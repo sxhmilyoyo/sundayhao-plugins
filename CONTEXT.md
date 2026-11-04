@@ -38,6 +38,12 @@ be, so it is written by a person while the session runs or filled once the conve
 whole.
 _Avoid_: session metadata, derived metadata, model-derived fields, tags and summary
 
+**Terminal host**:
+The program that owns the terminal a session runs in and that the plugin can ask to start a session, type
+into one or watch one: the Herdr TUI, the Herdr app, tmux, or none. The Herdr TUI and the Herdr app are
+different hosts, so "Herdr" alone names neither.
+_Avoid_: multiplexer, terminal manager, Herdr (unqualified)
+
 ### Session lineage
 
 **Fork session**:

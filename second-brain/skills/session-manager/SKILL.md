@@ -58,8 +58,8 @@ obsidian vault="knowledge-bank" property:set name="session_name" value="<title>"
 ```
 
 **3. Name the terminal.** Give the enclosing container the session's name, as a real Bash call. The
-helper detects tmux or Herdr from `$TMUX_PANE` and `$HERDR_PANE_ID` itself, and under Herdr it also
-names the agent so other agents can reach this session by name:
+helper detects tmux or the Herdr TUI from `$TMUX_PANE` and `$HERDR_PANE_ID` itself, and under the Herdr TUI
+it also names the agent so other agents can reach this session by name:
 
 ```bash
 source skills/common/obsidian_helpers.sh

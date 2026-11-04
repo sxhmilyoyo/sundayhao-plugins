@@ -47,8 +47,10 @@ A person keeps a recap session by working in it. A turn started during the grace
 good, and a line typed but not sent keeps the box from taking `/exit`. A re-request during the grace keeps it
 open too.
 
-Outside Herdr nothing changes. There is nothing to type `/exit` through, so no watcher starts, and a recap run
-from a pasted command stays open until its person closes it.
+Under the Herdr app the watcher runs the same five steps through hc, with the box read as plain text and
+`/exit` typed as key presses ([ADR-0011](0011-the-herdr-app-is-driven-through-hc.md)). Without a terminal
+host nothing changes: there is nothing to type `/exit` through, so no watcher starts, and a recap run from a
+pasted command stays open until its person closes it.
 
 The pane prints one line when the session ends, naming the subject, its status and its log, because a session
 that ended itself would otherwise leave a person at a bare shell prompt.

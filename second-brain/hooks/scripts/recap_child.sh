@@ -42,8 +42,11 @@ fi
 # An exit 3 here is harmless: it means the subject already reached a terminal state,
 # which is exactly the case that needs no correction.
 post_check() {
-    # The exit watcher has nothing left to watch once the recap's session is gone.
-    [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null
+    # The exit watcher has nothing left to watch once the recap's session is gone. Only a watcher
+    # still running is stopped: one that left the session open was reaped long before, and on a
+    # busy host the PID cursor wraps in minutes, so its PID may name another process by then (a
+    # thread's id signals its whole process). The job table lists the watcher only while it runs.
+    [ -n "${WATCH_PID:-}" ] && jobs -rp | grep -qx "$WATCH_PID" && kill "$WATCH_PID" 2>/dev/null
     if [ "$(read_frontmatter_prop "$SUBJECT/session.md" recap_status)" != "done" ]; then
         "$STATUS" "$SUBJECT" failed >/dev/null 2>&1
     fi
@@ -118,7 +121,7 @@ elif [ "$CLAIM" -ne 0 ]; then
 fi
 
 printf '%s start pane=%s name=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "${HERDR_PANE_ID:-none}" "${SECOND_BRAIN_RECAP_NAME:-unnamed}" >> "$LOG" 2>/dev/null || true
+    "${HERDR_PANE_ID:-${HC_TERMINAL_ID:-none}}" "${SECOND_BRAIN_RECAP_NAME:-unnamed}" >> "$LOG" 2>/dev/null || true
 
 # A reused pane brings no `--cwd`. The split passed the vault, and that is what keeps the
 # work repo's own project settings and instructions out of the recap's context — the reason
@@ -132,21 +135,39 @@ if [ -z "$KB_PATH" ] || ! cd "$KB_PATH" 2>/dev/null; then
 fi
 
 # A recap session ends itself once the recap is done, unless a person has stepped in
-# (ADR-0010). The exit watcher types /exit through Herdr, so it starts only behind the
-# launcher's own Herdr gate; anywhere else the session stays open as it always has. Its stdio
-# stays off the pane's TTY, where it would draw over the recap or take its keys.
-HERDR_BIN=$(command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr")
-if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ -x "$HERDR_BIN" ]; then
+# (ADR-0010). The exit watcher types /exit through the terminal host that owns this
+# terminal, the Herdr TUI by pane id or the Herdr app by hc terminal id (ADR-0011), so it
+# starts only where there is one; anywhere else the session stays open as it always has.
+# Its stdio stays off the pane's TTY, where it would draw over the recap or take its keys.
+RECAP_HOST=$(terminal_host)
+case "$RECAP_HOST" in
+    herdr-tui) WATCH_TERMINAL="$HERDR_PANE_ID" ;;
+    herdr-app) WATCH_TERMINAL="$HC_TERMINAL_ID" ;;
+    *)         WATCH_TERMINAL="" ;;
+esac
+if [ -n "$WATCH_TERMINAL" ]; then
     bash "$SECOND_BRAIN_PLUGIN_ROOT/hooks/scripts/recap_exit_watch.sh" \
-        "$SUBJECT" "$HERDR_PANE_ID" "$$" < /dev/null > /dev/null 2>&1 &
+        "$SUBJECT" "$WATCH_TERMINAL" "$$" < /dev/null > /dev/null 2>&1 &
     WATCH_PID=$!
 fi
 
 # Interactive and in the foreground, on this pane's TTY, so a person can watch it and
 # step in. The trap runs when it exits, or when the pane is closed under it.
-# No --settings: ADR-0003 keeps this session's hooks on, which is what registers it.
+# Under the Herdr app the exit watcher reads the prompt box as plain text (ADR-0011), so Claude
+# Code's own ghost suggestions would read as typed text there and keep a finished recap open.
+# The variable rather than the promptSuggestionEnabled key: the variable wins over the key, on
+# a third-party provider it is the only switch that turns suggestions on at all, and set here it
+# holds for this process whatever the shell exported.
+# The debrief plugin's go-ahead draft is ghost text as well, and that variable does not reach a
+# plugin's offer: measured 2026-11-04, a draft offered after the recap's first turn was still in
+# the box after its last turn and held the done recap open. So the app's recap also runs with
+# debrief off, for this session only. The override names that one plugin: second-brain's hooks
+# stay on (ADR-0003), which is what registers this session.
+[ "$RECAP_HOST" = herdr-app ] && export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false
+SETTINGS=()
+[ "$RECAP_HOST" = herdr-app ] && SETTINGS=(--settings '{"enabledPlugins":{"debrief@sundayhao-plugins":false}}')
 if [ -n "${SECOND_BRAIN_RECAP_NAME:-}" ]; then
-    claude -n "$SECOND_BRAIN_RECAP_NAME" "/second-brain:session-recap $SUBJECT"
+    claude "${SETTINGS[@]}" -n "$SECOND_BRAIN_RECAP_NAME" "/second-brain:session-recap $SUBJECT"
 else
-    claude "/second-brain:session-recap $SUBJECT"
+    claude "${SETTINGS[@]}" "/second-brain:session-recap $SUBJECT"
 fi

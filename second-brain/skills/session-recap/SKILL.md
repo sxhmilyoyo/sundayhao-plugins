@@ -28,9 +28,11 @@ being recapped, and not in whatever session you happen to have open. Phase 1.0 s
    ```bash
    <plugin root>/hooks/scripts/recap_launcher.sh --manual {KB_PATH}/_sessions/YYYY-MM-DD/{session_id}/
    ```
-   Inside Herdr this runs the recap in the pane you typed it in, if that pane is at a shell prompt, and
-   opens one beside it if something is already running there — which is the case when a session runs this
-   through its Bash tool. Anywhere else it prints a command to paste into a new terminal. Either way the recap session carries `SECOND_BRAIN_RECAP_OF`, which is what makes
+   Under the Herdr TUI or the Herdr app this runs the recap in the pane you typed it in, if that pane is at a
+   shell prompt, and beside it if something is already running there — which is the case when a session runs
+   this through its Bash tool: the TUI splits a pane, the app starts a worker that its agents sidebar lists
+   ([ADR-0011](../../../docs/adr/0011-the-herdr-app-is-driven-through-hc.md)). Anywhere else it prints a
+   command to paste into a new terminal. Either way the recap session carries `SECOND_BRAIN_RECAP_OF`, which is what makes
    its own hooks register it as a recap and never recap it in turn
    ([ADR-0003](../../../docs/adr/0003-recap-sessions-are-registered-guarded-by-env.md)).
 

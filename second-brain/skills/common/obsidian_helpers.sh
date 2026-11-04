@@ -550,9 +550,9 @@ _hc_session_label_retry() {
     done
 }
 
-# One attempt at the label, the one place that knows the key and how to reach hc, so
-# setting and removing cannot drift apart. Hooks may run with a minimal PATH; hc installs
-# to ~/.local/bin, which the clouddesk's non-interactive PATH lacks.
+# One attempt at the label, the one place that knows the key, so setting and removing
+# cannot drift apart. hc is reached through hc_bin, because hooks may run with a minimal
+# PATH; hc installs to ~/.local/bin, which the clouddesk's non-interactive PATH lacks.
 #
 # Only the session the terminal runs may touch its label. A nested claude, such as a
 # `claude -p` run from a Bash tool, inherits $HC_TERMINAL_ID as well, and without this
@@ -587,7 +587,7 @@ _hc_session_label_retry() {
 # answer in time, or claude not in the foreground group), so another attempt may land
 _hc_session_label_once() {
     local hc_bin pid n=0 limit="${2:-18}"
-    hc_bin=$(command -v hc 2>/dev/null || echo "$HOME/.local/bin/hc")
+    hc_bin=$(hc_bin)
     [ -x "$hc_bin" ] || return 1
     {
         if [ -n "${CLAUDE_PID:-}" ]; then
@@ -605,6 +605,50 @@ _hc_session_label_once() {
         sleep 0.02; n=$((n + 1))
     done
     wait "$pid"
+}
+
+# ── Terminal hosts ───────────────────────────────────────────────────────────────
+# Which terminal host owns this process's terminal (GLOSSARY.md), read from the variable
+# each host sets and never from which binaries are installed: this machine has both.
+#   herdr-tui   the Herdr TUI: HERDR_ENV=1, a pane id, and the herdr binary
+#   herdr-app   the Herdr app: an hc terminal (HC_TERMINAL_ID) and the hc binary; the
+#               window lives on another machine, so panes are never split from here
+#   none        anything else: tmux, a bare terminal, a detached process
+# The TUI is tested first. A TUI pane opened inside an hc terminal carries both sets of
+# variables, and the host that owns the pane is the TUI.
+# Returns: one word on stdout; always 0
+terminal_host() {
+    if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ -x "$(herdr_bin)" ]; then
+        echo herdr-tui
+    elif [ -n "${HC_TERMINAL_ID:-}" ] && [ -x "$(hc_bin)" ]; then
+        echo herdr-app
+    else
+        echo none
+    fi
+    return 0
+}
+
+# Hooks may run with a minimal PATH; both binaries install to ~/.local/bin.
+herdr_bin() { command -v herdr 2>/dev/null || echo "$HOME/.local/bin/herdr"; }
+hc_bin() { command -v hc 2>/dev/null || echo "$HOME/.local/bin/hc"; }
+
+# Is an hc terminal free, that is, sitting at its own shell prompt? `hc get` reports the
+# terminal's root program as `pid` and whatever holds the foreground as `foreground.pid`.
+# Measured: a shell at its prompt reports itself; a busy one reports the program running,
+# claude while a session is up, sleep for a sleeping job. A finished or unknown terminal
+# answers nothing live and reads `gone`.
+# Args: $1=hc terminal address
+# Returns: free | busy | gone on stdout; always 0
+hc_terminal_state() {
+    local pid fg state
+    { IFS= read -r pid; IFS= read -r fg; IFS= read -r state; } \
+        < <("$(hc_bin)" get "$1" --json 2>/dev/null \
+            | jq -r '.pid // "", .foreground.pid // "", .state // ""' 2>/dev/null)
+    if [ -z "$pid" ] || [ "$state" != "live" ]; then printf 'gone\n'
+    elif [ "$fg" = "$pid" ]; then printf 'free\n'
+    else printf 'busy\n'
+    fi
+    return 0
 }
 
 # Resolve an existing session folder. Never creates anything, never guesses a
@@ -823,6 +867,10 @@ export -f label_hc_terminal
 export -f unlabel_hc_terminal
 export -f _hc_session_label_retry
 export -f _hc_session_label_once
+export -f terminal_host
+export -f herdr_bin
+export -f hc_bin
+export -f hc_terminal_state
 export -f resolve_session_folder
 export -f transcript_forked_from
 export -f rebuild_session_md

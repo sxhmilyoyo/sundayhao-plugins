@@ -7,6 +7,71 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.25.0] - 2026-11-04
+
+### Added
+- **The automatic recap, the manual launcher, the recap's self-exit and the delegate launcher work in the
+  Herdr app.** All four gated on the Herdr TUI alone (`HERDR_ENV=1`, a pane id, the `herdr` binary), and a
+  Herdr app pane has none of those: it is an hc terminal, `HC_TERMINAL_ID` and the `hc` binary, with the app's
+  window on another machine. In app panes `auto_recap: on` degraded to `notify` without a word (the first
+  subject left `requested` that way, on 2026-11-02, has `launcher not under Herdr` in its `recap.log`), the
+  manual launcher printed a command to paste, a finished recap session never ended itself, and a delegate was
+  a pasted command. `terminal_host` (obsidian_helpers.sh) now names the host from the variables each one sets,
+  the Herdr TUI first, then the Herdr app, else none, never from which binaries are installed, since this
+  machine has both; the launcher, the child, the exit watcher and `launch_delegate.sh` branch on it (ADR-0011;
+  GLOSSARY.md: Terminal host). Under the app the rule is the TUI's: the recap is typed into the pane you left
+  with `hc send` when that pane's shell is free, which `hc get` shows as the foreground process being the
+  pane's root shell (`hc_terminal_state`), and otherwise runs as an hc worker, a terminal with no pane that
+  the window's agents sidebar lists, started with `hc run --bg --no-notify --outlive-parent --cwd <vault>` and
+  retried once under a `-2` name when the name is taken. The exit watcher runs its five steps through hc: `hc
+  wait` for the turn to end, repeated a poll later whenever `hc get` still shows the turn running, `hc get`
+  polled through the grace, `hc read` for the box, which hc returns as plain text, so only a box that is
+  exactly empty takes `/exit` (the pointer, alone or with the no-break space Claude Code draws after it), and
+  `/exit` typed as key presses with `hc keys`, never `hc send`, which wraps what it pastes in hc's `<hc>` tag
+  and hands the session a prompt (measured 2026-11-03), and never `hc kill`, after which the SessionEnd hook
+  does not run. The app's recap session starts with Claude Code's own prompt suggestions off,
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` on its command rather than the `promptSuggestionEnabled` key,
+  because the variable wins over the key and on a third-party provider it is the only switch that turns
+  suggestions on at all, and with the debrief plugin off for that session, a `--settings` that names that one
+  plugin, because its `go ahead` draft is ghost text the variable does not reach; so the one text that still
+  holds a box open there is a person's. A delegate under the app is an hc worker too, an hc child of the
+  launching pane with hc's notes on, `--outlive-parent`, and hc's reach line appended to its prompt, `Report
+  with hc send <parent> when done or stuck.` Without a host, `--auto` logs `no terminal host to open a session
+  in` (was `not under Herdr`) and `--manual` names both hosts in its hint. Regression cases 49 (37 checks:
+  reuse, worker, taken name, failed worker, manual inline, manual from a busy pane, gone terminal, refused
+  hand-off), 50 (26: the five steps through a stub hc that draws the box as Claude Code does, text and ghost
+  both keep the session, the menu's indented pointer is not the box, an early `hc wait` return is waited out,
+  the child starts the watcher by hc terminal id, passes both switches, and signals no watcher that already
+  left) and 51 (21: the delegate worker, its reach line, the retry, the hand-over on failure, the TUI and
+  no-host paths unchanged); case 47 pins that the TUI child passes neither. Suite: 521 passed, 0 failed, bash
+  4.2. Verified live from a Herdr app pane on the clouddesk with hc 0.1.16: the automatic launcher, run as the
+  end hook runs it, typed a pending recap into a free shell terminal (`reusing terminal t43`); the manual
+  launcher from a busy pane started worker t44 with notes off and outliving its parent; both recaps ran to
+  `done`. A delegate reported `probe ok` back through `hc send` and ended on `/exit` typed as keys, its end
+  hook run. The first live watchers left both done sessions open, which is how the box's empty form and the
+  early `hc wait` return were found; after the fixes the watcher ended the done recap in t44 (`typing /exit
+  into t44 as key presses: done, idle through the grace, prompt box empty`) and the recap session's note was
+  stamped `ended_at`. On 2026-11-04 a real exit with `auto_recap: on` from shell terminal t4c stamped
+  `requested`, and 6 s later the launcher typed the recap into t4c, `reusing terminal t4c`; that recap reached
+  `done`, but the watcher left it open on the draft debrief had offered after the recap's first turn, which is
+  why the recap now runs without debrief. The same real exit with this release's recap scripts, from t5r, ran
+  the recap with debrief off: it reached `done` at 08:43:12, the watcher typed `/exit` into an empty box 147 s
+  later, the child logged `exit status=done`, and the recap session's own end hook stamped it `exempt`.
+
+### Fixed
+- **A recap child no longer signals an exit watcher that has already left.** Since 2.21.0 (ADR-0010)
+  `post_check` sent SIGTERM to the watcher's saved PID whenever a recap session ended, also when that watcher
+  had left the session open hours before and been reaped. On the clouddesk the PID cursor wrapped all 32768
+  PIDs within minutes, and 9729 of them named a live thread or process when measured; a thread's id signals
+  its whole process. So the end of a long-open recap could terminate an unrelated process, such as another
+  Claude session. The child now stops the watcher only while bash's job table lists it as running
+  (`jobs -rp`). Regression check H10.
+
+### Changed
+- README, the session-recap and session-manager skills and ADR-0010 say "Herdr TUI" or "Herdr app" where
+  they said "Herdr", since the two are different terminal hosts; GLOSSARY.md and CONTEXT.md define
+  "Terminal host".
+
 ## [2.24.2] - 2026-11-03
 
 ### Fixed
