@@ -7,6 +7,30 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.1] - 2026-11-03
+
+### Fixed
+- **The Session label is set on the clouddesk again: the nested-session guard compares process groups, not
+  pids.** 2.24.0 wrote the label only when hc's `foreground.pid` equalled `$CLAUDE_PID`, and on the clouddesk
+  that is never true. Toolbox starts Claude Code as a shim that runs a wrapper that runs it, with no `exec` at
+  any step, so hc reports the shim while `$CLAUDE_PID` is Claude Code, and every session there was refused: a
+  clouddesk session's Files panel showed no Session section. hc's `foreground.pid` is the terminal's
+  foreground process-group id, `tcgetpgrp`, which equals `ps -o tpgid=` on both machines. So
+  `_hc_session_label` now reads `$CLAUDE_PID`'s group with `ps -o pgid=` and compares that, inside the same
+  half-second bound, and refuses a `$CLAUDE_PID` that names no live process. A nested claude is still refused,
+  because a Bash-tool command runs in a session of its own with no terminal, so nothing it starts is ever in a
+  terminal's foreground group. A claude under a wrapper that stays in the foreground job, `recap_child.sh`'s
+  included, is now labelled; the panel still shows a label only while the foreground program is named `claude`,
+  so a session under a wrapper led by `bash` is labelled but not shown. Verified on the clouddesk against a real
+  toolbox chain, with the shim, the wrapper and Claude Code all in the shim's group: the 2.24.0 helper refused
+  Claude Code and the wrapper, and the fixed one refused a process in a group of its own, then set the label for
+  Claude Code and removed it. On the Mac, a member of the foreground group that does not lead it is labelled by
+  the fixed helper and refused by the 2.24.0 one, and a Bash-tool shell is refused. Regression case 48 (18
+  checks) now runs on live processes: the suite itself, a member of its group that does not lead it, a process
+  in a group of its own and an exited pid. Against the 2.24.0 helper it fails exactly the member check and the
+  exited-pid check. The case also no longer starts a `( )` subshell, which bash under job control gives a group
+  of its own, printing a setpgid complaint where that is not permitted.
+
 ## [2.24.0] - 2026-11-03
 
 ### Added

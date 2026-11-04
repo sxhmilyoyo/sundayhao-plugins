@@ -2,6 +2,7 @@
 status: accepted
 date: 2026-11-03
 implementation: 2.24.0
+amended: 2026-11-03, in 2.24.1 (the hooks' guard compares process groups)
 ---
 
 # A session declares its folder on the terminal that hosts it
@@ -29,10 +30,12 @@ is the whole contract.
 Both ends are guarded, so that the label means what it says. A nested `claude`, such as a `claude -p` run from
 a Bash tool, inherits `$HC_TERMINAL_ID` too; it would relabel the host with its own folder and then take the
 host's label away at its own end, and nested runs like that happened three times in sixty days. So when
-`$CLAUDE_PID` is set, the hooks write only if hc reports that pid as the terminal's foreground process, and
-without it there is nothing to compare, so they write as before. On the reading side, a label outlives a
-session that dies without its end hook, so the panel trusts the label only while the terminal's foreground
-program is `claude`. Both guards test the same thing: whether this session's claude is the program in front.
+`$CLAUDE_PID` is set, the hooks write only if that claude is in the terminal's foreground process group, the
+group hc's `foreground.pid` names. A Bash-tool command runs in a session of its own with no terminal, so a
+claude it starts never is. Without `$CLAUDE_PID` there is nothing to compare, so they write as before. On the
+reading side, a label outlives a session that dies without its end hook, so the panel trusts the label only
+while the terminal's foreground program is `claude`. Both guards ask whether claude is what runs in front: the
+hooks by its process group, the panel by the foreground program's name.
 
 ## Considered Options
 
@@ -53,6 +56,11 @@ Rejected. Sampled every 100 ms in the app, both keep a dead agent's last report,
 after a SIGKILL left zsh in front, and neither is true for a fresh claude in its first 1.5 s. Only
 `foreground` followed the crash, within a second, and it is the same signal the hooks' guard uses.
 
+**Compare the foreground with `$CLAUDE_PID` itself.** Rejected after shipping in 2.24.0. hc's
+`foreground.pid` is the foreground group's id, and claude does not always lead that group: on the clouddesk,
+toolbox starts Claude Code as a shim that runs a wrapper that runs it, with no `exec` at any step, so hc
+reported the shim and the comparison refused every session there. Amended to the group comparison in 2.24.1.
+
 **Remove the label first thing in the end hook.** Rejected. Removal costs milliseconds, and its only slow case
 is a core that is down or restarting, when a stale label costs nothing because the Herdr app, a client of that
 same core, shows nothing either. Ahead of the recap stamp, that case would risk the one silent failure the end
@@ -60,10 +68,12 @@ hook exists to prevent, so the removal runs right after the stamp.
 
 ## Consequences
 
-A claude started by a wrapper that does not `exec` it shows the wrapper as the terminal's foreground, so its
-hooks never set the label, and the panel would not trust one. `recap_child.sh` launches claude that way, so a
-recap session gets no Session section. That is accepted: it matters only once recaps run in the Herdr app
-through hc, and the `exec` belongs with that change.
+A claude run by a wrapper that does not `exec` it stays in the wrapper's foreground job, and so in its group,
+and is labelled like any other: toolbox's chain, and `recap_child.sh`'s claude too. The panel still trusts a
+label only while the foreground program is named `claude`, so under a wrapper led by `bash`, as
+`recap_child.sh` is, the session is labelled but not shown. What claude itself starts outside a Bash tool, its
+MCP servers say, shares the group as well, so a claude started from there would pass the hooks' guard; none is,
+today.
 
 A crash leaves the label on the terminal, but the panel ignores it while anything other than claude is in
 front, and the next session started there sets its own. A person can clear one by hand with

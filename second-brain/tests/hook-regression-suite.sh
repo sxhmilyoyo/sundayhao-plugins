@@ -1886,15 +1886,22 @@ echo "== 48. the hooks label the hosting hc terminal with the session folder (AD
 # The Herdr app's Files panel shows a session's folder from one hc label on the terminal
 # hosting it, `second-brain.session=<folder>`, declared by the session's own hooks and never
 # detected. A stub hc ahead of the tripwire records every call, one bracket per argument so a
-# folder split in two would show, and answers `get` with the foreground pid it is given. Two
-# gates: $HC_TERMINAL_ID, and, when $CLAUDE_PID is set, that pid being the terminal's
-# foreground, so a nested claude can neither relabel the host nor take its label away. Every
-# SessionStart sets the label (a /clear re-sets the same value, so the panel never flickers),
-# a real end removes it in hc's `key=` form, and the clear and resume reasons leave it, since
-# the SessionStart that follows each relabels. Without $HC_TERMINAL_ID no hook calls hc at
-# all, which is what keeps a terminal without hc a silent no-op: that run goes through the
+# folder split in two would show, and answers `get` with the foreground group it is given. Two
+# gates: $HC_TERMINAL_ID, and, when $CLAUDE_PID is set, that claude being in the terminal's
+# foreground process group, so a nested claude can neither relabel the host nor take its label
+# away. Every SessionStart sets the label (a /clear re-sets the same value, so the panel never
+# flickers), a real end removes it in hc's `key=` form, and the clear and resume reasons leave
+# it, since the SessionStart that follows each relabels. Without $HC_TERMINAL_ID no hook calls
+# hc at all, which is what keeps a terminal without hc a silent no-op: that run goes through the
 # suite's own PATH, where the tripwire would record a call. Every run below sets CLAUDE_PID or
-# unsets it, because a suite run from inside a Claude session inherits that session's.
+# empties it, because a suite run from inside a Claude session inherits that session's.
+#
+# The gate reads $CLAUDE_PID's group with ps, so the pids here are live processes: the suite
+# itself; W48, a member of the suite's group that is not its leader, as Claude Code is under the
+# clouddesk's toolbox shim; N48, a process in a group of its own, as a nested claude is; and D48,
+# a pid that has already exited. They are started through perl inside $(...), never with a bare
+# `&` or a `( )` subshell, because a caller with job control on makes bash give those a group of
+# their own, and print a setpgid complaint wherever that is not permitted.
 LBIN="$ROOT/lbin"; mkdir -p "$LBIN"
 cat > "$LBIN/hc" << 'STUB'
 #!/bin/bash
@@ -1907,8 +1914,12 @@ fi
 exit "${HC_STUB_EXIT:-0}"
 STUB
 chmod +x "$LBIN/hc"
+G48=$(ps -o pgid= -p $$ | tr -d ' ')
+W48=$(perl -e 'exit 0 if fork; print "$$\n"; open STDOUT, ">", "/dev/null"; open STDERR, ">", "/dev/null"; exec "sleep", "60"')
+N48=$(perl -e 'exit 0 if fork; setpgrp(0, 0); print "$$\n"; open STDOUT, ">", "/dev/null"; open STDERR, ">", "/dev/null"; exec "sleep", "60"')
+D48=$(sh -c 'echo $$')
 L48=48484848-4848-4848-4848-484848484848; LT="$H/.claude/projects/proj/$L48.jsonl"
-LF="$KB/_sessions/$TODAY/$L48"; LON=(PATH="$LBIN:$PATH" HC_TERMINAL_ID=t9 CLAUDE_PID=4242 HC_STUB_FG_PID=4242)
+LF="$KB/_sessions/$TODAY/$L48"; LON=(PATH="$LBIN:$PATH" HC_TERMINAL_ID=t9 CLAUDE_PID=$$ HC_STUB_FG_PID="$G48")
 lcount(){ grep -cxF "$1" "$H/hc-calls.log"; }
 lverbs(){ grep -c "^hc \[$1\] " "$H/hc-calls.log"; }
 lresume(){ printf '{"session_id":"%s","cwd":"/tmp/mapped","transcript_path":"%s","source":"resume"}' "$L48" "$LT" \
@@ -1926,15 +1937,24 @@ chk "an end for a resume leaves it too"               "$(grep -c 'second-brain.s
 : > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}"
 chk "a real end removes it"                           "$(lcount 'hc [label] [t9] [second-brain.session=]')" "1"
 chk "and asks hc only for the foreground before it"   "$(paste -sd'|' "$H/hc-calls.log")" "hc [get] [t9] [--json]|hc [label] [t9] [second-brain.session=]"
-# A claude whose pid is not the terminal's foreground is a nested one, a `claude -p` from a
-# Bash tool say: it asks, and then touches nothing, at its start or at its end.
-: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID=4243 >/dev/null
+# Claude Code run by a wrapper that does not exec it is in the foreground group without leading
+# it: the clouddesk's toolbox runs a shim that runs a wrapper that runs it. The group is what
+# counts, and a pid comparison refused every session there.
+: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$W48" >/dev/null
+chk "a claude in the foreground group but not leading it labels" "$(lcount "hc [label] [t9] [second-brain.session=$LF]")" "1"
+# A claude in a group of its own is a nested one, a `claude -p` from a Bash tool say: it asks,
+# and then touches nothing, at its start or at its end.
+: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$N48" >/dev/null
 chk "a nested claude asks who runs the terminal"      "$(lverbs get)" "1"
 chk "and does not relabel the host"                   "$(lverbs label)" "0"
-: > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}" CLAUDE_PID=4243
+: > "$H/hc-calls.log"; endrun x "$LT" other "${LON[@]}" CLAUDE_PID="$N48"
 chk "nor take the host's label away at its end"       "$(lverbs label)" "0"
-# No CLAUDE_PID means nothing to compare, so the call goes ahead as it did before the gate.
-: > "$H/hc-calls.log"; ( unset CLAUDE_PID; start $L48 startup labelled /tmp/mapped PATH="$LBIN:$PATH" HC_TERMINAL_ID=t9 >/dev/null )
+# A CLAUDE_PID that names no live process has no group, so it is refused before hc is asked.
+: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID="$D48" >/dev/null
+chk "a CLAUDE_PID that is not running is refused"     "$(lverbs label)|$(lverbs get)" "0|0"
+# No CLAUDE_PID means nothing to compare, so the call goes ahead as it did before the gate. The
+# helper reads an empty value as unset, which clears it here without a subshell.
+: > "$H/hc-calls.log"; start $L48 startup labelled /tmp/mapped "${LON[@]}" CLAUDE_PID= >/dev/null
 chk "without CLAUDE_PID the label is set ungated"     "$(lcount "hc [label] [t9] [second-brain.session=$LF]")|$(lverbs get)" "1|0"
 TRIP48=$(cat "$TRIPWIRE" 2>/dev/null | wc -l | tr -d ' ')
 start $L48 startup labelled /tmp/mapped HC_TERMINAL_ID= >/dev/null; endrun x "$LT" other HC_TERMINAL_ID=
@@ -1958,6 +1978,7 @@ chk "a failing hc does not end a set -e caller" \
     "$(env HOME="$H" "${LON[@]}" HC_STUB_EXIT=3 bash -c 'source "$1" >/dev/null 2>&1; set -e; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
 chk "an unset terminal id does not end a set -u caller" \
     "$(env -u HC_TERMINAL_ID HOME="$H" bash -c 'source "$1" >/dev/null 2>&1; set -u; label_hc_terminal /f; unlabel_hc_terminal; echo reached' _ "$HL48" 2>/dev/null)" "reached"
+kill "$W48" "$N48" 2>/dev/null
 
 # The tripwire once more, after the last case that could reach it: case 36 runs before the
 # ccfind cases and case 48, the callers of herdr-app and hc.

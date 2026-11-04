@@ -516,18 +516,27 @@ unlabel_hc_terminal() {
 # Only the session the terminal runs may touch its label. A nested claude, such as a
 # `claude -p` run from a Bash tool, inherits $HC_TERMINAL_ID as well, and without this
 # gate it would relabel the host with its own folder and then remove the host's label at
-# its own end. So when $CLAUDE_PID is set, the label is written only if hc reports that pid
-# as the terminal's foreground process. That takes hc's `foreground` to be the claude
-# process itself, which holds for a direct launch and for `env … claude`; a wrapper script
-# that runs claude without exec would show its own pid, and for that user the label would
-# never be set. Without $CLAUDE_PID there is nothing to compare, so the call goes ahead.
+# its own end. So when $CLAUDE_PID is set, the label is written only if this claude is in
+# the terminal's foreground process group. hc's `foreground.pid` is that group's id, the
+# terminal's tcgetpgrp: checked against `ps -o tpgid=` on both machines. The group, not the
+# pid, because claude is not always the group's leader. On the clouddesk, toolbox starts it
+# as a shim that runs a wrapper that runs Claude Code, with no exec at any step, so hc
+# reports the shim's pid while $CLAUDE_PID is Claude Code's, and a pid comparison refused
+# every session there. A wrapper that stays in the foreground job keeps claude in its group,
+# so a launch like that is labelled too. A nested claude is still refused: a Bash-tool
+# command runs in a session of its own with no terminal, so nothing it starts can be in a
+# terminal's foreground group. What claude starts outside a Bash tool, its MCP servers say,
+# does share the group, and a claude started from there would pass; none is, today. A
+# $CLAUDE_PID that names no live process is refused as well, and without $CLAUDE_PID there
+# is nothing to compare, so the call goes ahead.
 #
 # The whole job, the check and the write together, is bounded at about half a second: a
 # core that is down or restarting keeps hc waiting for seconds while it tries to start one,
 # and a hook that overruns its budget is cancelled. The check runs as a plain pipeline, not
 # inside $(...), so its hc and jq are direct children of the job and go with it when it is
-# cut off. It all runs in a subshell with its output discarded, because bash reports a
-# background job it killed on the shell's own stderr.
+# cut off; the ps before it is local and does not hang, so a capture is fine there. It all
+# runs in a subshell with its output discarded, because bash reports a background job it
+# killed on the shell's own stderr.
 # Args: $1=value (empty → remove)
 _hc_session_label() {
     [ -n "${HC_TERMINAL_ID:-}" ] || return 0
@@ -536,8 +545,10 @@ _hc_session_label() {
         [ -x "$hc_bin" ] || exit 0
         {
             if [ -n "${CLAUDE_PID:-}" ]; then
+                pg=$(ps -o pgid= -p "$CLAUDE_PID" | tr -d ' ')
+                [ -n "$pg" ] || exit 0
                 "$hc_bin" get "$HC_TERMINAL_ID" --json \
-                    | jq -e --arg pid "$CLAUDE_PID" '(.foreground.pid | tostring) == $pid' || exit 0
+                    | jq -e --arg pg "$pg" '(.foreground.pid | tostring) == $pg' || exit 0
             fi
             exec "$hc_bin" label "$HC_TERMINAL_ID" "second-brain.session=$1"
         } &
