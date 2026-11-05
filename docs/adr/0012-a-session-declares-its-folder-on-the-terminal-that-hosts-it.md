@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-11-03
 implementation: 2.24.0
-amended: 2026-11-03, in 2.24.1 (the guard compares process groups) and 2.24.2 (a retrying start write)
+amended: 2026-11-03, in 2.24.1 (the guard compares process groups) and 2.24.2 (a retrying start write); 2026-11-05, in 2.25.1 (the reader moved to the owner's dotfiles repository)
 ---
 
 # A session declares its folder on the terminal that hosts it
@@ -13,7 +13,8 @@ shows that folder from the label and from nothing else. `session_start.sh` sets 
 and fork, and `session_resume.sh` at every resume and compaction; `/clear` keeps the session id, so it sets
 the same value again. `session_end.sh` removes it in hc's `key=` form at a real end, right after its recap
 stamp. The `clear` and `resume` reasons leave it, because the end hook already treats them as non-endings and
-the SessionStart that follows each sets it again. The reader is the `session-folder` mod this plugin ships: it
+the SessionStart that follows each sets it again. The reader is the `session-folder` mod, shipped with this plugin from 2.24.0 to 2.25.0 and kept in the owner's
+dotfiles repository since 2.25.1: it
 takes the label off the focused pane's own terminal, and a terminal without one gets no Session section.
 
 A session's plans, reviews and handoffs land in its session folder, and nothing outside the session could say
@@ -84,9 +85,12 @@ A crash leaves the label on the terminal, but the panel ignores it while anythin
 front, and the next session started there sets its own. A person can clear one by hand with
 `hc label <terminal> second-brain.session=`.
 
-The key is a contract between two halves that version together: the hooks in this plugin and the mod shipped
-from `tools/herdr-app/mods/session-folder/`, which is installed by copy. Renaming or reshaping it means
-changing both, on every machine, at once, which is why it is recorded here.
+The key is a contract between two halves: the hooks in this plugin and the `session-folder` mod, which this plugin
+shipped from `tools/herdr-app/mods/session-folder/` in 2.24.0 through 2.25.0 and which lives in the owner's
+dotfiles repository since 2.25.1, beside the other hand-made Herdr app mods, where one deploy script installs and
+checks them all. The two halves no longer version together, so renaming or reshaping the key means changing both
+repositories, on every machine, at once, which is why it is recorded here and why the label's name and value are
+the whole contract.
 
 A SessionStart pays almost nothing for the label: it hands the write to a detached job and returns. The job
 leaves the hook's process group, because Claude Code kills that group when it cancels a hook, and tries for

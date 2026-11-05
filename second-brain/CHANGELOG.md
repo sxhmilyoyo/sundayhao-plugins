@@ -7,6 +7,15 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.25.1] - 2026-11-05
+
+### Changed
+- **The Files panel mod moved out of this plugin.** `tools/herdr-app/mods/session-folder/`, the Herdr app mod that
+  2.24.0 added to show a session's folder from the `second-brain.session` label, now lives in the owner's dotfiles
+  repository beside the other hand-made Herdr app mods, where one deploy script installs and checks them all. The
+  copy here is removed rather than left to go stale. The label contract is unchanged: the hooks write it as
+  ADR-0012 says and the mod reads it; ADR-0012 is amended to name the mod's new home. Nothing else changes.
+
 ## [2.25.0] - 2026-11-04
 
 ### Added
