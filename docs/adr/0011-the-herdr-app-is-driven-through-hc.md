@@ -35,7 +35,9 @@ program that reports status in its `<hc from="…">` tag, so the session receive
 and started a turn. Key presses with `hc keys` reach the command menu, and the SessionEnd hook runs.
 
 **`hc kill` to end the session.** Rejected on measurement. The program ends but the SessionEnd hook does not
-run: the note keeps an empty `ended_at`, and nothing records that the recap's own session ended.
+run: the note keeps an empty `ended_at`, and nothing records that the recap's own session ended. Measured
+again on 2026-11-11, on hc 0.1.20 with Claude Code 2.1.322: `hc kill` ends the session in order and its end
+hook runs with reason `other`; the decision stands.
 
 **Split a pane from here.** Not possible. The window is on the Mac; the clouddesk has `hc` and no
 `herdr-app`. A worker without a pane was confirmed visible in the window's agents sidebar before this was

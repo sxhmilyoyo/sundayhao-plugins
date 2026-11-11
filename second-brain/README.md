@@ -239,10 +239,11 @@ The status lives on the session's own note, next to everything else you already 
 
 | Property | Holds |
 |----------|-------|
-| `recap_status` | `requested`, `running`, `done`, `failed`, or `exempt` |
+| `recap_status` | `requested`, `running`, `done`, `failed`, `exempt`, or `deferred` |
 | `recapped_at`, `recap_session` | When the recap finished, and which session did it |
-| `recap_of` | On a recap session, the session it describes |
+| `recap_of` | On a recap session, the session it describes, or `group:<key>` for the recap session of a recap group |
 | `recap_exempt` | On a session its launcher declared exempt from the automatic recap: who declared it, `launcher` |
+| `recap_group` | On a session its launcher declared to belong to a recap group: the group's key |
 
 Once a recap finishes it writes the subject's `project`, `tags` and `summary` as well, since by then it has
 read the whole conversation. Nothing is ever deleted: a retry updates the documents from the first attempt
@@ -258,6 +259,45 @@ stamps `exempt` with the reason in `recap.log`, never `requested`, however much 
 make of it by hand is final. Like `recap_of`, the marker counts on a genuine startup only and the exit reads
 the note, so a variable that leaked into a shell cannot exempt real work. To recap such a session anyway, run
 `recap_launcher.sh --manual <folder>` ([ADR-0009](../docs/adr/0009-a-launcher-can-declare-its-delegate-exempt-from-the-automatic-recap.md)).
+
+**A launcher can also defer the sessions it starts to one group recap.** Sessions that are slices of one piece
+of work, such as the ticket sessions of one spec and the session that oversees them, are worth one recap read
+together and not one recap each: a full recap takes about 43 minutes at the median, and a pattern across
+sessions shows only to a recap that reads them all. Such a launcher sets `SECOND_BRAIN_RECAP_GROUP=<key>` in
+each session's environment at launch, in the same two ways as the exemption; the key holds letters, digits,
+`.`, `_` and `-`, at most 64 characters. The start hook records `recap_group` on the note, and every exit of
+that session stamps `deferred` and starts nothing. A member too small to hold knowledge is `exempt` like any
+session, and a note that carries both declarations is deferred, so a launcher can send both while an older
+plugin may still be installed. The notice never lists a deferred session.
+
+When the launcher says the group is complete, it calls one command, and calls it again until it exits 0:
+
+```bash
+~/.claude/plugins/config/second-brain/bin/recap-group <key> --complete-at <UTC time> [--label k=v]...
+```
+
+| Exit | Meaning |
+|------|---------|
+| 0 | Settled: no member waits and none is alive. The caller stops calling |
+| 1 | In progress, or waiting for members that are still alive. The caller calls again later |
+| 2 | Needs a person. The one line it prints says why. The caller keeps calling |
+
+That path is stable: the start hook keeps it linked to the installed plugin copy. The command starts **one
+recap session** for every member that has ended, with the labels it was given, which is what puts the session
+in a tab of the launcher's choosing in the Herdr app. Code writes a short digest of each member, the recap
+reads the digests and opens a transcript only where a digest shows trouble, and it writes one set of
+documents for the group; each member's note still gets its own project, tags, summary and `done`. A member
+still alive is waited for until an hour after `--complete-at`, then left for a later run, which updates the
+group's documents in place. A recap that dies is started again by a later call, three times at most. A
+member whose transcript is gone or cannot be read is marked `failed` with its reason and the group settles
+without it; the start-of-session notice lists it like any failed recap, with the command to recap that one
+session, and the group's daily log entry names every such member with its reason, since the notice reaches
+only the fourteen newest date folders. The
+command starts a session only where a terminal host can start one from outside a terminal, which today is the
+Herdr app, and only under `auto_recap: on`. Anywhere else it exits 2 and prints the command to run by hand:
+the same call with `--here`, which runs the recap in your own terminal. You can still recap one deferred
+session alone with `recap_launcher.sh --manual <folder>`, and the group's recap then leaves it out
+([ADR-0013](../docs/adr/0013-a-launcher-can-defer-its-delegates-recaps-to-one-group-recap.md)).
 
 **To recap a session again**, clear its status and it will be requested at its next exit:
 

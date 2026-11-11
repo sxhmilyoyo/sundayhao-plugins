@@ -167,13 +167,14 @@ is the only writer while a session runs, and the recap writes the session's desc
 | Property | Written by | Holds |
 |---|---|---|
 | `session_id`, `date`, `started_at`, `ended_at`, `duration_seconds` | hooks | identity and timing |
-| `cwd`, `git_branch`, `docs_path`, `transcript_source` | hooks | where the work happened |
+| `cwd`, `git_branch`, `docs_path`, `transcript_source` | hooks; for `transcript_source`, also the group command, for a member that ended without its end hook | where the work happened |
 | `forked_from`, `forked_from_name`, `delegated_by`, `delegated_by_name` | hooks | lineage |
 | `session_name` | hooks at launch, session-manager after | the session's name |
 | `project`, `tags`, `summary` | session-manager during, the recap after | the description |
-| `recap_of` | the start hook, for a recap session only | the subject folder this session recaps |
+| `recap_of` | the start hook, for a recap session only | the subject folder this session recaps, or `group:<key>` for the recap session of a recap group |
 | `recap_exempt` | the start hook, for a session its launcher declared exempt only | who declared it: `launcher` |
-| `recap_status` | `recap_status.sh`, nothing else | `requested`, `running`, `done`, `failed`, `exempt` |
+| `recap_group` | the start hook, for a session declared at launch to belong to a recap group only | the group's key |
+| `recap_status` | `recap_status.sh`, nothing else | `requested`, `running`, `done`, `failed`, `exempt`, `deferred` |
 | `recapped_at`, `recap_session` | `recap_status.sh` on `done` | when it was recapped, and by which session |
 
 `recap_status` has one writer per transition, serialised by a per-folder lock. Anything not in this table
@@ -182,17 +183,27 @@ is refused and logged to the session folder's `recap.log`:
 | From | To | Written by |
 |---|---|---|
 | empty | `requested`, `exempt` | the SessionEnd hook |
+| empty | `deferred` | the SessionEnd hook, for a member of a recap group; the group command, for a member that ended without its end hook |
 | `exempt` | `requested` | the SessionEnd hook, when the session has since grown and no launcher declared it exempt |
+| `exempt` | `deferred` | the SessionEnd hook, for a member of a recap group that was too small and has since grown |
 | `exempt` | `running` | a manual launch, so a person can always recap a small session |
+| `deferred` | `running` | the claim of the group's run; a manual launch for that one member |
 | `requested` | `running`, `failed` | a recap claiming it; its wrapper on exit |
 | `running` | `done`, `failed` | the recap's last phase; its wrapper on exit |
 | `failed` | `running` | a retry |
-| `done` | none | terminal; a deliberate `--force requested` is the only exit |
+| `done` | none | terminal; a deliberate `--force requested` is the only exit, or `--force deferred` for a member of a recap group, which the SessionEnd hook writes when the member has grown since its recap |
 
 A recap session is never itself recapped: `recap_of` on its note identifies it, and its own exit stamps it
 `exempt`. A session too small to carry knowledge is `exempt` too, so it is never mistaken for a missed one. So is
 a session its launcher declared exempt, `recap_exempt` on its note: `exempt` at every exit whatever it did, and a
 recap made of it by hand is final (ADR-0009).
+
+A session declared at launch to belong to a recap group, `recap_group` on its note, is `deferred` at its exit
+and nothing starts: it is recapped with its group, once whatever launched it calls the group command with the
+key (ADR-0013). The group is checked before the exemption, so a note that carries both declarations is
+deferred. A member too small to carry knowledge is `exempt` like any session, and one that keeps working after
+its recap goes back to `deferred`. The start-of-session notice never lists a deferred session, and a batch
+recap skips it.
 
 ## Quality Standards
 

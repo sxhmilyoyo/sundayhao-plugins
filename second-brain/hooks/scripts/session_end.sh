@@ -58,7 +58,7 @@ fi
 # point leaves a note missing `ended_at` and `duration_seconds`, which is visible and
 # which the recap can work around, but the session is still going to be recapped.
 #
-# Two reads happen outside the lock, deliberately. `recap_of` and `recap_exempt` are
+# Two reads happen outside the lock, deliberately. `recap_of`, `recap_exempt` and `recap_group` are
 # written once at registration and never change, so they cannot be read stale. A stale `recap_status` only
 # means the compare-and-set writer refuses a transition, which is the safe direction. The
 # rewrite below picks the new status up through the unknown-property preserve loop,
@@ -77,8 +77,8 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
     # in 0.1 s rather than queueing behind a recap mid-write for a stamp the transition
     # table would refuse anyway.
     export SECOND_BRAIN_LOCK_ATTEMPTS=2
-    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; IFS= read -r RECAPPED; IFS= read -r EXEMPT_BY; } \
-        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of recap_assistant_records recap_exempt)
+    { IFS= read -r CURRENT; IFS= read -r RECAP_OF; IFS= read -r RECAPPED; IFS= read -r EXEMPT_BY; IFS= read -r GROUP; } \
+        < <(read_frontmatter_props "$SESSION_MD" recap_status recap_of recap_assistant_records recap_exempt recap_group)
     if [ -z "$CURRENT" ] || [ "$CURRENT" = "exempt" ]; then
         # RECAP_OF is what decides whether this is a recap session, never
         # SECOND_BRAIN_RECAP_OF. The marker's job ends at registration; at exit the
@@ -89,6 +89,31 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
         if [ -n "$RECAP_OF" ]; then
             # A recap session: exempt for good, so a recap never recaps itself.
             [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+        elif [ -n "$GROUP" ]; then
+            # Declared at launch to belong to a recap group (ADR-0013), and read off the note like
+            # recap_of. The session is recapped with its group, once whatever launched it says the
+            # group is complete, so this exit stamps `deferred` and starts nothing, under `on` too.
+            # Before recap_exempt on purpose: a launcher sends both markers while an older plugin
+            # may still be installed, and a note that carries both is deferred. Size still counts,
+            # by the measure and for the reasons given in the last branch below: a member too small
+            # to hold knowledge is exempt like any session, and is deferred at a later exit once it
+            # has grown. The reason goes to recap.log, once, when the stamp lands.
+            if [ ! -f "$TRANSCRIPT_PATH" ]; then
+                [ -z "$CURRENT" ] && "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+            else
+                TURNS=$(grep -c -m5 '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
+                case "$TURNS" in
+                    ''|*[!0-9]*) : ;;
+                    *) if [ "$TURNS" -ge 5 ]; then
+                           if "$STATUS" "$SESSION_FOLDER" deferred >/dev/null 2>&1; then
+                               printf '%s deferred: declared at launch to belong to recap group %s (recap_group)\n' \
+                                   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GROUP" >> "$SESSION_FOLDER/recap.log"
+                           fi
+                       elif [ -z "$CURRENT" ]; then
+                           "$STATUS" "$SESSION_FOLDER" exempt >/dev/null 2>&1
+                       fi ;;
+                esac
+            fi
         elif [ -n "$EXEMPT_BY" ]; then
             # Declared exempt by its launcher at registration (ADR-0009), and like recap_of
             # read off the note, never the environment. Exempt for good as well: this branch
@@ -149,7 +174,7 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
                    fi ;;
             esac
         fi
-    elif [ "$CURRENT" = "done" ] && [ -z "$RECAP_OF" ] && [ -z "$EXEMPT_BY" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+    elif [ "$CURRENT" = "done" ] && [ -z "$RECAP_OF" ] && { [ -n "$GROUP" ] || [ -z "$EXEMPT_BY" ]; } && [ -f "$TRANSCRIPT_PATH" ]; then
         # A recapped subject that kept working. The recap stamped the transcript's assistant
         # records when it marked the note done (recap_status.sh); a live count higher by the
         # same band that separates a trivial session from a real one is knowledge the recap
@@ -162,16 +187,24 @@ if [ "$MODE" != "off" ] && [ -n "$ENDING" ]; then
         # subject's existing documents in place rather than writing a second daily log.
         # A subject its launcher declared exempt is left alone here too, whoever recapped
         # it: a hand recap is final, and nothing automatic requests one of it (ADR-0009).
+        # A member of a recap group, exempt as well or not, goes back to `deferred` instead and
+        # waits for its group's next run: nothing starts at a member's exit (ADR-0013).
         case "$RECAPPED" in ''|*[!0-9]*) RECAPPED="" ;; esac
         NOW=$(grep -c '"type":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null)
         case "$NOW" in ''|*[!0-9]*) NOW="" ;; esac
         if [ -n "$RECAPPED" ] && [ -n "$NOW" ] && [ "$((NOW - RECAPPED))" -ge 5 ]; then
-            printf '%s grew by %d assistant records since the recap (%d -> %d), re-requesting\n' \
-                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((NOW - RECAPPED))" "$RECAPPED" "$NOW" >> "$SESSION_FOLDER/recap.log"
-            "$STATUS" "$SESSION_FOLDER" requested --force >/dev/null 2>&1
-            if [ "$MODE" = "on" ]; then
-                spawn_detached "$SCRIPT_DIR/recap_launcher.sh" \
-                    --auto "$SESSION_FOLDER"
+            if [ -n "$GROUP" ]; then
+                printf '%s grew by %d assistant records since the recap (%d -> %d), deferred again for recap group %s\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((NOW - RECAPPED))" "$RECAPPED" "$NOW" "$GROUP" >> "$SESSION_FOLDER/recap.log"
+                "$STATUS" "$SESSION_FOLDER" deferred --force >/dev/null 2>&1
+            else
+                printf '%s grew by %d assistant records since the recap (%d -> %d), re-requesting\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$((NOW - RECAPPED))" "$RECAPPED" "$NOW" >> "$SESSION_FOLDER/recap.log"
+                "$STATUS" "$SESSION_FOLDER" requested --force >/dev/null 2>&1
+                if [ "$MODE" = "on" ]; then
+                    spawn_detached "$SCRIPT_DIR/recap_launcher.sh" \
+                        --auto "$SESSION_FOLDER"
+                fi
             fi
         fi
     fi
@@ -244,7 +277,7 @@ fi
 # 1.5-second budget with a memory copy, two transcript scans and a rewrite — enough on a
 # real session to have the whole hook cancelled after doing its work.
 #
-# recap_status, recap_of and recap_exempt are deliberately absent: the predicate above read them
+# recap_status, recap_of, recap_exempt and recap_group are deliberately absent: the predicate above read them
 # and has since written the status, so re-reading here would either waste a pass or, worse,
 # invite someone to use a value that is now stale. The rewrite carries the new status
 # through the unknown-property preserve loop instead.

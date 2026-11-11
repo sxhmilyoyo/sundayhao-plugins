@@ -76,7 +76,7 @@ recap_status.sh <session_folder> <state> [recap_session_folder] \
                 [--project P] [--tags "a, b"] [--summary S] [--force]
 ```
 
-`state` is one of `requested running done failed exempt`. It is **compare-and-set**, not a setter: a
+`state` is one of `requested running done failed exempt deferred`. It is **compare-and-set**, not a setter: a
 transition the table in `_meta/schema.md` does not allow changes nothing and exits 3, which is what makes
 `requested -> running` succeed exactly once when two recaps race for the same subject. A per-folder
 `.recap.lock` directory is the transaction, and `session_end.sh` takes the same lock around its
@@ -85,7 +85,50 @@ accepted on `done` and `failed`, and overwrite what is on the note: after a sess
 only thing that knows what the work was. Refusals and transitions are appended to the session folder's
 `recap.log`.
 
+`deferred` is the status of a session that belongs to a recap group
+(`docs/adr/0013-a-launcher-can-defer-its-delegates-recaps-to-one-group-recap.md`): recapped with its group,
+not at its own exit. Empty and `exempt` reach it; the claim of the group's run, or of a hand recap of that one
+session, moves it to `running`; and `done` returns to it only with `--force`, as `done` returns to `requested`.
+
 Exit codes: 0 written, 2 usage or no note, 3 transition refused.
+
+### The group command (hooks/scripts/recap_group.sh)
+
+**Purpose**: recap a recap group, the sessions a launcher declared at launch with
+`SECOND_BRAIN_RECAP_GROUP=<key>`, in one recap session, once the launcher says the group is complete.
+
+```bash
+~/.claude/plugins/config/second-brain/bin/recap-group <key> --complete-at <UTC time> [--label k=v]... [--here]
+```
+
+That path is stable: the start hook keeps it linked to the command of the installed plugin copy, so a caller
+in another package needs no knowledge of the versioned install folder. The caller repeats the call until it
+answers 0, and reads one line on stdout that says why it answered as it did.
+
+| Exit | Meaning | The caller |
+|---|---|---|
+| 0 | settled: no member waits and none is alive | stops calling |
+| 1 | in progress, or waiting for members still alive | calls again later |
+| 2 | needs a person; the line says why | tells a person, and keeps calling |
+
+One call sorts the members (every note whose `recap_group` equals the key), stamps a member that ended
+without its end hook, settles a run that died, and, when members wait and none is alive, or an hour has
+passed since `--complete-at`, starts one run: a detached process that writes a digest of each member under
+`~/.local/state/second-brain/groups/<key>/`, claims the members, starts one recap session with
+`hc run --bg --no-parent` and the labels it was given, and removes that session's terminal once every member
+is done. A member is alive while Claude Code's session registry (`~/.claude/sessions/`) shows a live process
+for its id; a registry that cannot be read means alive. A member whose transcript is missing or cannot be
+read is marked `failed` with its reason and then does not wait: the group settles without it, and the line
+of an answer 0 says how many such members there are. Every run lists them, with name, folder and reason, in
+`left-out.tsv` beside the manifest, and the recap names them in the group's daily log entry. From outside a
+terminal the labels are what names a
+place for the session on the Herdr app's core: with none, in a Herdr TUI pane, or with no `hc`, the command
+answers 2 with the command to run by hand, the same call with `--here`, which runs the recap in the caller's
+own terminal. It acts only under `auto_recap: on`.
+
+`obsidian_helpers.sh` holds what the command shares with the hooks and the recap's wrapper:
+`recap_group_key_valid`, `recap_group_state_dir`, `recap_group_session_name`, `recap_member_statuses`,
+`process_runs`, `proc_start_time`, `session_transcript_path` and `state_value`.
 
 ### Frontmatter helpers in obsidian_helpers.sh
 

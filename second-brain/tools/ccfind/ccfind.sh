@@ -150,8 +150,10 @@ filter_by_tag() {
 # Sessions whose knowledge has not been distilled yet: never requested, waiting, or
 # failed. Deliberately excludes `exempt` (decided too small to recap), `done`, and
 # `running` (someone holds it), and excludes recap sessions themselves, which have a
-# status of their own but nothing to distil. This is the full backlog the
-# start-of-session notice deliberately does not show, since a nudge is for what stalled.
+# status of their own but nothing to distil. `deferred` is left out as well: such a
+# session waits for its recap group (ADR-0013), and is recapped with it, so it is not
+# a gap for a person to close. This is the full backlog the start-of-session notice
+# deliberately does not show, since a nudge is for what stalled.
 filter_not_recapped() {
     get_sessions | awk -F'\t' '$7 == "-" || $7 == "requested" || $7 == "failed"'
 }

@@ -60,6 +60,8 @@ registration from the launcher's marker, is that answer.
 - **Slash command**: `/second-brain:session-recap <subject folder>` — only inside a recap session; it stops
   at the Phase 1.0 gate anywhere else
 - **Skill tool**: `Skill({ skill: "second-brain:session-recap" })`
+- **A recap group**: `recap-group <key> --complete-at <UTC time>`, which starts a session that runs
+  `/second-brain:session-recap --group <key>` (see [Group Recap](#group-recap))
 
 ### Visibility Settings
 
@@ -82,7 +84,7 @@ This skill uses RFC 2119 keywords:
 
 Every session recap executes all 5 phases completely — no exceptions. A daily log alone is not a recap; it's a log entry. The knowledge bank compounds from extracted concepts, reflections, and best practices, not from session summaries. Skipping phases produces a diary, not a brain.
 
-Even when processing many sessions, each session gets its own full Phase 2.1 reflection gate, Phase 2.4 source ingestion plan, Phase 2.7 improvement scan, and Phase 3 document creation. Do not batch sessions into a single daily log or skip phases for throughput.
+Even when processing many sessions in a batch, each session gets its own full Phase 2.1 reflection gate, Phase 2.4 source ingestion plan, Phase 2.7 improvement scan, and Phase 3 document creation. Do not put the sessions of a batch into a single daily log or skip phases for throughput. A group recap is the one case where many sessions share one set of documents: they were declared at launch to be one piece of work, and the phases run once, for the group (see [Group Recap](#group-recap)).
 
 ## Batch Recap
 
@@ -95,6 +97,7 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
    |---|---|---|
    | `done` | already recapped | skip; a person's `--force requested` reopens it, and so does the end hook when the subject's transcript has grown by five assistant records since the recap, unless the note carries `recap_exempt` (then the inventory of Phase 1.0 is non-empty and Phase 3.0 updates in place) |
    | `exempt` | deliberately never recapped: a recap session, a session too small to hold knowledge, or one its launcher declared exempt (`recap_exempt` on its note) | skip |
+   | `deferred` | belongs to a recap group (`recap_group` on its note), and is recapped with its group once the group is declared complete | skip, as `exempt` is skipped; a person who wants one of them recapped alone uses the launcher, and the group recap then leaves it out |
    | `running` | a recap holds the claim, unless it is this session's own subject | skip, unless your `recap_of` names it, in which case the claim is yours and you proceed |
    | `requested` or `failed` | waiting, or stalled | candidate; claim each one as you reach it |
    | empty | never requested | candidate if it has a transcript |
@@ -102,7 +105,7 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
    A batch claims each subject itself, because no wrapper ran for the ones it picks up. That is the
    difference from the single-subject path in Phase 1.0, where the claim already exists. A subject a person
    wants re-requested is cleared with `recap_status.sh <folder> clear --force`, which removes the status so
-   the session is requested again at its next exit.
+   the session is requested again at its next exit. A member of a recap group is deferred again at that exit.
 
    Also skip a session with no transcript, and one that is trivial: **fewer than five assistant records**
    (`grep -c -m5 '"type":"assistant"'`), the same test the end hook applies. Not a count of user messages:
@@ -111,6 +114,101 @@ When recapping multiple sessions (e.g., "recap all sessions since March 29"):
 3. **Process chronologically** — full 5-phase workflow per session, each gets its own daily log + extracted docs; a Phase 2.6 proposal blocks the batch until the person answers, and later sessions weigh names proposed earlier (see 2.6)
 4. **Parallelize when independent** — different projects/topics can use parallel agents; same investigation thread should be sequential for cross-references
 5. **Integrate once at end** — index regeneration and log append after all sessions, not per session
+
+## Group Recap
+
+A recap group is the sessions declared at launch to be recapped together as one piece of work
+([GLOSSARY](../../../GLOSSARY.md),
+[ADR-0013](../../../docs/adr/0013-a-launcher-can-defer-its-delegates-recaps-to-one-group-recap.md)). A group
+recap is one set of documents distilled from all of them together, where a batch gives every subject a recap
+of its own. It runs as `/second-brain:session-recap --group <key>`, in a session that the group command
+started: `recap-group <key> --complete-at <UTC time>`, called by whatever launched the group, or by a person
+with `--here`. Typed anywhere else it stops at the gate.
+
+The five phases run **once, for the group**. This section says what differs from a recap of one subject;
+everything it does not mention is unchanged.
+
+**What the run left for you**, in the group's state folder, `~/.local/state/second-brain/groups/<key>/`:
+
+| File | Holds |
+|---|---|
+| `manifest` | `key`; `complete_at`, when the group was declared complete; `log_date`, the day of that moment, which dates the daily log; `project`, the domain most members resolve to, which may be empty; `members`; and the paths of the next three |
+| `members.tsv` | One row for each member this run claimed, tab-separated: session folder, session id, name, domain (`-` for none), assistant records, digest path. These are your subjects, and no others |
+| `digests/<session id>.md` | One member's digest, made by code: a header, the output of `parse_transcript.sh <transcript> all`, and the member's own Debrief blocks |
+| `left-out.tsv` | One row for each member that the group has left out because its transcript is missing or cannot be read, tab-separated: session folder, session id, name, reason. It is the group's whole list as it stands at this run, and it is empty when the group has left nobody out. These members are not subjects |
+
+**1.0 Gate, claim, inventory.**
+
+- **Gate.** Your own note's `recap_of` must read `group:<key>`. If it does not, stop, print this and do nothing else:
+
+  ```
+  This session is not the recap session of group <key>, so recapping here would misfile every member.
+  Run:  ~/.claude/plugins/config/second-brain/bin/recap-group <key> --complete-at <UTC time> --here
+  ```
+
+- **Claim.** The run claimed every member in `members.tsv` before it started you, so each reads `running`
+  and you make no writer call for it. A listed member that reads anything else was moved by somebody else:
+  leave it out, and say so in the daily log. Never take a session that is not listed, whatever its
+  `recap_group` says: a member that had not ended is left for a later run.
+- **Inventory.** `grep -rl "^recap-group: <key>" "$KB_PATH" --include="*.md"`. A non-empty list means this run
+  is a catch-up, for members that ended after the group's first recap, and Phase 3.0 applies to the group's
+  documents.
+
+**Phase 1: read digests, not transcripts.**
+
+- Read `manifest` and `members.tsv`, then the digests. A digest stands for 1.1 and 1.3 of its member.
+- Open a member's transcript only where its digest shows trouble: an entry under `=== Errors & Failures ===`,
+  one file modified again and again, a prompt or an inbound message that redirects the work, or a Debrief
+  block whose next steps name a blocker or an ask. Read only the section you need, with
+  `./scripts/parse_transcript.sh <transcript> <section>`; the transcript's path is in the digest's header.
+- Above about 30 members, do not read every digest yourself. Split `members.tsv` into chunks of about 15
+  rows and hand each chunk to a subagent with one brief: for each member, a one-line summary, its outcome,
+  candidate tags, and any error, rework or ask with the line that shows it; then the patterns it saw across
+  its chunk. Join what the subagents return. The lines for each member become its description in 5.5, and
+  the patterns feed Phase 2.
+- **1.2.** The group's documents go under `project` in `manifest`, when `validate_project` accepts it. An
+  empty one goes to Phase 2.6, asked once for the whole group. Each member keeps its own domain, the fourth
+  column of its row, and a member with none takes the group's.
+- 1.4, 2.3 and 2.4 apply to a member only where its digest lists a document that it wrote under its own
+  session `docs/` folder.
+
+**Phase 2: once.** One reflection gate (2.1): its two questions are asked of the group as a whole, and a
+pattern across members is what a group's reflection records. One improvement scan (2.7); each candidate
+names the member its evidence comes from. At most one Phase 2.6 question, in this session.
+
+**Phase 3: one set of documents.**
+
+- One daily log entry, dated `log_date`. It lists every member with a link to its session note,
+  `[[_sessions/<date>/<id>/session|<name>]]`, so that each member's note shows the entry among its backlinks.
+  Name the entry for the group and its work, never for a count or a list of its members: a catch-up adds
+  members and keeps the file name.
+- The same entry names the members that the group has left out, from `left-out.tsv`: one line that begins
+  `Left out:`, each member as a link to its session note followed by its reason. The start-of-session
+  notice shows a failed recap only from the fourteen newest date folders, so this line is where a person
+  finds them. Write nothing else about such a member and make no writer call for it: it stays `failed`, and
+  `recap_launcher.sh --manual <folder>` recaps it alone. With an empty file, write no such line.
+- The concepts, components, best practices, reflections and proposed improvements that the evidence
+  supports, in the usual priority order and with the usual cross-reference minimums.
+- Every document carries `recap-group: <key>` in its frontmatter, where a recap of one subject writes
+  `session-folder`. That field is what the inventory of a catch-up finds. A proposed improvement carries
+  `session-folder` as well, naming the member its evidence comes from.
+- In a catch-up, update the group's documents in place and add the new members to the daily log's list.
+  Rewrite the `Left out:` line from the file as it stands now, so that a member that has since been
+  recapped drops out of it, and remove the line when the file is empty. Create only what is missing (3.0).
+
+**Phase 5.5: one call for each member**, after 4.1 passed:
+
+```bash
+"$PLUGIN_ROOT/skills/common/recap_status.sh" "<member folder>" done "$OWN_SESSION_FOLDER" \
+    --project "<the member's domain>" --tags "<the member's tags>" --summary "<the member's one line>"
+```
+
+Each member's note gets its own project, tags and summary, by the rules of 5.5. A member you cannot describe
+is marked `failed`, with a `reason=<text>` line in its own `recap.log` as in 2.6, and the others still
+settle. The session ends itself once every member in `members.tsv` reads `done`
+([ADR-0010](../../../docs/adr/0010-a-recap-session-ends-itself-once-its-recap-is-done.md)); a member that
+is not `done` when the session ends is failed by its wrapper, and a later call of the group command starts
+a run for it.
 
 ---
 
@@ -161,7 +259,7 @@ SUBJECT_STATUS=$(read_frontmatter_prop "$SUBJECT/session.md" "recap_status")
 | Status | What it means | What to do |
 |---|---|---|
 | `running`, and step 1 matched your `recap_of` to this subject | your own wrapper claimed it | **proceed**, and make no writer call |
-| `requested` or `failed` | the wrapper never claimed: it died first, or the command was pasted without the child script | claim it now with `recap_status.sh "$SUBJECT" running`, and stop if that is refused |
+| `requested`, `failed` or `deferred` | the wrapper never claimed: it died first, or the command was pasted without the child script | claim it now with `recap_status.sh "$SUBJECT" running`, and stop if that is refused |
 | `done` | already recapped | **stop**; a person's `--force requested` reopens it, as does the end hook once the transcript has grown by five assistant records since the recap, and either lands here as `requested` |
 | `running`, but your `recap_of` names a different subject, or you have none | another recap holds it | **stop** |
 | empty | nothing requested this | **stop**; a recap should not invent its own subject |
@@ -708,6 +806,7 @@ prevent.
 | Script | Purpose | Phase |
 |--------|---------|-------|
 | `recap_status.sh` | Claim the subject, describe it, set its status (the only writer) | 1.0, 1.2, 5.5 |
+| `recap-group` (`hooks/scripts/recap_group.sh`) | Start a group recap's session, with its members claimed and digested | before 1.0 |
 | `parse_transcript.sh` | Extract data from session transcript | 1.3 |
 | `detect_session_sources.sh` | Detect ingestible references and artifacts | 1.4 |
 | `resolve_project.sh` | Resolve and validate a knowledge-bank domain | 1.2 |
@@ -741,7 +840,7 @@ Session recap is complete when:
 8. ✅ Knowledge bank indices updated (if new docs created)
 9. ✅ The subject's `recap_status` is `done`, with its `project`, `tags` and `summary` written by 5.5 —
    `project` empty when the person chose none at 2.6 — or `failed` with the reason in `recap.log`
-   when 2.6 had nothing to propose
+   when 2.6 had nothing to propose. For a group recap, this holds for every member in `members.tsv`
 
 **Only then declare**: "✅ Session Recap Complete"
 

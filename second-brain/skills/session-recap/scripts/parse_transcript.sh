@@ -11,6 +11,7 @@
 #   errors      - Extract errors and failures from tool results
 #   subagents   - Extract subagent (Agent tool, formerly Task) invocations
 #   insights    - Extract educational insights (★ Insight blocks)
+#   debriefs    - Extract the session's own Debrief blocks (▤ Debrief); not part of `all`
 #   project     - Auto-detect project from cwd
 #   all         - Run all extractions
 
@@ -28,6 +29,7 @@ if [ $# -lt 2 ]; then
     echo "  errors      - Extract errors from tool results"
     echo "  subagents   - Extract subagent invocations"
     echo "  insights    - Extract educational insights (★ Insight blocks)"
+    echo "  debriefs    - Extract the session's own Debrief blocks (not part of all)"
     echo "  project     - Auto-detect project from cwd"
     echo "  all         - Run all extractions"
     exit 1
@@ -152,6 +154,22 @@ extract_insights() {
     grep -v '^$' || true  # no insight block is not a failure; under set -e it ended `all` with exit 1
 }
 
+# The session's own Debrief blocks: its account of each substantial turn, from the frame line that
+# opens a block to the frame line that closes it. Assistant text only, so a block quoted in a tool
+# result or pasted by a person is not taken for the session's. A block cut off before its closing
+# frame ends with the text it is in: jq marks the end of each text, and the mark stops the copy.
+# Not part of `all`, whose output is the digest a group recap was sized on; the group run adds this
+# section to each member's digest itself (ADR-0013).
+extract_debriefs() {
+    echo "=== Debrief Blocks ==="
+    jq -r 'select(.type == "assistant") |
+      .message.content[]? | select(.type == "text") | .text, "@@end-of-text@@"' "$TRANSCRIPT" 2>/dev/null | \
+    awk '$0 == "@@end-of-text@@" { if (on) print ""; on = 0; next }
+         /▤ Debrief/ { on = 1 }
+         on { print }
+         on && /^───/ { on = 0; print "" }'
+}
+
 # Report the working directory and the domain it maps to. This is information, never a
 # decision: `project` names a knowledge-bank domain (ADR-0004) and the recap decides it
 # from three sources in SKILL.md Phase 1.2. The old helper here matched the cwd against
@@ -248,6 +266,9 @@ case "$COMMAND" in
         ;;
     insights)
         extract_insights
+        ;;
+    debriefs)
+        extract_debriefs
         ;;
     project)
         extract_project

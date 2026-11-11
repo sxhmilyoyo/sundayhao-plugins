@@ -7,6 +7,115 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.26.0] - 2026-11-11
+
+### Added
+- **A launcher can defer the sessions it starts to one group recap.** Since 2.20.0 a launcher that ends its own
+  sessions could only declare them exempt, and the ticket dispatcher did, for every session it starts, its
+  standing session included: on 2026-11-11, 451 notes carried `recap_exempt: launcher` and nothing automatic
+  would ever recap one. The owner had wanted those recaps postponed, not dropped. A launcher now sets
+  `SECOND_BRAIN_RECAP_GROUP=<key>` on each launch instead, or as well (ADR-0013; GLOSSARY.md: Recap group,
+  Group recap, Deferred session). The key holds letters, digits, `.`, `_` and `-`, at most 64 characters;
+  any other value is ignored. `session_start.sh` records `recap_group` on the note at a genuine startup, as
+  it records `recap_exempt`. `session_end.sh` checks the group after `recap_of` and before `recap_exempt`,
+  so a note with both declarations is deferred and a launcher can send both while an older plugin is still
+  installed: at five assistant records the exit stamps `deferred`, with the reason in `recap.log`, and starts
+  nothing, under `on` too; under five, or with no transcript, it stamps `exempt` like any session, and
+  `deferred` at a later exit once the session has grown; `deferred`, `requested`, `running` and `failed` are
+  left alone; a `done` member that grew by five records goes back to `deferred`, forced, with the growth in
+  `recap.log`. `recap_status.sh` gains `deferred`, a sixth status, and four transitions: empty and `exempt`
+  reach it, `running` leaves it (the claim), and `done` returns to it only with `--force`. The notice never
+  lists a deferred session, a batch recap skips it, and `ccfind --not-recapped` leaves it out.
+- **The group command, `recap-group <key> --complete-at <UTC time> [--label k=v]... [--here]`**
+  (`hooks/scripts/recap_group.sh`). The launcher calls it when it declares the group complete and repeats the
+  call until it exits 0. It is reached through one stable path,
+  `~/.claude/plugins/config/second-brain/bin/recap-group`, a link that the start hook keeps pointing at the
+  installed plugin copy at every genuine startup, so a caller in another package knows a path and three exit
+  codes and nothing of the versioned install folder: 0 settled, 1 call again, 2 needs a person, with one
+  line on stdout that says why. One call takes nine steps: it does nothing unless `auto_recap` is `on`;
+  finds the members, every note whose `recap_group` equals the key, in every date folder (0.25 s for the
+  scan on 3000 notes, 1.2 to 1.6 s for a whole call with 200 members); sorts them, alive meaning that Claude
+  Code's session registry (`~/.claude/sessions/`) shows a live process for the session's id with the same pid
+  and start, and a registry that cannot be read meaning alive; stamps a member that ended without its end
+  hook `deferred` or `exempt` on the hook's behalf, with its transcript found from its cwd and id; answers 1
+  while a run is in progress and 2 once it has been in progress over three hours; marks the members of a run
+  that died `failed`; and, when members wait and none is alive, or an hour has passed since
+  `--complete-at`, starts one run. It holds a lock per key while it decides, so two callers start one run.
+- **The run**, the same script detached. It writes one digest per member under
+  `~/.local/state/second-brain/groups/<key>/digests/`: a header, the output of `parse_transcript.sh all`,
+  and the member's own Debrief blocks, which the new `parse_transcript.sh debriefs` prints. It claims and
+  then fails, with its reason, a member whose transcript is missing or cannot be read, and leaves it out.
+  From then on that member does not wait: no further run starts for it, the run that found it counts for
+  nothing against the three, and with nothing else waiting and no member alive the command answers 0, with a
+  line that says how many members failed that way. A member whose transcript can be read again waits again,
+  and one that failed because its run died still waits. A transcript that is there and cannot be digested is
+  a fault of the parser, not of the member: that member waits and its run counts. Every run writes
+  `left-out.tsv`, the group's whole list of the members it has left out that way as it stands at that run,
+  each with its name, folder and reason, and the manifest names the file: the start-of-session notice shows
+  a failed recap only from the fourteen newest date folders and a group spans weeks, so the recap names
+  these members in the group's daily log entry, and a later run rewrites the file and the line, which is how
+  a member that was recapped after all drops out of both. A group whose every member is unreadable starts no
+  session and writes no entry; the command's line and the group's `recap.log` are its record. The run claims
+  the rest compare-and-set, and starts one recap session on the Herdr app's core with `hc run --bg --no-parent --name recap-<key>`, the
+  vault as its folder and the labels the caller passed. The markers travel inline on that command, with
+  `SECOND_BRAIN_RECAP_OF=group:<key>`, and so does the caller's PATH, because a program the core starts gets
+  the core's environment, which on this host held no `claude` on 2026-11-11. It then waits for the session by
+  its process, fails every member the session left `running`, counts a run that got no member done, and
+  removes the terminal with `hc rm` when every member is done; a terminal with a member short of done stays
+  for a person to read. Three runs in a row with no member done, and the command answers 2. The run leaves
+  the caller's process group and session through `spawn_detached` before the call returns, because the
+  first caller, the dispatcher's tick, kills that group when the call returns; without perl the command
+  answers 2. It also answers 2, with the command to run by hand, in a Herdr TUI pane, where there is no
+  `hc`, and from outside a terminal when the call names no label, which is how a tick on the TUI calls it.
+  `--here` is that command: the same call, with the recap run in the caller's own terminal.
+- **`recap_child.sh --group <key>` and `recap_exit_watch.sh --group <state folder>`** answer for every member
+  of a run: the child claims nothing, records its process for the run to wait on, and fails each member still
+  `running` on its way out; the watcher types `/exit` once every member is done. Both read the members once,
+  so a later run of the same group does not change what they answer for.
+- **The session-recap skill's group mode**, `/second-brain:session-recap --group <key>` (skill 3.7.0): the
+  phases run once for the group, the recap reads digests and opens a transcript only where a digest shows
+  trouble, every document carries `recap-group: <key>`, the daily log entry names the members the group has
+  left out, and each member gets its own `done` call.
+- A recap session of a group registers with `recap_of: group:<key>`: its note takes the domain the run
+  recorded for the group, and an unnamed one is titled `recap-<key in lower case>`.
+
+### Fixed
+- **A recap or a delegate that runs as an hc worker finds `claude` again.** A program the Herdr app's core
+  starts gets the core's environment, and since the core's restart of 2026-11-08, from a login whose PATH
+  lacked claude's folder, its PATH on one host holds no claude: a worker printed "claude: NOT FOUND".
+  `recap_launcher.sh`, where the pane it left is busy or gone, and `launch_delegate.sh`, under the Herdr
+  app, now put their caller's PATH inline on the worker's command, ahead of the markers, as the group's run
+  does; `launch_delegate.sh` also starts claude by the path that PATH gives, unresolved, so that a link to a
+  launcher that picks the version to run is started as the link. A command typed into a free pane or
+  printed for a person is unchanged: that shell has a PATH of its own. Regression cases 28, 49 (A1, A2) and
+  51 (D1, D2b, D4, D5).
+- The regression suite cleared the recap markers it inherits and not the other launch markers. Run from a
+  delegated session it reported 519 passed and 2 failed against 521 and 0. It now clears the delegation
+  markers, the exemption and the group as well.
+
+### Notes
+- Verified live once, on 2026-11-11, with hc 0.1.20 and Claude Code 2.1.322, on the commit before the last
+  round of four small changes: one run recapped a group of three sessions, and a fourth member, ended with
+  SIGKILL so that no end hook ran, was stamped on the hook's behalf and recapped by a catch-up run; each
+  ended with the command's exit 0. On these versions `hc kill` runs the end hook, with reason `other`
+  (ADR-0011 has the measurement). Changed after that probe, and covered by the suite and not by a live run:
+  the wording of three log lines of the run, and the link check's title search (skill 3.7.0). Regression
+  cases 52 to 59 (263 checks) run against fake notes, a fake session registry, a fake `/proc` and a fake `hc`:
+  52 (18) the status and its four transitions, and the notice; 53 (34) the marker at a genuine startup only,
+  the key rule, the stable path, and a group's recap session; 54 (34) each row of the exit table, with a
+  launcher that only records, under `on`; 55 (7) the Debrief blocks; 56 (54) steps 1 to 8 of the command, a
+  registry that cannot be read five ways, a pid since reused, a zombie; 57 (96) step 9 and the run: what stops
+  a run, the `hc run` it makes, the digests, a member left short of done, a session that will not start, a
+  taken name, a refused claim, three callers at once, `--here`, a member that ends late and its catch-up run,
+  a call made as the tick makes it, stdin closed and its process group killed on return, which a run started
+  with `&` does not survive, and a member that cannot be read (28 checks): claimed then failed, no further
+  run, nothing counted against the three, the group settled with a line that counts it, the notice's reason
+  and retry command run as printed, a transcript readable again, a parser that fails, which counts, and
+  `left-out.tsv`: its rows, the three reasons, the whole list and not only the run's own members, the
+  manifest's entry, and a member that drops out once a later run has recapped it; 58 (18) the child and the
+  watcher for a group; 59 (2) ccfind's backlog. Eight more checks in cases 28, 49 and 51 cover the two older
+  start paths, and case 60 (9) the link check's title search. Suite: 801 passed, 0 failed, bash 4.2.
+
 ## [2.25.1] - 2026-11-05
 
 ### Changed

@@ -108,8 +108,16 @@ export HC_TERMINAL_ID= CCFIND_REPORT=
 # the persisted note and never from the inherited environment, and the vault states the
 # same rule as "Trust the Persisted Fact Not the Inherited Environment". The suite that
 # guards that decision was itself caught by the hazard the decision is about.
+#
+# The other launch markers are cleared with them, for a suite run from a session that
+# something launched: a delegate carries the two delegation markers, and a session of the
+# ticket dispatcher those, the exemption and its recap group. Run from a delegate on
+# 2026-11-11, the suite reported 519 passed and 2 failed against 521 and 0: the first
+# startup inherited the launcher's domain, and an unnamed recap took a delegate's name.
 unset SECOND_BRAIN_RECAP_OF SECOND_BRAIN_PLUGIN_ROOT SECOND_BRAIN_RECAP_NAME \
-      SECOND_BRAIN_PARENT_PID
+      SECOND_BRAIN_PARENT_PID \
+      SECOND_BRAIN_DELEGATED_BY SECOND_BRAIN_DELEGATED_BY_NAME \
+      SECOND_BRAIN_RECAP_EXEMPT SECOND_BRAIN_RECAP_GROUP
 
 TODAY=$(date +%Y-%m-%d)
 PASS=0; FAIL=0
@@ -770,6 +778,9 @@ chk "it runs the child, not claude"    "$(printf '%s' "$LOUT" | grep -c 'recap_c
 # --env would put the marker in the pane's root shell, where every later session in that
 # pane would inherit it, register as a recap and be stamped exempt at its own exit.
 chk "never through the pane's env"     "$(printf '%s' "$LOUT" | grep -c -- '--env')" "0"
+# A command a person pastes runs in their own shell, which has its own PATH; only a worker the core starts
+# is given the launcher's (case 49).
+chk "a pasted command names no PATH"   "$(printf '%s' "$LOUT" | grep -c 'PATH=')" "0"
 chk "a trailing slash is normalised"   "$(printf '%s' "$LOUT" | grep -c 'f1111111-1111-1111-1111-111111111111 ')" "1"
 env HOME="$NH" "$PLUGIN/hooks/scripts/recap_launcher.sh" --manual /nope/nothing >/dev/null 2>&1 \
     && no "a missing subject is refused" || ok "a missing subject is refused"
@@ -2105,6 +2116,7 @@ AOUT=$(alaunch CLAUDE_PID=31337 "$LAUNCH" --auto "$RSUBJ" 2>&1)
 chk "A1 a free terminal hosts the recap itself"   "$(grep -c '^send t9 .*recap_child.sh' "$HCALLS")" "1"
 chk "A1 and no worker is started"                 "$(grep -c '^run ' "$HCALLS")" "0"
 chk "A1 it waits for claude to let go"            "$(agets)" "3"
+chk "A1 a shell at its prompt keeps its own PATH" "$(grep '^send ' "$HCALLS" | grep -c 'PATH=')" "0"
 chk "A1 the markers travel inline"                "$(grep -c 'SECOND_BRAIN_RECAP_OF=' "$HCALLS")" "1"
 chk "A1 --auto prints nothing"                    "${AOUT:-empty}" "empty"
 chk "A1 and the reuse is logged"                  "$(grep -c 'reusing terminal t9 for recap-inv-recap-hook' "$RSUBJ/recap.log")" "1"
@@ -2117,6 +2129,9 @@ chk "A2 a busy terminal gets a worker"            "$(grep -c '^run --json --bg -
 chk "A2 nothing is sent to the busy terminal"     "$(grep -c '^send ' "$HCALLS")" "0"
 chk "A2 it gives up waiting rather than queue"    "$(agets)" "3"
 chk "A2 the markers travel inline"                "$(grep -c 'SECOND_BRAIN_RECAP_OF=' "$HCALLS")" "1"
+# A worker gets the core's environment, and on 2026-11-11 the core's PATH on one host held no claude: a
+# worker printed "claude: NOT FOUND". So the launcher's own PATH travels inline, ahead of the markers.
+chk "A2 and so does the launcher's PATH"          "$(grep -c -- " -- PATH=$AB:$NH/.local/bin:.* SECOND_BRAIN_RECAP_OF=" "$HCALLS")" "1"
 chk "A2 and the ending session's pid travels"     "$(grep -c 'SECOND_BRAIN_PARENT_PID=31337' "$HCALLS")" "1"
 chk "A2 and the worker is logged"                 "$(grep -c 'started recap-inv-recap-hook in hc terminal t77' "$RSUBJ/recap.log")" "1"
 chk "A2 the launcher records nothing"             "$(prop "$RSUBJ/session.md" recap_status)" "requested"
@@ -2251,6 +2266,10 @@ chk "D1 the delegate is an hc worker"            "$(grep -c '^run --json --bg --
 chk "D1 in the launching session's folder"       "$(grep -c -- "--cwd $NH -- " "$HCALLS")" "1"
 chk "D1 with hc's notes on"                      "$(grep -c -- '--no-notify' "$HCALLS")" "0"
 chk "D1 the launcher marker travels inline"      "$(grep -c 'SECOND_BRAIN_DELEGATED_BY=f1111111-1111-1111-1111-111111111111 ' "$HCALLS")" "1"
+# The worker gets the core's environment, whose PATH may hold no claude (case 49, A2). So the launching
+# session's PATH travels inline, and claude is started by the path that PATH gives.
+chk "D1 the launching session's PATH travels inline" "$(grep -c -- " -- PATH=$AB:$NH/.local/bin:.* SECOND_BRAIN_DELEGATED_BY=" "$HCALLS")" "1"
+chk "D1 and claude is started by the path it gives" "$(grep -c " $NH/.local/bin/claude -n review-" "$HCALLS")" "1"
 chk "D1 the prompt keeps its text"               "$(grep -c 'Check x.rs only' "$HCALLS")" "1"
 chk "D1 and gains hc's reach line"               "$(grep -c 'Report with hc send t9 when done or stuck' "$HCALLS")" "1"
 chk "D1 it exits 0"                              "$DRC" "0"
@@ -2264,6 +2283,14 @@ DOUT2=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HE
 chk "D2 a taken name is retried with a suffix"   "$(grep -c -- '--name review-[a-z0-9-]*-2 ' "$HCALLS")" "1"
 chk "D2 and the session is named the same"       "$(grep -c -- 'claude -n review-[a-z0-9-]*-2 ' "$HCALLS")" "1"
 chk "D2 and the retry is what is reported"       "$(printf '%s' "$DOUT2" | grep -c '^Launched review-.*-2 in hc terminal t77')" "1"
+
+# The path is passed as PATH gives it, unresolved: where claude is a link to a launcher that picks the
+# version to run, the link is what must be started, not what it points at today.
+dset
+mkdir -p "$ROOT/dlink"; ln -sf "$NH/.local/bin/claude" "$ROOT/dlink/claude"
+(cd "$NH" && env HOME="$NH" PATH="$ROOT/dlink:$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
+    CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" >/dev/null 2>&1)
+chk "D2b a claude that is a link is started as the link" "$(grep -c " $ROOT/dlink/claude -n review-" "$HCALLS")|$(grep -c " $NH/.local/bin/claude -n review-" "$HCALLS")" "1|0"
 
 dset fails
 DOUT3=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t9 \
@@ -2279,12 +2306,992 @@ DOUT4=$(cd "$NH" && env HOME="$NH" PATH="$NH/.local/bin:$PATH" HERDR_ENV=1 HERDR
 chk "D4 under the TUI the delegate still gets a pane" "$(grep -c 'pane split --pane w9:pOLD' "$NH/herdr-calls.log")" "1"
 chk "D4 and hc is never consulted"               "$(grep -c '' "$HCALLS")" "0"
 chk "D4 the TUI prompt carries no reach line"    "$(grep -c 'Report with hc send' "$NH/herdr-calls.log")" "0"
+chk "D4 and the pane's shell keeps its own PATH"  "$(grep -c 'PATH=' "$NH/herdr-calls.log")" "0"
 
 # No host at all: the command is handed over, as before.
 DOUT5=$(cd "$NH" && env HOME="$NH" PATH="$AB:$NH/.local/bin:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= \
     CLAUDE_CODE_SESSION_ID=f1111111-1111-1111-1111-111111111111 "$DL" review "Check x.rs only" 2>&1)
 chk "D5 without a host the command is printed"   "$(printf '%s' "$DOUT5" | grep -c 'Not running under the Herdr TUI or the Herdr app')" "1"
 chk "D5 and nothing is started"                  "$(grep -c '' "$HCALLS")" "0"
+chk "D5 and the printed command names no PATH"   "$(printf '%s' "$DOUT5" | grep -c 'PATH=')" "0"
+
+# ── Recap groups (ADR-0013): cases 52 to 58 ──────────────────────────────────────
+# A vault and a home of their own, so nothing the earlier cases stamped is a member of a group here, and so
+# the group command's state folder, $HOME/.local/state/second-brain/groups, and the registry it reads,
+# $HOME/.claude/sessions, are scratch folders. /tmp/gwork maps to the domain team.
+GKB="$ROOT/gkb"; GH="$ROOT/ghome"
+mkdir -p "$GH/.claude/plugins/config/second-brain" "$GH/.claude/projects/proj" "$GKB/_sessions" \
+    "$GKB/projects/cc" "$GKB/projects/team"
+gcfg(){ jq -n --arg kb "$GKB" --arg m "$1" \
+    '{knowledge_bank_path:$kb,auto_recap:$m,project_domains:{"/tmp/gwork":{domain:"team"}}}' \
+    > "$GH/.claude/plugins/config/second-brain/config.json"; }
+gcfg notify
+# The hooks of cases 11 and 26, against this home and vault.
+gstart(){ H="$GH" KB="$GKB" start "$@"; }
+gend(){ H="$GH" endrun "$@"; }
+gst(){ env HOME="$GH" "$ST" "$@" >/dev/null 2>&1; }
+# A session of today in this vault, by id: its note, its folder, its transcript, its recap status.
+gmd(){ printf '%s' "$GKB/_sessions/$TODAY/$1/session.md"; }
+gf(){ printf '%s' "$GKB/_sessions/$TODAY/$1"; }
+gt(){ printf '%s' "$GH/.claude/projects/proj/$1.jsonl"; }
+gnow(){ prop "$(gmd "$1")" recap_status; }
+# The group command, and what it reads: fake notes, a fake session registry, a fake /proc and a fake hc.
+GCMD="$PLUGIN/hooks/scripts/recap_group.sh"
+GBIN="$GH/.claude/plugins/config/second-brain/bin/recap-group"   # the stable path a caller knows
+gstate(){ printf '%s' "$GH/.local/state/second-brain/groups/$1"; }
+# A member note written directly, as a session of that date left it. A note with a status was stamped by its
+# end hook, which also wrote the transcript pointer; one with no status has none. The transcript goes where
+# Claude Code keeps it for the note's cwd, /tmp/gwork, unless $7 names another project folder.
+gmk(){ # $1=date $2=id $3=name $4=status, empty for none $5=group, empty for none $6=assistant records, empty for no transcript $7=project folder
+    local d="$GKB/_sessions/$1/$2" t="$GH/.claude/projects/${7:--tmp-gwork}/$2.jsonl"
+    mkdir -p "$d/docs" "${t%/*}"
+    [ -n "${6:-}" ] && turns "$t" "$6"
+    { printf -- '---\nschema_version: "2.1"\nsession_id: "%s"\ndate: %s\nproject: "team"\ncwd: "/tmp/gwork"\nstarted_at: 2026-11-01T10:00:00\n' "$2" "$1"
+      if [ -n "$4" ]; then printf 'transcript_source: "%s"\n' "$t"; else printf 'transcript_source:\n'; fi
+      printf 'session_name: "%s"\nended_at:\nsummary:\n' "$3"
+      [ -n "${5:-}" ] && printf 'recap_group: "%s"\n' "$5"
+      [ -n "$4" ] && printf 'recap_status: "%s"\n' "$4"
+      printf 'tags:\n---\n\n# Session: %s\n' "$2"; } > "$d/session.md"; }
+gmds(){ printf '%s' "$GKB/_sessions/$1/$2/session.md"; }   # $1=date $2=id
+# An entry of Claude Code's session registry, one file per live process, and that process as /proc shows it:
+# its stat line, whose command name may hold blanks and parentheses, state in field 3, start in field 22.
+greg(){ # $1=pid $2=session id $3=procStart
+    mkdir -p "$GH/.claude/sessions"
+    printf '{"pid":%s,"sessionId":"%s","cwd":"/tmp/gwork","startedAt":1794204430474,"procStart":"%s","version":"2.1.319","kind":"interactive","status":"idle"}\n' \
+        "$1" "$2" "$3" > "$GH/.claude/sessions/$1.json"; }
+gproc(){ # $1=pid $2=state $3=start
+    mkdir -p "$GH/proc/$1"
+    printf '%s (claude (x) y) %s 1 %s %s 34816 %s 4194304 100 0 0 0 10 5 0 0 20 0 12 0 %s 1000000 500 18446744073709551615\n' \
+        "$1" "$2" "$1" "$1" "$1" "$3" > "$GH/proc/$1/stat"; }
+# A UTC time some minutes ago, as the caller's `date -u +%FT%TZ` prints one: GNU date, then BSD.
+gago(){ date -u -d "$1 minutes ago" +%FT%TZ 2>/dev/null || date -u -v-"$1"M +%FT%TZ; }
+# Every group scenario starts from an empty vault, registry, /proc and state. The fake /proc always exists:
+# without it the command would ask the real one about the pids these cases invent.
+greset(){ rm -rf "$GKB/_sessions" "$GH/.claude/sessions" "$GH/.claude/projects" "$GH/proc" "$GH/.local/state" "$GH"/hc-* "$GH"/gclaude-*
+    mkdir -p "$GKB/_sessions" "$GH/.claude/sessions" "$GH/.claude/projects/proj" "$GH/proc"; : > "$GH/hc-calls.log"; }
+# One stub hc for the group cases, ahead of the suite's tripwire. `run` answers with an address and, when
+# $HOME/hc-exec exists, runs the command it was given as the terminal would, in the background and with the
+# terminal's id in its environment; $HOME/hc-run makes it fail or refuse a taken name once. `get` shows an
+# idle session, `read` an empty prompt box, and `keys` with enter ends the stub claude, as in case 49.
+GB="$GH/gbin"; mkdir -p "$GB"
+cat > "$GB/hc" << 'GHC'
+#!/bin/bash
+{ printf hc; printf ' [%s]' "$@"; printf '\n'; } >> "$HOME/hc-calls.log"
+case "$1" in
+    run)
+        case "$(cat "$HOME/hc-run" 2>/dev/null)" in
+            taken) printf 'ok' > "$HOME/hc-run"
+                   echo '{"error":{"kind":"name_taken","message":"a live terminal is already named"}}' >&2; exit 1 ;;
+            fails) echo '{"error":{"kind":"spawn_failed","message":"no holder"}}' >&2; exit 1 ;;
+        esac
+        echo '{"address":"t77","state":"live"}'
+        if [ -f "$HOME/hc-exec" ]; then
+            ( HC_TERMINAL_ID=t77 bash -c "${@: -1}" >> "$HOME/hc-term.log" 2>&1 & )
+        fi ;;
+    get)  echo '{"pid":5555,"foreground":{"pid":45612,"name":"claude"},"state":"live","status":{"state":"idle"}}' ;;
+    wait) echo '{"status":"idle","reason":"timeout"}' ;;
+    read) printf 'the recap is done\n❯\302\240\n  Model: Opus\n' ;;
+    keys) case "$*" in *enter*) : > "$HOME/gclaude-exit" ;; esac ;;
+    rm)   [ ! -f "$HOME/hc-rm-fails" ] || { echo '{"error":{"kind":"still_live"}}' >&2; exit 1; } ;;
+    kill) echo "hc stub: kill must never be called" >&2; exit 1 ;;
+esac
+exit 0
+GHC
+chmod +x "$GB/hc"
+# A stub claude for a group recap: it does to the members what the skill does, marks each one the run claimed
+# done, except those whose name $HOME/gclaude-skip matches, and then leaves. With $HOME/gclaude-stay it sits
+# at its prompt until the exit watcher's /exit arrives, as a real session does.
+cat > "$GB/claude" << 'GCL'
+#!/bin/bash
+printf 'claude cwd=%s recap_of=%s args=%s\n' "$PWD" "${SECOND_BRAIN_RECAP_OF:-}" "$*" >> "$HOME/gclaude-calls.log"
+key="${*: -1}"; key="${key#/second-brain:session-recap --group }"
+skip=$(cat "$HOME/gclaude-skip" 2>/dev/null)
+while IFS="$(printf '\t')" read -r folder id name rest; do
+    [ -n "$skip" ] && case "$name" in *"$skip"*) continue ;; esac
+    "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/recap_status.sh" "$folder" done --project team --summary "recapped with $key" >/dev/null 2>&1
+done < "$HOME/.local/state/second-brain/groups/$key/members.tsv"
+if [ -f "$HOME/gclaude-stay" ]; then
+    i=0; while [ ! -f "$HOME/gclaude-exit" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+    [ -f "$HOME/gclaude-exit" ] && echo "exited-by-watcher" >> "$HOME/gclaude-calls.log"
+fi
+exit 0
+GCL
+chmod +x "$GB/claude"
+# The command as a caller outside any terminal runs it, a tick in a crontab: no terminal host's variables,
+# the stubs first on PATH. $GPROC points it at the fake /proc; empty, it reads the real one, which the cases
+# that start a run need, since the run is a real process. Sets GOUT, the line, and GRC, the exit code.
+GPROC="$GH/proc"
+grun(){ GOUT=$(env HOME="$GH" PATH="$GB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= \
+        ${GPROC:+SECOND_BRAIN_PROC="$GPROC"} SECOND_BRAIN_GROUP_POLL_S=1 "${GENV[@]}" "$GCMD" "$@" 2>/dev/null); GRC=$?; }
+GENV=()
+# In a Herdr TUI pane the command starts nothing: the TUI cannot start a session from outside a pane. Cases
+# that must sort members without starting a run pass this environment where nothing else holds the run back.
+GTUI=(HERDR_ENV=1 HERDR_PANE_ID=w9:pG)
+glines(){ printf '%s\n' "$GOUT" | grep -c ''; }
+ghas(){ printf '%s' "$GOUT" | grep -c -- "$1"; }
+# The same environment for any other program of a group case, and what the cases that start a run wait on:
+# a line in a file, and no run left. The keys of those cases begin with G5, which no real caller's does, so
+# the wait for "no run left" never waits on a run of the host's own.
+gtick(){ env HOME="$GH" PATH="$GB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= SECOND_BRAIN_GROUP_POLL_S=1 "$@"; }
+gwait(){ # $1=file $2=pattern: until the file holds a line that matches, up to about 30 s
+    local i=0; until grep -q -- "$2" "$1" 2>/dev/null || [ "$i" -ge 300 ]; do sleep 0.1; i=$((i + 1)); done; }
+gidle(){ # until no run of these cases is left, up to about 30 s
+    local i=0; while pgrep -f "recap_group.sh G5" >/dev/null 2>&1 && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; }
+glog(){ grep -c -- "$1" "$(gstate "${2:-G57}")/recap.log" 2>/dev/null; }   # $1=pattern $2=key
+ghc(){ grep -c -- "$1" "$GH/hc-calls.log"; }                                # $1=pattern
+
+echo "== 52. deferred is a sixth recap status, with four transitions of its own (ADR-0013) =="
+# A session that belongs to a recap group is deferred at its exit: not `requested`, which starts a recap or
+# lists the session in the notice, and not `exempt`, which means never. The status writer gains the state and
+# four transitions: empty and exempt reach it, the claim leaves it, and done returns to it only when forced.
+# Every other move to or from it is refused, as for any pair the table does not name.
+DSUBJ="$ROOT/defsubj"; mkdir -p "$DSUBJ"
+dnote(){ # $1=status, empty for none
+    { printf -- '---\nsession_id: "d"\nsummary: "kept"\n'
+      [ -n "$1" ] && printf 'recap_status: "%s"\n' "$1"
+      printf 'tags:\n---\n\n# body\n'; } > "$DSUBJ/session.md"; : > "$DSUBJ/recap.log"; }
+dst(){ env HOME="$H" "$ST" "$DSUBJ" "$@" >/dev/null 2>&1; }
+dnow(){ prop "$DSUBJ/session.md" recap_status; }
+dnote ""; dst deferred
+chk "empty to deferred lands"                     "$(dnow)" "deferred"
+dnote exempt; dst deferred
+chk "exempt to deferred lands"                    "$(dnow)" "deferred"
+dnote deferred; dst running
+chk "deferred to running lands: the claim"        "$(dnow)" "running"
+dnote "done"; dst deferred; DRC=$?
+chk "done to deferred is refused"                 "$(dnow)|$DRC" "done|3"
+dst deferred --force
+chk "and lands when forced"                       "$(dnow)" "deferred"
+chk "with the forced move in recap.log"           "$(grep -c 'forced done->deferred' "$DSUBJ/recap.log")" "1"
+for to in requested "done" failed exempt; do
+    dnote deferred; dst "$to"
+    chk "deferred to $to is refused"              "$(dnow)" "deferred"
+done
+for from in requested running failed; do
+    dnote "$from"; dst deferred
+    chk "$from to deferred is refused"            "$(dnow)" "$from"
+done
+dnote deferred; dst clear --force
+chk "a person can clear a deferred status"        "$(grep -c '^recap_status:' "$DSUBJ/session.md")" "0"
+dnote ""; dst deferred --summary "nope"
+chk "a description on deferred is a usage error"  "$(dnow)" ""
+dnote running; dst failed --force
+chk "--force serves requested, deferred and clear only" "$(dnow)" "running"
+# The notice lists what stalled, and a deferred session has not: it waits for its group. One failed note
+# beside it, so an empty notice cannot pass for the right one.
+gnote(){ # $1=date $2=id $3=name $4=status $5=extra frontmatter line
+    mkdir -p "$GKB/_sessions/$1/$2"
+    { printf -- '---\nsession_id: "%s"\nsession_name: "%s"\n' "$2" "$3"
+      [ -n "${5:-}" ] && printf '%s\n' "$5"
+      [ -n "$4" ] && printf 'recap_status: "%s"\n' "$4"
+      printf 'tags:\n---\n\n# body\n'; } > "$GKB/_sessions/$1/$2/session.md"; }
+gnote "$TODAY" 52520000-0000-0000-0000-000000000001 waits-for-its-group deferred 'recap_group: "P52"'
+gnote "$TODAY" 52520000-0000-0000-0000-000000000002 broke-on-its-own failed
+N52=$(gstart 52520000-0000-0000-0000-000000000009 startup observer /tmp/gwork | jq -r '.systemMessage // ""')
+chk "the notice lists the failed session"         "$(printf '%s' "$N52" | grep -c 'broke-on-its-own')" "1"
+chk "and never a deferred one"                    "$(printf '%s' "$N52" | grep -c 'waits-for-its-group')" "0"
+rm -rf "$GKB/_sessions/$TODAY"/5252*
+
+echo "== 53. a launcher declares a recap group at launch, and the start hook records it (ADR-0013) =="
+# SECOND_BRAIN_RECAP_GROUP=<key> on the launched command becomes `recap_group` on the note, at a genuine
+# startup only, like the markers before it (ADR-0005). The key holds letters, digits, dot, underscore and
+# hyphen, at most 64 characters, because it also names the recap session; any other value is ignored.
+G1=53530000-0000-0000-0000-000000000001
+gstart $G1 startup p53-ticket-one /tmp/gwork SECOND_BRAIN_RECAP_GROUP=Spec-A7 >/dev/null
+chk "startup records the group key"               "$(prop "$(gmd $G1)" recap_group)" "Spec-A7"
+G2=53530000-0000-0000-0000-000000000002
+gstart $G2 startup plain /tmp/gwork >/dev/null
+chk "an undeclared note gains no property"        "$(grep -c '^recap_group:' "$(gmd $G2)")" "0"
+# The three other start sources, each on a session of its own: none is a launch.
+for src in resume clear compact; do
+    GI=53530000-0000-0000-0000-0000000000a${#src}
+    gstart $GI "$src" stray-$src /tmp/gwork SECOND_BRAIN_RECAP_GROUP=Spec-A7 >/dev/null
+    chk "a marker on a $src start is ignored"     "$(grep -c '^recap_group:' "$(gmd $GI)")" "0"
+done
+# The resume hook itself, which serves resume and compact, reads no marker at all.
+printf '{"session_id":"%s","cwd":"/tmp/gwork","transcript_path":"%s","source":"resume"}' \
+    "$G2" "$GH/.claude/projects/proj/$G2.jsonl" \
+  | env HOME="$GH" HERDR_PANE_ID= TMUX_PANE= SECOND_BRAIN_RECAP_GROUP=Spec-A7 \
+    "$PLUGIN/hooks/scripts/session_resume.sh" >/dev/null 2>&1
+chk "and the resume hook records none"            "$(grep -c '^recap_group:' "$(gmd $G2)")" "0"
+# A note that already exists at a declared startup, a restart under the same id, is stamped too.
+gstart $G2 startup plain /tmp/gwork SECOND_BRAIN_RECAP_GROUP=Spec-A7 >/dev/null
+chk "a pre-existing note is stamped at a declared startup" "$(prop "$(gmd $G2)" recap_group)" "Spec-A7"
+gstart $G2 startup plain /tmp/gwork SECOND_BRAIN_RECAP_GROUP=P999 >/dev/null
+chk "and a note keeps the group it has"           "$(prop "$(gmd $G2)" recap_group)" "Spec-A7"
+# The rollout sends both markers, so an older plugin still exempts: the note carries both declarations.
+G3=53530000-0000-0000-0000-000000000003
+gstart $G3 startup both /tmp/gwork SECOND_BRAIN_RECAP_GROUP=spec.v2_a-1 SECOND_BRAIN_RECAP_EXEMPT=1 >/dev/null
+chk "both declarations are recorded"              "$(prop "$(gmd $G3)" recap_group)|$(prop "$(gmd $G3)" recap_exempt)" "spec.v2_a-1|launcher"
+# A value that is not a key is ignored, never repaired.
+K64=$(printf 'k%.0s' $(seq 1 64)); n=0
+for bad in "has space" "a/b" 'q"uote' "semi;colon" "${K64}k" "naïve"; do
+    n=$((n + 1)); GI=53530000-0000-0000-0000-0000000000b$n
+    gstart $GI startup bad-key /tmp/gwork SECOND_BRAIN_RECAP_GROUP="$bad" >/dev/null
+    chk "a marker that is not a key is ignored ($n)" "$(grep -c '^recap_group:' "$(gmd $GI)")" "0"
+done
+G4=53530000-0000-0000-0000-000000000004
+gstart $G4 startup longest /tmp/gwork SECOND_BRAIN_RECAP_GROUP="$K64" >/dev/null
+chk "a key of 64 characters is taken"             "$(prop "$(gmd $G4)" recap_group)" "$K64"
+# The property survives the end hook's rewrite, which is how every later exit reads it.
+turns "$GH/.claude/projects/proj/$G1.jsonl" 2
+gend x "$GH/.claude/projects/proj/$G1.jsonl" other
+chk "recap_group survives the end rewrite"        "$(prop "$(gmd $G1)" recap_group)" "Spec-A7"
+
+echo "== 53b. the start hook keeps one stable path to the group command (ADR-0013) =="
+# The launcher that declares a group complete lives in another package, and this plugin's install folder is
+# versioned. So a genuine startup keeps ~/.claude/plugins/config/second-brain/bin/recap-group pointing at
+# the command of the plugin copy that ran the hook. A link, so a plugin copy that is removed takes the path
+# with it, and a caller that tests the path finds nothing to call.
+chk "a startup creates the stable path"           "$([ -L "$GBIN" ] && echo link || echo none)" "link"
+chk "pointing at this plugin copy's command"      "$(readlink "$GBIN")" "$GCMD"
+chk "which is there to run"                       "$([ -x "$GBIN" ] && echo yes || echo no)" "yes"
+# A path that points at a plugin copy since removed is pointed at the current one; clear, resume and
+# compact leave it, since a session started under an older copy still runs that copy's hooks.
+rm -f "$GBIN"; ln -s "$ROOT/old-version/hooks/scripts/recap_group.sh" "$GBIN"
+gstart $G2 clear plain /tmp/gwork >/dev/null
+chk "a /clear leaves the stable path alone"       "$(readlink "$GBIN")" "$ROOT/old-version/hooks/scripts/recap_group.sh"
+chk "a path whose plugin copy is gone reads as missing" "$([ -e "$GBIN" ] && echo there || echo missing)" "missing"
+gstart 53530000-0000-0000-0000-000000000005 startup repoint /tmp/gwork >/dev/null
+chk "the next startup points it at the current copy" "$(readlink "$GBIN")" "$GCMD"
+touch -h -t 202601010000 "$GBIN" 2>/dev/null
+B53=$(ls -l "$GBIN")
+gstart 53530000-0000-0000-0000-000000000006 startup again /tmp/gwork >/dev/null
+chk "a current path is not rewritten"             "$(ls -l "$GBIN")" "$B53"
+chk "and no temporary link is left behind"        "$(ls "$(dirname "$GBIN")" | wc -l | tr -d ' ')" "1"
+# The command finds its own plugin copy through the link.
+chk "the command runs through the stable path"    "$(env HOME="$GH" "$GBIN" --help 2>&1 | grep -c 'recap-group <key> --complete-at')|$(env HOME="$GH" "$GBIN" --help >/dev/null 2>&1; echo $?)" "1|0"
+
+echo "== 53c. a group's recap session registers as a recap of the group (ADR-0013) =="
+# recap_of holds a subject's folder for a recap of one session, and `group:<key>` for a group recap. Each
+# reader of it copes: the note takes the domain the run recorded for the group, the title names the key in
+# lower case, and the session carries the recap tag and exempts itself at exit like any recap session.
+GS53="$GH/.local/state/second-brain/groups/Spec-A7"; mkdir -p "$GS53"
+printf 'key=Spec-A7\nproject=team\n' > "$GS53/manifest"
+R53=53530000-0000-0000-0000-0000000000c1
+RO53=$(gstart $R53 startup "" "$GKB" SECOND_BRAIN_RECAP_OF=group:Spec-A7)
+chk "recap_of names the group"                    "$(prop "$(gmd $R53)" recap_of)" "group:Spec-A7"
+chk "the note takes the group's domain"           "$(prop "$(gmd $R53)" project)" "team"
+chk "and the one hook-written tag"                "$(rfl "$(gmd $R53)" tags)" "session-recap"
+chk "an unnamed group recap is named for its key" "$(printf '%s' "$RO53" | jq -r '.hookSpecificOutput.sessionTitle // ""')" "recap-spec-a7"
+chk "a group recap session is not a member"       "$(grep -c '^recap_group:' "$(gmd $R53)")" "0"
+turns "$GH/.claude/projects/proj/$R53.jsonl" 9
+gend x "$GH/.claude/projects/proj/$R53.jsonl" prompt_input_exit
+chk "and exempts itself at exit"                  "$(prop "$(gmd $R53)" recap_status)" "exempt"
+# A group with no recorded domain, or one outside the set, leaves the project visibly empty.
+R53B=53530000-0000-0000-0000-0000000000c2
+gstart $R53B startup "" "$GKB" SECOND_BRAIN_RECAP_OF=group:P-none >/dev/null
+chk "a group with no recorded domain leaves project empty" "$(prop "$(gmd $R53B)" project)" ""
+printf 'key=P-odd\nproject=not-a-domain\n' > "$GS53/manifest"
+R53C=53530000-0000-0000-0000-0000000000c3
+gstart $R53C startup "" "$GKB" SECOND_BRAIN_RECAP_OF=group:Spec-A7 >/dev/null
+chk "a recorded domain outside the set is not taken" "$(prop "$(gmd $R53C)" project)" ""
+rm -rf "$GH/.local/state"
+
+echo "== 54. a member of a recap group is deferred at its exit, and nothing starts (ADR-0013) =="
+# The exit table of a note that carries recap_group. The hook checks recap_of first, then recap_group, then
+# recap_exempt, then size; it reads the group off the note and never off the environment.
+gmember(){ # $1=id $2=name $3=assistant records, then extra environment pairs: a member of group P54
+    local id="$1" name="$2" n="$3"; shift 3
+    turns "$(gt "$id")" "$n"
+    gstart "$id" startup "$name" /tmp/gwork SECOND_BRAIN_RECAP_GROUP=P54 "$@" >/dev/null; }
+gexit(){ gend x "$(gt "$1")" "${2:-prompt_input_exit}" "${@:3}"; }
+# An exit under auto_recap `on`, through a plugin copy whose launcher only records that it was called, as in
+# case 35. A session of no group goes first: it must be launched, or "nothing starts" would prove nothing.
+GSTUB="$ROOT/gstub"; mkdir -p "$GSTUB/hooks/scripts"
+cp -R "$PLUGIN/skills" "$GSTUB/"; cp "$PLUGIN/hooks/scripts/session_end.sh" "$GSTUB/hooks/scripts/"
+printf '#!/bin/bash\nprintf "called %%s\\n" "$*" >> "${SB_LAUNCH_LOG:-/dev/null}"\n' > "$GSTUB/hooks/scripts/recap_launcher.sh"
+chmod +x "$GSTUB/hooks/scripts/recap_launcher.sh"
+GLAUNCH="$ROOT/glaunch.log"
+gexit_on(){ # $1=id; prints how many launches the exit caused
+    local i=0 n
+    gcfg on; : > "$GLAUNCH"
+    printf '{"transcript_path":"%s","cwd":"/tmp/gwork","reason":"prompt_input_exit"}' "$(gt "$1")" \
+      | env HOME="$GH" HERDR_PANE_ID= TMUX_PANE= SB_LAUNCH_LOG="$GLAUNCH" \
+        "$GSTUB/hooks/scripts/session_end.sh" >/dev/null 2>&1
+    # The launcher is detached, so it may land a moment after the hook returns.
+    while [ ! -s "$GLAUNCH" ] && [ "$i" -lt 15 ]; do sleep 0.1; i=$((i+1)); done
+    gcfg notify
+    n=$(grep -c 'called' "$GLAUNCH" 2>/dev/null); printf '%s' "${n:-0}"; }
+E0=54540000-0000-0000-0000-000000000000
+turns "$(gt $E0)" 9; gstart $E0 startup no-group /tmp/gwork >/dev/null
+chk "under on, a session of no group is launched"  "$(gexit_on $E0)|$(gnow $E0)" "1|requested"
+
+E1=54540000-0000-0000-0000-000000000001; gmember $E1 real-work 9
+chk "under on, a member's exit starts nothing"     "$(gexit_on $E1)" "0"
+chk "five or more records are deferred"            "$(gnow $E1)" "deferred"
+chk "with one reason line in recap.log"            "$(grep -c 'deferred: declared at launch to belong to recap group P54 (recap_group)' "$(gf $E1)/recap.log")" "1"
+E2=54540000-0000-0000-0000-000000000002; gmember $E2 small 2; gexit $E2
+chk "fewer than five records are exempt"           "$(gnow $E2)" "exempt"
+chk "with no deferral in recap.log"                "$(grep -c 'deferred' "$(gf $E2)/recap.log")" "0"
+turns "$(gt $E2)" 5; gexit $E2
+chk "exempt for being small, then five: deferred"  "$(gnow $E2)" "deferred"
+chk "and the reason is logged then"                "$(grep -c 'deferred: declared at launch' "$(gf $E2)/recap.log")" "1"
+E3=54540000-0000-0000-0000-000000000003; gmember $E3 no-transcript 9; rm -f "$(gt $E3)"; gexit $E3
+chk "no transcript is exempt"                      "$(gnow $E3)" "exempt"
+E4=54540000-0000-0000-0000-000000000004; gmember $E4 unreadable 9; chmod 000 "$(gt $E4)"; gexit $E4
+chk "an unreadable transcript stamps nothing"      "$(gnow $E4)" ""
+chmod 644 "$(gt $E4)"
+# A status that says something is under way or decided is left alone, whatever the session did since.
+n=0
+for was in deferred requested running failed; do
+    n=$((n + 1)); EI=54540000-0000-0000-0000-00000000001$n; gmember $EI "was-$was" 9
+    case "$was" in
+        deferred)  gexit $EI ;;
+        requested) gst "$(gf $EI)" requested ;;
+        running)   gst "$(gf $EI)" requested; gst "$(gf $EI)" running ;;
+        failed)    gst "$(gf $EI)" requested; gst "$(gf $EI)" failed ;;
+    esac
+    B54=$(grep -c '' "$(gf $EI)/recap.log"); turns "$(gt $EI)" 30
+    chk "under on, $was starts nothing"            "$(gexit_on $EI)" "0"
+    chk "$was is left untouched"                   "$(gnow $EI)|$(grep -c '' "$(gf $EI)/recap.log")" "$was|$B54"
+done
+# A member recapped with its group that then kept working goes back to wait for the group's next run.
+E5=54540000-0000-0000-0000-000000000005; gmember $E5 regrowth 10; gexit $E5
+gst "$(gf $E5)" running; gst "$(gf $E5)" "done" --summary "recapped with its group"
+chk "done stamps the records it saw"               "$(prop "$(gmd $E5)" recap_assistant_records)" "10"
+turns "$(gt $E5)" 14; gexit $E5
+chk "four more records keep it done"               "$(gnow $E5)" "done"
+turns "$(gt $E5)" 15
+chk "under on, five more records start nothing"    "$(gexit_on $E5)" "0"
+chk "and send it back to deferred"                 "$(gnow $E5)" "deferred"
+chk "forced, with the growth in recap.log"         "$(grep -c 'grew by 5 assistant records since the recap (10 -> 15), deferred again for recap group P54' "$(gf $E5)/recap.log")|$(grep -c 'forced done->deferred' "$(gf $E5)/recap.log")" "1|1"
+chk "the description is kept"                      "$(prop "$(gmd $E5)" summary)" "recapped with its group"
+# clear and resume are not endings.
+E6=54540000-0000-0000-0000-000000000006; gmember $E6 cleared 9
+gexit $E6 clear;  chk "/clear stamps nothing"      "$(gnow $E6)" ""
+gexit $E6 resume; chk "resume stamps nothing"      "$(gnow $E6)" ""
+# The marker counted at a genuine startup only, so a session it did not reach is recapped as any other;
+# and at exit the note is read, never the environment.
+E7=54540000-0000-0000-0000-000000000007; turns "$(gt $E7)" 9
+gstart $E7 resume resumed /tmp/gwork SECOND_BRAIN_RECAP_GROUP=P54 >/dev/null; gexit $E7
+chk "a marker on a resume start defers nothing"    "$(gnow $E7)" "requested"
+E8=54540000-0000-0000-0000-000000000008; turns "$(gt $E8)" 9
+gstart $E8 startup undeclared /tmp/gwork >/dev/null; gexit $E8 prompt_input_exit SECOND_BRAIN_RECAP_GROUP=P54
+chk "a stray marker at exit defers nothing"        "$(gnow $E8)" "requested"
+# Both declarations, which is what the launcher sends while an older plugin may still be installed: the
+# group is checked before the exemption, at the first exit and after a recap.
+E9=54540000-0000-0000-0000-000000000009; gmember $E9 both 10 SECOND_BRAIN_RECAP_EXEMPT=1; gexit $E9
+chk "a note with both declarations is deferred"    "$(gnow $E9)" "deferred"
+chk "and logs the deferral, not an exemption"      "$(grep -c 'recap_exempt' "$(gf $E9)/recap.log")" "0"
+gst "$(gf $E9)" running; gst "$(gf $E9)" "done"; turns "$(gt $E9)" 20; gexit $E9
+chk "and goes back to deferred when it grows"      "$(gnow $E9)" "deferred"
+# recap_of comes first: a recap session is exempt for good, whatever else its note says.
+EA=54540000-0000-0000-0000-00000000000a; gmember $EA a-recap 9
+awk '$0=="tags:"{print "recap_of: \"group:P54\""} {print}' "$(gmd $EA)" > "$(gmd $EA).t" && mv "$(gmd $EA).t" "$(gmd $EA)"
+gexit $EA
+chk "a recap session is exempt even with a group"  "$(gnow $EA)" "exempt"
+# Global off still stamps nothing: the feature off means nothing is tracked.
+gcfg off
+EB=54540000-0000-0000-0000-00000000000b; gmember $EB feature-off 9; gexit $EB
+chk "with auto_recap off a member is stamped nothing" "$(gnow $EB)" ""
+gcfg notify
+# The hook still reads its predicate's properties in one pass, the group among them.
+chk "the group is read in the predicate's one batch" \
+    "$(grep -c 'recap_status recap_of recap_assistant_records recap_exempt recap_group' "$PLUGIN/hooks/scripts/session_end.sh")" "1"
+
+echo "== 55. the transcript parser prints a session's own Debrief blocks, for a group's digests =="
+# A group recap reads one code-made digest per member in place of its transcript, and a member's Debrief
+# blocks are the member's own account of each turn. Only blocks the session wrote count: one quoted in a
+# tool result or typed by a person is somebody else's. `all` does not print them, so the digest's size
+# stays what was measured for it; the group run adds them as a section of their own.
+PT55="$PLUGIN/skills/session-recap/scripts/parse_transcript.sh"
+PX55="$ROOT/parse-debrief-fixture.jsonl"
+D55='▤ Debrief ────────────────────────────────────'; E55='─────────────────────────────────────────────────'
+{
+    jq -nc --arg t "$(printf 'Done.\n\n%s\n- **What changed:** the first thing\n- **Next steps:** none\n%s\n' "$D55" "$E55")" \
+        '{type:"assistant",timestamp:"2026-10-01T00:00:00Z",message:{content:[{type:"text",text:$t}]}}'
+    jq -nc --arg t "$(printf '%s\n- **What changed:** quoted from another session\n%s\n' "$D55" "$E55")" \
+        '{type:"user",timestamp:"2026-10-01T00:00:01Z",message:{role:"user",content:[{type:"tool_result",tool_use_id:"x",content:$t}]}}'
+    jq -nc --arg t "$(printf 'no block in this turn\n')" \
+        '{type:"assistant",timestamp:"2026-10-01T00:00:02Z",message:{content:[{type:"text",text:$t}]}}'
+    jq -nc --arg t "$(printf '%s\n- **What changed:** the second thing\n- **Proof:** it ran\n%s\ntrailing prose\n' "$D55" "$E55")" \
+        '{type:"assistant",timestamp:"2026-10-01T00:00:03Z",message:{content:[{type:"text",text:$t}]}}'
+} > "$PX55"
+PD55=$("$PT55" "$PX55" debriefs 2>/dev/null); PD55RC=$?
+chk "debriefs exits 0"                             "$PD55RC" "0"
+chk "both of the session's own blocks are printed" "$(printf '%s\n' "$PD55" | grep -c '▤ Debrief')" "2"
+chk "with their rungs"                             "$(printf '%s\n' "$PD55" | grep -c 'the first thing\|the second thing\|it ran')" "3"
+chk "a block quoted in a tool result is not"       "$(printf '%s\n' "$PD55" | grep -c 'quoted from another session')" "0"
+chk "nor the prose around a block"                 "$(printf '%s\n' "$PD55" | grep -c 'Done\.\|trailing prose\|no block in this turn')" "0"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":{"content":[{"type":"text","text":"nothing to report"}]}}' > "$ROOT/parse-nodebrief.jsonl"
+chk "a session with no block prints the heading alone" \
+    "$("$PT55" "$ROOT/parse-nodebrief.jsonl" debriefs 2>/dev/null | grep -c '')|$?" "1|0"
+chk "and all leaves the blocks out"                "$("$PT55" "$PX55" all 2>/dev/null | grep -c '▤ Debrief')" "0"
+
+echo "== 56. the group command sorts the members and answers by exit code, step by step (ADR-0013) =="
+# recap-group <key> --complete-at <UTC time> [--label k=v]... answers 0 settled, 1 call again, 2 needs a person,
+# with one line that says why. One call takes nine steps in order; each is pinned below, against fake notes, a
+# fake registry and a fake /proc. Steps 1 to 8 never start a run: where members wait, a member that is still
+# alive inside the hour keeps the answer at 1.
+gcfg on
+D56=2026-11-0
+A56=56560000-0000-0000-0000-0000000000
+
+# Step 1. auto_recap is not `on`: answer 0 and change nothing.
+greset; gmk ${D56}1 ${A56}01 ended-unstamped "" P56 9
+gcfg notify; grun P56 --complete-at "$(gago 120)"
+chk "S1 with auto_recap not on the answer is 0"     "$GRC" "0"
+chk "S1 and the one line says why"                  "$(glines)|$(ghas 'auto_recap is notify')" "1|1"
+chk "S1 and nothing is changed"                     "$(prop "$(gmds ${D56}1 ${A56}01)" recap_status)|$([ -d "$(gstate P56)" ] && echo state || echo none)" "|none"
+grun P56 --complete-at "$(gago 120)" --here
+chk "S1 --here is no way round it"                  "$GRC|$(ghas 'auto_recap is notify')|$(prop "$(gmds ${D56}1 ${A56}01)" recap_status)" "0|1|"
+gcfg on
+grun "bad key" --complete-at "$(gago 120)"
+chk "a value that is not a key needs a person"      "$GRC|$(ghas 'not a recap group key')" "2|1"
+grun P56 --complete-at yesterday
+chk "a time that is not one needs a person"         "$GRC|$(ghas 'is not a UTC time')" "2|1"
+grun P56
+chk "a call without --complete-at is a usage error" "$GRC" "2"
+grun P-nobody --complete-at "$(gago 120)"
+chk "a key no session carries is settled"           "$GRC|$(ghas 'no session belongs to recap group P-nobody')" "0|1"
+chk "and leaves no state folder behind"             "$([ -d "$(gstate P-nobody)" ] && echo state || echo none)" "none"
+
+# Step 2. The members are the notes whose recap_group equals the key, in every date folder: the notice's
+# fourteen newest folders would miss a group that spans weeks. Fifteen later folders hold other sessions.
+greset
+for d in 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do gmk 2026-10-$d ${A56}$d other "done" "" 9; done
+gmk 2026-09-01 ${A56}a1 weeks-old deferred P56 9
+gmk 2026-10-12 ${A56}a2 mid-month failed P56 9
+gmk 2026-10-13 ${A56}a3 longer-key deferred P560 9
+gmk 2026-10-13 ${A56}a4 shorter-key deferred P5 9
+gmk 2026-10-14 ${A56}a5 dotted-key deferred P.6 9
+gmk 2026-10-15 ${A56}a6 saved-in-obsidian "" P56 9
+sed -i.bak 's/^recap_group: "P56"$/recap_group: P56/; s/^transcript_source:$/recap_status: deferred/' "$(gmds 2026-10-15 ${A56}a6)"
+gmk 2026-10-24 ${A56}a7 still-working "" P56 9; greg 4100 ${A56}a7 500; gproc 4100 S 500
+gmk 2026-10-24 ${A56}a8 dotted-and-working "" P.6 9; greg 4108 ${A56}a8 510; gproc 4108 S 510
+grun P56 --complete-at "$(gago 5)"
+chk "S2 members are found in every date folder"     "$GRC|$(ghas '3 wait to be recapped')" "1|1"
+chk "S2 a key is compared whole, never as a prefix" "$(ghas 'longer-key')$(ghas 'shorter-key')$(ghas 'dotted')" "000"
+grun P.6 --complete-at "$(gago 5)"
+chk "S2 and a dot in a key matches a dot only"      "$GRC|$(ghas '1 waits to be recapped')" "1|1"
+
+# Step 3. Each member is sorted. One with no status is alive while the registry shows a live process for its
+# id, the same pid and the same start; otherwise it ended without its end hook and is stamped on its behalf.
+greset
+gmk ${D56}1 ${A56}b0 live-anchor "" P56 9;          greg 4100 ${A56}b0 500; gproc 4100 S 500
+gmk ${D56}1 ${A56}b1 no-entry "" P56 9
+gmk ${D56}1 ${A56}b2 small-one "" P56 2
+gmk ${D56}1 ${A56}b3 no-transcript "" P56 ""
+gmk ${D56}2 ${A56}b4 pid-reused "" P56 9;           greg 4102 ${A56}b4 600; gproc 4102 S 999
+gmk ${D56}2 ${A56}b5 zombie "" P56 9;               greg 4103 ${A56}b5 700; gproc 4103 Z 700
+gmk ${D56}2 ${A56}b6 pid-gone "" P56 9;             greg 4104 ${A56}b6 800
+gmk ${D56}2 ${A56}b7 moved-folder "" P56 9 -some-other-folder
+gmk ${D56}3 ${A56}b8 resumed deferred P56 9;        greg 4105 ${A56}b8 900; gproc 4105 S 900
+gmk ${D56}3 ${A56}b9 recapped-and-resumed "done" P56 9; greg 4106 ${A56}b9 950; gproc 4106 R 950
+grun P56 --complete-at "$(gago 5)"
+s56(){ prop "$(gmds ${D56}$1 ${A56}$2)" recap_status; }
+chk "S3 the answer is 1 while members are alive"    "$GRC" "1"
+chk "S3 a live process keeps a member unstamped"    "$(s56 1 b0)" ""
+chk "S3 no registry entry: deferred on its behalf"  "$(s56 1 b1)" "deferred"
+chk "S3 with a reason line in its recap.log"        "$(grep -c 'deferred: it ended without its end hook; stamped for recap group P56' "$GKB/_sessions/${D56}1/${A56}b1/recap.log")" "1"
+chk "S3 and its transcript found from its cwd and id" "$(prop "$(gmds ${D56}1 ${A56}b1)" transcript_source)" "$GH/.claude/projects/-tmp-gwork/${A56}b1.jsonl"
+chk "S3 under five records: exempt on its behalf"   "$(s56 1 b2)|$(grep -c 'exempt: it ended without its end hook, with fewer than five assistant records' "$GKB/_sessions/${D56}1/${A56}b2/recap.log")" "exempt|1"
+chk "S3 no transcript: exempt on its behalf"        "$(s56 1 b3)" "exempt"
+chk "S3 a pid since reused is not the session"      "$(s56 2 b4)" "deferred"
+chk "S3 a zombie is not alive"                      "$(s56 2 b5)" "deferred"
+chk "S3 a pid that is gone is not alive"            "$(s56 2 b6)" "deferred"
+chk "S3 a transcript in another folder is found by id" "$(s56 2 b7)|$(prop "$(gmds ${D56}2 ${A56}b7)" transcript_source)" "deferred|$GH/.claude/projects/-some-other-folder/${A56}b7.jsonl"
+chk "S3 a member with a status and a live process is alive too" "$(ghas '3 members are still alive')|$(ghas '5 wait to be recapped')" "1|1"
+chk "S3 and the line names who is alive"            "$(ghas 'live-anchor')|$(ghas 'recapped-and-resumed')" "1|1"
+# A registry that cannot be read means alive: the failure is a wait, never a recap of a live transcript.
+r56(){ # $1=what is wrong with the registry; the member must stay unstamped and the answer 1
+    grun P56 --complete-at "$(gago 5)"
+    chk "S3 $1: the member counts as alive"         "$GRC|$(s56 1 c1)|$(ghas '1 member is still alive')" "1||1"; }
+greset; gmk ${D56}1 ${A56}c1 unstamped "" P56 9; gmk ${D56}1 ${A56}c2 waits deferred P56 9
+rm -rf "$GH/.claude/sessions";                                    r56 "no registry folder"
+mkdir -p "$GH/.claude/sessions"; echo 'not json' > "$GH/.claude/sessions/9.json"; r56 "an entry that is not JSON"
+echo '{"pid":9,"session":"renamed-key"}' > "$GH/.claude/sessions/9.json"; r56 "an entry in another format"
+printf '{"pid":4107,"sessionId":"%s"}\n' ${A56}c1 > "$GH/.claude/sessions/9.json"; gproc 4107 S 1
+r56 "an entry with no start to compare"
+printf '{"sessionId":"%s","procStart":"1"}\n' ${A56}c1 > "$GH/.claude/sessions/9.json"; r56 "an entry with no pid"
+rm -f "$GH/.claude/sessions/9.json"; GENV=("${GTUI[@]}"); grun P56 --complete-at "$(gago 5)"; GENV=()
+chk "S3 a registry with no entries is read: nothing is alive" "$(s56 1 c1)" "deferred"
+
+# Step 4. A run for this key is alive: answer 1, or 2 once it has been in progress over three hours.
+g4(){ # $1=minutes since the run began $2=pid of the run $3=its start $4... rows of members.tsv
+    mkdir -p "$(gstate P56)"; printf 'pid=%s\nstart=%s\nat=%s\nterminal=t77\n' "$2" "$3" "$(( $(date +%s) - $1 * 60 ))" > "$(gstate P56)/run"
+    : > "$(gstate P56)/members.tsv"; local f; for f in "${@:4}"; do printf '%s\tid\tname\tteam\t9\tdigest\n' "$f" >> "$(gstate P56)/members.tsv"; done; }
+greset; gmk ${D56}1 ${A56}d1 being-recapped running P56 9; gmk ${D56}1 ${A56}d2 recapped "done" P56 9
+gproc 4201 S 111; g4 10 4201 111 "$GKB/_sessions/${D56}1/${A56}d1" "$GKB/_sessions/${D56}1/${A56}d2"
+grun P56 --complete-at "$(gago 120)"
+chk "S4 a live run answers 1"                       "$GRC|$(ghas 'in progress')|$(ghas 't77')" "1|1|1"
+chk "S4 and says how far it is"                     "$(ghas '1 of 2 members done')" "1"
+chk "S4 and touches no member"                      "$(s56 1 d1)" "running"
+g4 181 4201 111 "$GKB/_sessions/${D56}1/${A56}d1" "$GKB/_sessions/${D56}1/${A56}d2"
+grun P56 --complete-at "$(gago 240)"
+chk "S4 over three hours it needs a person"         "$GRC|$(ghas 'over 3 hours')" "2|1"
+chk "S4 and still touches no member"                "$(s56 1 d1)" "running"
+g4 10 4201 111
+grun P56 --complete-at "$(gago 120)"
+chk "S4 a run that has claimed nothing yet is in progress" "$GRC|$(ghas 'in progress')" "1|1"
+# A run whose every member is done is over, though its session may still be closing, or a person keeps it.
+gst "$GKB/_sessions/${D56}1/${A56}d1" "done"; g4 200 4201 111 "$GKB/_sessions/${D56}1/${A56}d1" "$GKB/_sessions/${D56}1/${A56}d2"
+grun P56 --complete-at "$(gago 240)"
+chk "S4 a run with every member done is not in progress" "$GRC|$(ghas 'settled')" "0|1"
+
+# Step 5. Members read running but no run is alive: the run died without its exit check. They are marked failed.
+# A member that another recap session claimed, one a person recaps alone, is not the dead run's and is left.
+greset
+gmk ${D56}1 ${A56}e1 claimed-by-the-dead-run running P56 9; gmk ${D56}1 ${A56}e2 also-claimed running P56 9
+gmk ${D56}1 ${A56}e3 a-hand-recap running P56 9
+gmk ${D56}1 ${A56}e4 live-anchor "" P56 9; greg 4100 ${A56}e4 500; gproc 4100 S 500
+g4 30 4202 222 "$GKB/_sessions/${D56}1/${A56}e1" "$GKB/_sessions/${D56}1/${A56}e2"
+grun P56 --complete-at "$(gago 5)"
+chk "S5 the dead run's members are marked failed"   "$(s56 1 e1)|$(s56 1 e2)" "failed|failed"
+chk "S5 with the reason the notice shows"           "$(grep -c 'reason=its group recap (P56) ended before it was marked done' "$GKB/_sessions/${D56}1/${A56}e1/recap.log")" "1"
+chk "S5 a member another recap holds is left"       "$(s56 1 e3)" "running"
+chk "S5 the run's record is removed"                "$([ -f "$(gstate P56)/run" ] && echo there || echo gone)" "gone"
+chk "S5 and the run counts as one that got nowhere" "$(cat "$(gstate P56)/failures" 2>/dev/null)" "1"
+chk "S5 the failed members now wait"                "$GRC|$(ghas '2 wait to be recapped')" "1|1"
+# A dead run that got some of its members done made progress: the count of runs that got nowhere starts over.
+gst "$GKB/_sessions/${D56}1/${A56}e1" running; gst "$GKB/_sessions/${D56}1/${A56}e2" running; gst "$GKB/_sessions/${D56}1/${A56}e2" "done"
+g4 30 4202 222 "$GKB/_sessions/${D56}1/${A56}e1" "$GKB/_sessions/${D56}1/${A56}e2"
+grun P56 --complete-at "$(gago 5)"
+chk "S5 progress resets the count"                  "$(s56 1 e1)|$(cat "$(gstate P56)/failures")" "failed|0"
+# The run's own process is gone but its recap session still runs: in progress, and nothing is failed.
+gst "$GKB/_sessions/${D56}1/${A56}e1" running
+g4 30 4202 222 "$GKB/_sessions/${D56}1/${A56}e1"; gproc 4203 S 333; printf 'pid=4203\nstart=333\n' > "$(gstate P56)/child"
+grun P56 --complete-at "$(gago 5)"
+chk "S5 a session that outlived its run is in progress" "$GRC|$(ghas 'in progress')|$(s56 1 e1)" "1|1|running"
+
+# Steps 6 and 7. Nothing waits: 0 when nothing is alive either, 1 while a member is.
+greset; gmk ${D56}1 ${A56}f1 one "done" P56 9; gmk ${D56}1 ${A56}f2 two exempt P56 2; gmk ${D56}2 ${A56}f3 three "done" P56 9
+grun P56 --complete-at "$(gago 5)"
+chk "S6 nothing waits and nothing is alive: 0"      "$GRC|$(ghas 'settled: 3 members, 2 done and 1 exempt')" "0|1"
+gmk ${D56}2 ${A56}f4 standing-session "done" P56 9; greg 4100 ${A56}f4 500; gproc 4100 S 500
+grun P56 --complete-at "$(gago 600)"
+chk "S7 nothing waits but a member is alive: 1"     "$GRC|$(ghas '1 of 4 members is still alive (standing-session)')" "1|1"
+chk "S7 however long ago the group was completed"   "$(ghas 'nothing waits')" "1"
+# A member that another recap session holds is neither waiting nor settled: call again.
+greset; gmk ${D56}1 ${A56}f5 one "done" P56 9; gmk ${D56}1 ${A56}f6 a-hand-recap running P56 9
+grun P56 --complete-at "$(gago 600)"
+chk "S7 a member another recap holds is not settled" "$GRC|$(ghas '1 member is being recapped by another recap session')|$(s56 1 f6)" "1|1|running"
+
+# Step 8. Members wait, a member is alive, and the hour after --complete-at has not passed: 1, and no run.
+greset; gmk ${D56}1 ${A56}g1 waits deferred P56 9; gmk ${D56}1 ${A56}g2 standing-session "" P56 9; greg 4100 ${A56}g2 500; gproc 4100 S 500
+T56=$(gago 59); grun P56 --complete-at "$T56" --label herdr.space=s1
+chk "S8 inside the hour the answer is 1"            "$GRC|$(ghas '1 member is still alive (standing-session)')|$(ghas '1 waits to be recapped')" "1|1|1"
+chk "S8 and nothing is claimed or started"          "$(s56 1 g1)|$(grep -c '' "$GH/hc-calls.log")|$([ -f "$(gstate P56)/run" ] && echo run || echo none)" "deferred|0|none"
+chk "S8 a time with a fraction of a second is read" "$(grun P56 --complete-at "${T56%Z}.123Z"; echo "$GRC")" "1"
+# The caller repeats the call every few minutes; the same answer is logged once.
+grun P56 --complete-at "$T56"; grun P56 --complete-at "$T56"
+chk "S8 a repeated answer is logged once"           "$(grep -c 'answer 1: waiting' "$(gstate P56)/recap.log")" "1"
+
+echo "== 57. step 9: one run over the members that wait, started from outside any terminal (ADR-0013) =="
+# The last step starts a run, or says why it cannot. The run is a real process from here on, detached from
+# the call, so these cases read the real /proc and wait for the run with a deadline.
+gcfg on
+GPROC=""
+GL=(--label herdr.space=s1 --label herdr.tab=tb0123456789abcdef)
+D57=2026-11-0; A57=57570000-0000-0000-0000-0000000000
+s57(){ prop "$(gmds ${D57}$1 ${A57}$2)" recap_status; }
+# A startup in this home keeps the stable path, which an answer 2 names in its command to run by hand.
+gstart 57570000-0000-0000-0000-0000000000ff startup keeps-the-stable-path /tmp/gwork >/dev/null
+T57=$(gago 90)
+
+# What stops a run needs a person, and changes nothing. Each PATH below holds the tools the call needs and
+# leaves one program out; the suite's own PATH cannot, since it holds the tripwires and the host's programs.
+GTOOLS="$ROOT/gtools"; mkdir -p "$GTOOLS" "$ROOT/gperl" "$ROOT/ghconly" "$ROOT/gclonly"
+for t in bash sh jq find xargs grep awk sed cut date cat mkdir rmdir rm mv ln sleep tr dirname basename readlink stat head sort uniq env touch; do
+    ln -sf "$(command -v "$t")" "$GTOOLS/$t"
+done
+ln -sf "$(command -v perl)" "$ROOT/gperl/perl"; cp "$GB/hc" "$ROOT/ghconly/hc"; cp "$GB/claude" "$ROOT/gclonly/claude"
+gcant(){ # $1=who calls, for the check's name $2=text the line must hold, then the call's options; GENV stops the run
+    grun G57 --complete-at "$T57" "${@:3}"
+    chk "9 $1 needs a person"                       "$GRC|$(ghas "$2")" "2|1"
+    chk "9 $1 claims and starts nothing"            "$(s57 1 01)|$(s57 1 02)|$(ghc '')|$([ -f "$(gstate G57)/run" ] && echo run || echo none)" "deferred|failed|0|none"; }
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 ticket-two failed G57 9
+GENV=("${GTUI[@]}");                               gcant "a call in a Herdr TUI pane" 'no terminal host here can start a session' "${GL[@]}"
+chk "9 and its line carries the command to run by hand" "$(ghas "$GBIN G57 --complete-at $T57 --here")" "1"
+GENV=();                                           gcant "a call from outside a terminal that names no label" 'no terminal host here can start a session'
+GENV=(PATH="$ROOT/gclonly:$ROOT/gperl:$GTOOLS");   gcant "a call where there is no hc" 'no terminal host here can start a session' "${GL[@]}"
+GENV=(PATH="$ROOT/ghconly:$ROOT/gclonly:$GTOOLS"); gcant "a call with no perl to detach the run" 'perl is not on' "${GL[@]}"
+GENV=(PATH="$ROOT/ghconly:$ROOT/gperl:$GTOOLS");   gcant "a call with no claude on its PATH" 'claude is not on' "${GL[@]}"
+GENV=(); mkdir -p "$(gstate G57)"; echo 3 > "$(gstate G57)/failures"
+gcant "a call after three runs that got nowhere" 'three runs in a row ended with no member of group G57 done' "${GL[@]}"
+chk "9 and that line carries the command too"       "$(ghas "$GBIN G57 --complete-at $T57 --here")" "1"
+
+# The start, and the run's six steps. Three members wait, one of them with a Debrief block in its transcript;
+# one is done and one exempt; one belongs to another group. The stub hc runs the session as the core would.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 ticket-two failed G57 9
+gmk ${D57}2 ${A57}03 standing-session requested G57 12
+gmk ${D57}2 ${A57}04 recapped-by-hand "done" G57 9; gmk ${D57}2 ${A57}05 tiny exempt G57 2
+gmk ${D57}2 ${A57}06 another-group deferred G570 9
+jq -nc --arg t "$(printf '▤ Debrief ────────────────────────────────────\n- **What changed:** ticket one landed\n─────────────────────────────────────────────────\n')" \
+    '{type:"assistant",message:{content:[{type:"text",text:$t}]}}' >> "$GH/.claude/projects/-tmp-gwork/${A57}01.jsonl"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "9 with members waiting and none alive a run starts" "$GRC|$(ghas 'started: a recap of 3 members of group G57')" "1|1"
+chk "9 and is on record before the call returns"    "$([ -f "$(gstate G57)/started" ] && echo yes || echo no)" "yes"
+gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+RUN57=$(grep '^hc \[run\]' "$GH/hc-calls.log")
+chk "R4 one session starts on the core, with the caller's labels" \
+    "$(ghc '^hc \[run\] \[--json\] \[--bg\] \[--no-parent\] \[--name\] \[recap-g57\] \[--cwd\] \['"$GKB"'\] \[--label\] \[herdr.space=s1\] \[--label\] \[herdr.tab=tb0123456789abcdef\] \[--\] \[PATH=')" "1"
+chk "R4 the markers travel inline on its command"   "$(printf '%s\n' "$RUN57" | grep -c "SECOND_BRAIN_RECAP_OF=group:G57 SECOND_BRAIN_RECAP_NAME=recap-g57 SECOND_BRAIN_PLUGIN_ROOT=$PLUGIN bash $PLUGIN/hooks/scripts/recap_child.sh --group G57\]\$")" "1"
+chk "R4 and so does the caller's PATH"              "$(printf '%s\n' "$RUN57" | grep -cF "[PATH=$GB:")" "1"
+chk "R4 never through a terminal's environment"     "$(ghc '--env')" "0"
+DG57="$(gstate G57)/digests/${A57}01.md"
+chk "R1 one digest for each member"                 "$(ls "$(gstate G57)/digests" | wc -l | tr -d ' ')" "3"
+chk "R1 with a header: name, id, folder, records"   "$(grep -c "^# Digest of ticket-one\$\|^- session id: ${A57}01\$\|^- session folder: $GKB/_sessions/${D57}1/${A57}01\$\|^- assistant records: 10\$" "$DG57")" "4"
+chk "R1 what the parser extracts from the transcript" "$(grep -c '^=== Session Statistics ===$\|^=== Errors & Failures ===$' "$DG57")" "2"
+chk "R1 and the member's own Debrief blocks"        "$(grep -c '^=== Debrief Blocks ===$\|ticket one landed' "$DG57")" "2"
+chk "R3 the members it claimed are listed for the recap" "$(cut -f3 "$(gstate G57)/members.tsv" | sort | paste -sd, -)" "standing-session,ticket-one,ticket-two"
+chk "R3 with what the recap needs to know of the group" "$(grep -c "^key=G57\$\|^complete_at=$T57\$\|^project=team\$\|^members=3\$\|^log_date=20" "$(gstate G57)/manifest")" "5"
+chk "R5 the recap runs once, in the vault, as a recap of the group" \
+    "$(grep -c "^claude cwd=$GKB recap_of=group:G57 args=.*-n recap-g57 /second-brain:session-recap --group G57\$" "$GH/gclaude-calls.log")" "1"
+chk "R5 every member the run claimed is done"       "$(s57 1 01)|$(s57 1 02)|$(s57 2 03)" "done|done|done"
+chk "R5 each on its own note"                       "$(prop "$(gmds ${D57}1 ${A57}01)" summary)" "recapped with G57"
+chk "R5 the settled and another group's are untouched" "$(s57 2 04)|$(s57 2 05)|$(s57 2 06)" "done|exempt|deferred"
+chk "R6 with every member done the terminal is removed" "$(ghc '^hc \[rm\] \[t77\]$')" "1"
+chk "R6 the run leaves no record of itself"         "$(ls "$(gstate G57)" | grep -c '^run$\|^child$')|$(cat "$(gstate G57)/failures")" "0|0"
+chk "R6 and the group's log tells what it did"      "$(glog 'run began for 3 members')|$(glog 'claimed 3 members; started recap-g57 in hc terminal t77')|$(glog 'run ended: 3 of 3 members done')|$(glog 'removed the finished terminal t77')" "1|1|1|1"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "6 then the group is settled"                   "$GRC|$(ghas 'settled: 5 members, 4 done and 1 exempt')" "0|1"
+chk "6 and no second session starts"                "$(ghc '^hc \[run\]')" "1"
+
+# A member the recap leaves short of done is failed, the terminal stays, and a later call starts the recap
+# again for what is left with nobody involved. The stub recap skips ticket-two.
+greset; : > "$GH/hc-exec"; echo ticket-two > "$GH/gclaude-skip"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 ticket-two deferred G57 9
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$(gstate G57)/recap.log" 'run ended'; gidle
+chk "R5 a member short of done is failed on the way out" "$(s57 1 01)|$(s57 1 02)" "done|failed"
+chk "R5 with the reason the notice shows, once"     "$(grep -c 'reason=its group recap (G57) ended before it was marked done' "$GKB/_sessions/${D57}1/${A57}02/recap.log")" "1"
+chk "R6 and the terminal is left for a person to read" "$(ghc '^hc \[rm\]')|$(glog 'run ended: 1 of 2 members done')" "0|1"
+chk "R6 a run that got a member done made progress" "$(cat "$(gstate G57)/failures")" "0"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "9 the next call starts the recap again"        "$GRC|$(ghas 'started: a recap of 1 member of group G57')" "1|1"
+gwait "$(gstate G57)/recap.log" 'run ended: 0 of 1'; gidle
+chk "9 a run that gets no member done is counted"   "$(s57 1 02)|$(cat "$(gstate G57)/failures")" "failed|1"
+rm -f "$GH/gclaude-skip"
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "9 and one that does starts the count over"     "$(s57 1 02)|$(cat "$(gstate G57)/failures")" "done|0"
+
+# The core will not start the session, or its name is taken by the session of an earlier run.
+greset; echo fails > "$GH/hc-run"; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$(gstate G57)/recap.log" 'run ended'; gidle
+chk "R4 a session that will not start fails its members" "$(s57 1 01)|$(glog 'could not start a session; hc said: .*spawn_failed')|$(cat "$(gstate G57)/failures")" "failed|1|1"
+greset; : > "$GH/hc-exec"; echo taken > "$GH/hc-run"; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "R4 a taken name is retried once with a suffix" "$(ghc '^hc \[run\] .*\[--name\] \[recap-g57-2\]')|$(ghc '^hc \[run\]')|$(s57 1 01)" "1|2|done"
+# A session the core starts that never runs the child: the run gives up on it and leaves its terminal.
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+GENV=(SECOND_BRAIN_GROUP_START_S=2); grun G57 --complete-at "$T57" "${GL[@]}"; GENV=()
+gwait "$(gstate G57)/recap.log" 'run ended'; gidle
+chk "R5 a session that never starts the recap is given up on" "$(s57 1 01)|$(glog 'did not start the recap within 2 s')|$(ghc '^hc \[rm\]')" "failed|1|0"
+
+# A member whose transcript is missing or cannot be read is claimed, then failed with its reason, and left
+# out. From then on it does not wait: no further run starts for it, the run that found it counts for nothing
+# against the three, and the group settles without it, with a line that says how many such members there are.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 lost-its-transcript deferred G57 9
+L57="$GKB/_sessions/${D57}1/${A57}02"; rm -f "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "U1 a member that cannot be read is claimed, then failed with its reason" \
+    "$(s57 1 02)|$(grep -c 'set deferred->running\|set running->failed' "$L57/recap.log")|$(grep -c 'reason=its transcript is missing or cannot be read, so the recap of group G57 left it out' "$L57/recap.log")" "failed|2|1"
+chk "U1 and left out, while the rest of the group is recapped" "$(cut -f3 "$(gstate G57)/members.tsv")|$(s57 1 01)" "ticket-one|done"
+# The run records it for the group's daily log entry: its folder, its id, its name and its reason, in a file
+# that the manifest names. The recap session reads that file; the notice reaches fourteen date folders only.
+LO57="$(gstate G57)/left-out.tsv"
+chk "U1 the run records it: folder, id, name and reason" "$(cat "$LO57")" \
+    "$(printf '%s\t%s\t%s\t%s' "$L57" "${A57}02" lost-its-transcript "its transcript is missing: $GH/.claude/projects/-tmp-gwork/${A57}02.jsonl")"
+chk "U1 in a file the manifest names"               "$(grep -c "^left_out_file=$LO57\$" "$(gstate G57)/manifest")" "1"
+: > "$GH/hc-calls.log"; grun G57 --complete-at "$T57" "${GL[@]}"
+chk "U2 from then on it does not wait: the group settles without it" \
+    "$GRC|$(ghas 'settled: 2 members, 1 done and 0 exempt; 1 failed because its transcript is missing or cannot be read (lost-its-transcript)$')" "0|1"
+chk "U2 and no further run starts for it"           "$(ghc '^hc \[run\]')|$([ -f "$(gstate G57)/run" ] && echo run || echo none)" "0|none"
+# While another member is alive the group is not settled, and the unreadable one still does not wait.
+GPROC="$GH/proc"; gmk ${D57}2 ${A57}03 standing-session "done" G57 9; greg 4100 ${A57}03 500; gproc 4100 S 500
+grun G57 --complete-at "$T57" "${GL[@]}"; GPROC=""
+chk "U2 with a member alive the answer stays 1"     "$GRC|$(ghas '1 of 3 members is still alive (standing-session); nothing waits to be recapped')" "1|1"
+rm -rf "$GKB/_sessions/${D57}2" "$GH/.claude/sessions/4100.json"
+# The start-of-session notice lists it with its reason, and with a retry command for that one member. The
+# command is run as printed, and what it prints in turn, the recap of one subject, is run with a claude
+# that marks its subject done: the claim takes the member, and the group then counts it done.
+N57=$(gstart 57570000-0000-0000-0000-0000000000fe startup observer /tmp/gwork | jq -r '.systemMessage // ""')
+chk "U3 the notice lists it with its reason"        "$(printf '%s\n' "$N57" | grep -c 'lost-its-transcript — failed: its transcript is missing or cannot be read, so the recap of group G57 left it out (see recap.log)')" "1"
+R57=$(printf '%s\n' "$N57" | sed -n 's/.*lost-its-transcript.* — retry: //p' | head -1)
+chk "U3 and a retry command for that one member"    "$R57" "$PLUGIN/hooks/scripts/recap_launcher.sh --manual $L57"
+RO57=$(gtick bash -c "$R57" 2>&1); RRC57=$?
+chk "U3 the command runs as printed"                "$RRC57|$(printf '%s\n' "$RO57" | grep -c "recap_child.sh $L57\$")" "0|1"
+mkdir -p "$ROOT/gone"
+printf '#!/bin/bash\nsubj="${*: -1}"; subj="${subj#/second-brain:session-recap }"\n"$SECOND_BRAIN_PLUGIN_ROOT/skills/common/recap_status.sh" "$subj" done >/dev/null 2>&1\n' > "$ROOT/gone/claude"
+chmod +x "$ROOT/gone/claude"
+env HOME="$GH" PATH="$ROOT/gone:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= \
+    bash -c "$(printf '%s\n' "$RO57" | sed -n 's/^  cd /cd /p')" >/dev/null 2>&1
+chk "U3 the recap it starts claims that member, and can get it done" "$(s57 1 02)|$(grep -c 'set failed->running' "$L57/recap.log")" "done|1"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "U3 after which the group counts it done"       "$GRC|$(ghas 'settled: 2 members, 2 done and 0 exempt$')" "0|1"
+# A member whose transcript can be read again at a later call waits again, and the next run takes it. A
+# transcript that is there and cannot be read counts as one that is gone.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}02 lost-its-transcript failed G57 9; chmod 000 "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "U4 a failed member whose transcript cannot be read does not wait" \
+    "$GRC|$(ghas 'settled: 1 member, 0 done and 0 exempt; 1 failed because its transcript is missing or cannot be read')|$(ghc '^hc \[run\]')" "0|1|0"
+chmod 644 "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "U4 once it can be read again the member waits again" "$GRC|$(ghas 'started: a recap of 1 member of group G57')" "1|1"
+gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "U4 and the run gets it done"                   "$(s57 1 02)" "done"
+# A member that failed for another reason, because its run died or its recap gave up, still waits. In a TUI
+# pane the call starts nothing, and says how many wait.
+greset; gmk ${D57}1 ${A57}01 failed-with-its-run failed G57 9
+GENV=("${GTUI[@]}"); grun G57 --complete-at "$T57"; GENV=()
+chk "U5 a failed member whose transcript can be read still waits" "$GRC|$(ghas '1 member waits to be recapped')" "2|1"
+# A run that finds nothing but unreadable members starts no session and counts for nothing against the
+# three: two runs that got nowhere before it stay two.
+greset; gmk ${D57}1 ${A57}02 lost-its-transcript deferred G57 9; rm -f "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"
+mkdir -p "$(gstate G57)"; echo 2 > "$(gstate G57)/failures"
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$(gstate G57)/recap.log" 'run ended'; gidle
+chk "U6 a run with only unreadable members starts no session" "$(ghc '^hc \[run\]')|$(glog 'claimed no member, so no session starts')|$(s57 1 02)" "0|1|failed"
+chk "U6 and does not count toward the three"        "$(cat "$(gstate G57)/failures")" "2"
+chk "U6 and records what it left out all the same"  "$(cut -f3 "$LO57")" "lost-its-transcript"
+grun G57 --complete-at "$T57" "${GL[@]}"
+chk "U6 and the next call settles the group"        "$GRC|$(ghas 'settled: 1 member, 0 done and 0 exempt; 1 failed because its transcript is missing or cannot be read')" "0|1"
+# The file holds the group's whole list as it stands at the run, not only the members this run tried: one
+# that an earlier run left out is on it still. Each row says which it is: a transcript that is missing, one
+# that is there and cannot be read, or a note that names none. A member with no name goes by its id.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+gmk ${D57}1 ${A57}02 left-out-before failed G57 9; rm -f "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"
+gmk ${D57}1 ${A57}03 "" failed G57 9; chmod 000 "$GH/.claude/projects/-tmp-gwork/${A57}03.jsonl"
+gmk ${D57}2 ${A57}04 names-no-transcript failed G57 ""
+sed -i.bak 's/^transcript_source: .*/transcript_source:/' "$(gmds ${D57}2 ${A57}04)"
+gmk ${D57}2 ${A57}05 failed-with-its-run failed G57 9
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "U8 the run tries the two members that can be read" "$(cut -f3 "$(gstate G57)/members.tsv" | sort | paste -sd, -)|$(s57 1 01)|$(s57 2 05)" "failed-with-its-run,ticket-one|done|done"
+chk "U8 the file holds every member the group has left out" "$(cut -f3 "$LO57" | sort | paste -sd, -)" "${A57:0:8},left-out-before,names-no-transcript"
+chk "U8 each with the reason that is its own" \
+    "$(cut -f4 "$LO57" | sed "s|$GH/.claude/projects/-tmp-gwork/||" | sort | paste -sd'|' -)" \
+    "its note names no transcript, and none was found for its session id|its transcript cannot be read: ${A57}03.jsonl|its transcript is missing: ${A57}02.jsonl"
+chk "U8 and with its folder and its id"             "$(grep -c "^$(printf '%s\t%s\tleft-out-before\t' "$GKB/_sessions/${D57}1/${A57}02" "${A57}02")" "$LO57")" "1"
+# A later run rewrites the file. A member that can be read again and is recapped drops out of it, which is
+# how the line in the group's daily log entry loses it too.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 comes-back deferred G57 9
+chmod 000 "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "U9 a member that cannot be read is on the list" "$(cut -f3,4 "$LO57")" \
+    "$(printf 'comes-back\tits transcript cannot be read: %s' "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl")"
+chmod 644 "$GH/.claude/projects/-tmp-gwork/${A57}02.jsonl"; : > "$GH/hc-calls.log"
+grun G57 --complete-at "$T57" "${GL[@]}"; gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "U9 recapped by a later run, it drops out of it" "$(s57 1 02)|$([ -f "$LO57" ] && grep -c '' "$LO57")" "done|0"
+# A transcript that is there and that the parser cannot digest is another matter: a fault here, not a
+# transcript that is gone. The member is failed with that reason, it waits, and its run counts, so that a
+# broken parser ends at a person and never at a group settled with every member failed. A copy of the plugin
+# with a parser that fails stands for the fault.
+GBROKEN="$ROOT/gbroken"; mkdir -p "$GBROKEN/hooks"
+cp -R "$PLUGIN/skills" "$GBROKEN/"; cp -R "$PLUGIN/hooks/scripts" "$GBROKEN/hooks/"
+printf '#!/bin/bash\nexit 1\n' > "$GBROKEN/skills/session-recap/scripts/parse_transcript.sh"
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+gtick "$GBROKEN/hooks/scripts/recap_group.sh" G57 --complete-at "$T57" "${GL[@]}" >/dev/null 2>&1
+gwait "$(gstate G57)/recap.log" 'run ended'; gidle
+chk "U7 a member that cannot be digested is failed with that reason" \
+    "$(s57 1 01)|$(grep -c 'reason=its transcript could not be digested, so the recap of group G57 left it out' "$GKB/_sessions/${D57}1/${A57}01/recap.log")" "failed|1"
+GENV=("${GTUI[@]}"); grun G57 --complete-at "$T57"; GENV=()
+chk "U7 its run counts, and the member waits"       "$(cat "$(gstate G57)/failures")|$GRC|$(ghas '1 member waits to be recapped')" "1|2|1"
+# A member another recap claimed between the call and the run's claim is left out, and left alone. The run
+# is called as the command calls it, on a list that names a member already running.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 claimed-meanwhile running G57 9
+mkdir -p "$(gstate G57)"; printf '%s\n' "$GKB/_sessions/${D57}1/${A57}01" "$GKB/_sessions/${D57}1/${A57}02" > "$(gstate G57)/waiting"
+gtick "$GCMD" G57 --complete-at "$T57" --run "${GL[@]}" >/dev/null 2>&1
+chk "R3 a refused claim leaves that member out"     "$(cut -f3 "$(gstate G57)/members.tsv")|$(s57 1 02)|$(glog 'left out claimed-meanwhile: its claim was refused')|$(s57 1 01)" "ticket-one|running|1|done"
+
+# The first caller is a tick in a crontab. It closes stdin, gives the call two files for its output, runs
+# it in its own state folder, and kills the call's whole process group the moment the call returns. The
+# run has to outlive that, and to leave that folder.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 ticket-two deferred G57 9
+TICK57="$ROOT/tick-state"; mkdir -p "$TICK57"
+( cd "$TICK57" && exec perl -e 'setpgrp(0, 0); exec @ARGV' /bin/sh -c 'exec "$@" <&-' sh \
+    env HOME="$GH" PATH="$GB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= SECOND_BRAIN_GROUP_POLL_S=1 \
+    "$GCMD" G57 --complete-at "$T57" "${GL[@]}" > "$ROOT/tick.out" 2> "$ROOT/tick.err" ) &
+PG57=$!; wait "$PG57"; RC57=$?
+RP57=$(sed -n 's/^pid=//p' "$(gstate G57)/run" 2>/dev/null)
+if [ -e "/proc/$RP57/cwd" ]; then
+    chk "T the run has left the caller's working folder" "$(readlink "/proc/$RP57/cwd")" "$(cd "$(gstate G57)" && pwd -P)"
+else
+    ok "T no /proc to read the run's working folder from, skipped"
+fi
+kill -9 -- "-$PG57" 2>/dev/null
+chk "T the call answers on the first line of stdout, with stdin closed" \
+    "$RC57|$(head -1 "$ROOT/tick.out" | grep -c '^started: a recap of 2 members of group G57$')|$(grep -c '' "$ROOT/tick.out")|$(grep -c '' "$ROOT/tick.err")" "1|1|1|0"
+gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "T the run outlives the kill of the call's process group" "$(s57 1 01)|$(s57 1 02)|$(ghc '^hc \[rm\] \[t77\]$')" "done|done|1"
+chk "T and nothing is written in the caller's working folder" "$(ls -A "$TICK57" | wc -l | tr -d ' ')" "0"
+
+# A run that never puts itself on record: the call does not wait for it past a few seconds, says so, and
+# counts it, so that a run that can never start is not retried without a word for ever. A perl that does
+# nothing stands for whatever keeps the detached process from starting.
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+mkdir -p "$ROOT/gdeadperl"; printf '#!/bin/bash\nexit 0\n' > "$ROOT/gdeadperl/perl"; chmod +x "$ROOT/gdeadperl/perl"
+GENV=(PATH="$ROOT/gdeadperl:$GB:$PATH"); grun G57 --complete-at "$T57" "${GL[@]}"; GENV=()
+chk "9 a run that does not report in is said and counted" "$GRC|$(ghas 'which has not reported in yet')|$(cat "$(gstate G57)/failures")|$(s57 1 01)" "1|1|1|deferred"
+
+# Two callers, a tick and a person, or three: one run.
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 ticket-two deferred G57 9
+for n in 1 2 3; do
+    ( gtick env SECOND_BRAIN_GROUP_START_S=2 "$GCMD" G57 --complete-at "$T57" "${GL[@]}" > "$ROOT/lock.$n.out" 2>/dev/null
+      echo $? > "$ROOT/lock.$n.rc" ) &
+done; wait
+gwait "$(gstate G57)/recap.log" 'run ended'; gidle
+chk "L three calls at once start one run"           "$(ghc '^hc \[run\]')|$(cat "$ROOT"/lock.*.out | grep -c '^started: ')|$(cat "$ROOT"/lock.*.rc | paste -sd, -)" "1|1|1,1,1"
+
+# --here: a person runs the recap in a terminal of their own, where the command could start none, or after
+# three runs that got nowhere. No terminal is started and none removed; the recap is the same.
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}1 ${A57}02 ticket-two failed G57 9
+mkdir -p "$(gstate G57)"; echo 3 > "$(gstate G57)/failures"
+H57=$(gtick "$GCMD" G57 --complete-at "$T57" --here 2>&1); HRC57=$?
+chk "H --here runs the recap in the caller's terminal" "$HRC57|$(s57 1 01)|$(s57 1 02)" "0|done|done"
+chk "H whatever the count of runs that got nowhere" "$(cat "$(gstate G57)/failures")" "0"
+chk "H it tells the person what it is doing"        "$(printf '%s\n' "$H57" | grep -c 'digest 1 of 2: \|digest 2 of 2: \|Group recap of G57 ended: 2 of 2 members done')" "3"
+chk "H it starts no terminal and removes none"      "$(ghc '^hc \[run\]\|^hc \[rm\]')" "0"
+chk "H and the session is the group's recap"        "$(grep -c "recap_of=group:G57 args=-n recap-g57 /second-brain:session-recap --group G57\$" "$GH/gclaude-calls.log")" "1"
+chk "H its log counts two members"                  "$(glog 'run began for 2 members of group G57$')|$(glog 'run claimed 2 members; starting the recap session here$')" "1|1"
+greset; gmk ${D57}1 ${A57}01 ticket-one deferred G57 9
+gtick "$GCMD" G57 --complete-at "$T57" --here >/dev/null 2>&1
+chk "H and calls one member a member"               "$(s57 1 01)|$(glog 'run began for 1 member of group G57$')|$(glog 'run claimed 1 member; starting the recap session here$')" "done|1|1"
+
+# A member still alive when the hour has passed is left out of the run, and gets a run of its own once it
+# has ended: a catch-up, which files where the group's documents already are. The live member is a real
+# process with a real registry entry; it ends without its end hook.
+greset; : > "$GH/hc-exec"
+gmk ${D57}1 ${A57}01 ticket-one deferred G57 9; gmk ${D57}2 ${A57}03 standing-session "" G57 12
+LP57=$(perl -e 'exit 0 if fork; print "$$\n"; open STDOUT, ">", "/dev/null"; open STDERR, ">", "/dev/null"; exec "sleep", "120"')
+greg "$LP57" ${A57}03 "$(bash -c 'source "$1" >/dev/null 2>&1; proc_start_time "$2"' _ "$HELPL" "$LP57")"
+grun G57 --complete-at "$(gago 59)" "${GL[@]}"
+chk "8 inside the hour a live member holds the run back" "$GRC|$(ghas 'standing-session')|$(ghc '^hc \[run\]')" "1|1|0"
+T57B=$(gago 61); grun G57 --complete-at "$T57B" "${GL[@]}"
+chk "9 past the hour a run starts without it"       "$GRC|$(ghas 'started: a recap of 1 member of group G57')" "1|1"
+gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "9 a live member is neither claimed nor stamped" "$(cut -f3 "$(gstate G57)/members.tsv")|$(s57 2 03)|$(s57 1 01)" "ticket-one||done"
+chk "9 and the run's log calls one member a member"  "$(glog 'run began for 1 member of group G57$')|$(glog 'run claimed 1 member; started recap-g57 in hc terminal t77$')" "1|1"
+grun G57 --complete-at "$T57B" "${GL[@]}"
+chk "7 while it lives the caller is told to call again" "$GRC|$(ghas '1 of 2 members is still alive (standing-session)')" "1|1"
+kill "$LP57" 2>/dev/null; i=0; while kill -0 "$LP57" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+: > "$GH/hc-calls.log"
+grun G57 --complete-at "$T57B" "${GL[@]}"
+chk "9 once it has ended a second run takes it"     "$GRC|$(ghas 'started: a recap of 1 member of group G57')|$(grep -c 'deferred: it ended without its end hook' "$GKB/_sessions/${D57}2/${A57}03/recap.log")" "1|1|1"
+gwait "$GH/hc-calls.log" '^hc \[rm\]'; gidle
+chk "9 and gets it done"                            "$(s57 2 03)|$(cut -f3 "$(gstate G57)/members.tsv")" "done|standing-session"
+chk "9 filing where the group's documents already are" "$(grep -c '^project=team$' "$(gstate G57)/manifest")" "1"
+grun G57 --complete-at "$T57B" "${GL[@]}"
+chk "6 and then the group is settled"               "$GRC|$(ghas 'settled: 2 members, 2 done and 0 exempt')" "0|1"
+GPROC="$GH/proc"
+
+echo "== 58. the recap child and the exit watcher answer for every member of a group (ADR-0013) =="
+# The child of a group recap runs one recap for the members its run claimed, claims nothing itself, and on
+# its way out fails each member that still reads running. The exit watcher ends the session once every one
+# of them is done. Both read the members once: a later run of the same group writes the list anew.
+D58=2026-11-01; A58=58580000-0000-0000-0000-0000000000
+s58(){ prop "$(gmds $D58 ${A58}$1)" recap_status; }
+gmembers(){ : > "$(gstate G58)/members.tsv"; local m
+    for m in "$@"; do printf '%s\tid-%s\tname-%s\tteam\t9\tdigest\n' "$GKB/_sessions/$D58/${A58}$m" "$m" "$m" >> "$(gstate G58)/members.tsv"; done; }
+gchild(){ env HOME="$GH" PATH="$GB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID= SECOND_BRAIN_RECAP_OF=group:G58 \
+    SECOND_BRAIN_RECAP_NAME=recap-g58 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" bash "$PLUGIN/hooks/scripts/recap_child.sh" "$@"; }
+g58(){ greset; mkdir -p "$(gstate G58)"
+    gmk $D58 ${A58}01 member-one running G58 9; gmk $D58 ${A58}02 member-two running G58 9
+    gmk $D58 ${A58}03 not-this-runs deferred G58 9; gmembers 01 02; }
+g58; echo name-02 > "$GH/gclaude-skip"
+C58=$(gchild --group G58 2>&1)
+chk "C1 the child runs the group's one recap"       "$(grep -c "^claude cwd=$GKB recap_of=group:G58 args=-n recap-g58 /second-brain:session-recap --group G58\$" "$GH/gclaude-calls.log")" "1"
+chk "C1 and claims nothing: its run did"            "$(cat "$GKB/_sessions/$D58/${A58}01/recap.log" "$GKB/_sessions/$D58/${A58}02/recap.log" | grep -c 'refused')" "0"
+chk "C2 a member still running at the end is failed" "$(s58 01)|$(s58 02)" "done|failed"
+chk "C2 with the reason the notice shows"           "$(grep -c 'reason=its group recap (G58) ended before it was marked done' "$GKB/_sessions/$D58/${A58}02/recap.log")" "1"
+chk "C2 a member that is not this run's is left"    "$(s58 03)" "deferred"
+chk "C2 the terminal says how the recap ended"      "$(printf '%s\n' "$C58" | grep -c 'Group recap of G58 ended: 1 of 2 members done')" "1"
+chk "C2 and so does the group's log"                "$(glog 'exit status=1 of 2 members done' G58)|$(glog 'start pane=none name=recap-g58' G58)" "1|1"
+chk "C3 the child puts its process on record"       "$(grep -c '^pid=[0-9][0-9]*$' "$(gstate G58)/child" 2>/dev/null)" "1"
+# A member moved by somebody else while the recap ran is not the child's to fail.
+g58; echo name-02 > "$GH/gclaude-skip"; gst "$GKB/_sessions/$D58/${A58}02" requested --force
+gchild --group G58 >/dev/null 2>&1
+chk "C2 only a member that reads running is failed" "$(s58 01)|$(s58 02)|$(grep -c 'reason=' "$GKB/_sessions/$D58/${A58}02/recap.log")" "done|requested|0"
+rm -f "$GH/gclaude-skip"
+# With nothing claimed there is nothing to recap, and a value that is not a key names no group.
+g58; : > "$(gstate G58)/members.tsv"; gchild --group G58 >/dev/null 2>&1
+chk "C4 with no member claimed the child refuses"   "$?|$([ -f "$GH/gclaude-calls.log" ] && echo ran || echo never)" "2|never"
+gchild --group "not a key" >/dev/null 2>&1
+chk "C4 and it refuses a value that is not a key"   "$?" "2"
+
+# The watcher, under the Herdr app's stub of this block: idle session, empty prompt box.
+gwatch(){ # $1=seconds the stand-in for the child lives
+    sleep "$1" & local kid=$!
+    env HOME="$GH" PATH="$GB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t77 SECOND_BRAIN_RECAP_EXIT_POLL_S=1 \
+        SECOND_BRAIN_RECAP_EXIT_GRACE_MS=2000 SECOND_BRAIN_RECAP_EXIT_IDLE_MS=3000 \
+        "$PLUGIN/hooks/scripts/recap_exit_watch.sh" --group "$(gstate G58)" t77 "$kid" >/dev/null 2>&1
+    kill "$kid" 2>/dev/null; wait "$kid" 2>/dev/null; }
+gkeys(){ ghc '^hc \[keys\] \[t77\] \[/\] \[e\] \[x\] \[i\] \[t\] \[enter\]$'; }
+g58; gst "$GKB/_sessions/$D58/${A58}01" "done"; gst "$GKB/_sessions/$D58/${A58}02" "done"; gwatch 30
+chk "W1 with every member done the session gets /exit" "$(gkeys)" "1"
+chk "W1 and the group's log says why"               "$(glog 'exit-watch typing /exit into t77 as key presses: done, idle through the grace, prompt box empty' G58)" "1"
+g58; gst "$GKB/_sessions/$D58/${A58}01" "done"; gwatch 3
+chk "W2 with a member short of done the session is left" "$(gkeys)|$(ghc '')" "0|0"
+# A later run of the group rewrites the members file while this session is still open. The watcher goes by
+# the members of its own run, which are done, and not by the new run's, which are not.
+g58
+( sleep 2; gmembers 03; gst "$GKB/_sessions/$D58/${A58}01" "done"; gst "$GKB/_sessions/$D58/${A58}02" "done" ) &
+gwatch 30; wait
+chk "W3 the watcher answers for its own run's members" "$(gkeys)|$(s58 03)" "1|deferred"
+# End to end through the child, which starts the watcher by the terminal's id and stops it on the way out.
+g58; : > "$GH/gclaude-stay"
+env HOME="$GH" PATH="$GB:$PATH" HERDR_ENV= HERDR_PANE_ID= HC_TERMINAL_ID=t77 SECOND_BRAIN_RECAP_OF=group:G58 \
+    SECOND_BRAIN_RECAP_NAME=recap-g58 SECOND_BRAIN_PLUGIN_ROOT="$PLUGIN" SECOND_BRAIN_RECAP_EXIT_POLL_S=1 \
+    SECOND_BRAIN_RECAP_EXIT_GRACE_MS=1000 SECOND_BRAIN_RECAP_EXIT_IDLE_MS=2000 \
+    bash "$PLUGIN/hooks/scripts/recap_child.sh" --group G58 >/dev/null 2>&1
+chk "W4 the child's own watcher ends the group's session" "$(grep -c '^exited-by-watcher$' "$GH/gclaude-calls.log")|$(gkeys)" "1|1"
+chk "W4 every member is done, and none was failed"  "$(s58 01)|$(s58 02)|$(glog 'exit status=2 of 2 members done' G58)" "done|done|1"
+chk "W4 no watcher outlives the child"              "$(pgrep -f "recap_exit_watch.sh --group $(gstate G58)" | wc -l | tr -d ' ')" "0"
+rm -f "$GH/gclaude-stay"
+
+echo "== 59. what lists sessions that need a recap leaves a deferred one out (ADR-0013) =="
+# ccfind --not-recapped is the backlog a person works through: never requested, waiting, or failed. A
+# deferred session is none of those. It waits for its group, and recapping it alone is a person's choice,
+# not a gap. The filter is run as ccfind runs it, against rows as its cache holds them.
+F59=$(sed -n '/^filter_not_recapped()/,/^}/p' "$PLUGIN/tools/ccfind/ccfind.sh")
+R59=$(printf 'row\tid-a\t/tmp/x\t/p/a/session.md\t-\t-\t%s\n' - requested failed deferred "done" exempt running \
+    | F59="$F59" bash -c 'eval "$F59"; get_sessions() { cat; }; filter_not_recapped' | cut -f7 | paste -sd, -)
+chk "the backlog holds what has no recap, waits or failed" "$R59" "-,requested,failed"
+chk "and its comment says a deferred session is left out"  "$(sed -n '/^# Sessions whose knowledge has not been distilled/,/^filter_not_recapped()/p' "$PLUGIN/tools/ccfind/ccfind.sh" | grep -c 'deferred')" "1"
+
+echo "== 60. the link check's title search leaves the memory snapshot copies out, and one grep takes many files =="
+# The gate resolves a link by title with a search of the vault. That search started one grep for each
+# Markdown file, and a real vault holds 155,578 memory snapshot copies under _sessions/<date>/<id>/memory
+# beside 8,239 other Markdown files, so each title cost two to three minutes: 64 and 87 minutes of the two
+# recaps of one group (2026-11-11). No snapshot copy in that vault holds a title line, so the search
+# leaves those folders out, and one grep takes the files of one search. A stub grep records each call.
+# The search by file name is as it was and still reaches a snapshot copy. The vault's path holds a space
+# and a bracket, which a pattern built from it has to take as they are.
+VK60="$ROOT/vk60 [x]"; S60="$VK60/_sessions/2026-11-01/s60"; GL60="$ROOT/grep60.log"
+mkdir -p "$VK60/daily-log" "$VK60/projects/p/concepts" "$S60/docs/memory" "$S60/memory/memory" "$ROOT/gbin60"
+t60(){ printf '%s\n' '---' "title: $2" '---' 'text' > "$1"; }       # $1=file $2=title
+t60 "$VK60/projects/p/concepts/Alpha Doc.md" "Alpha Title"
+t60 "$S60/docs/Gamma Design.md"              "Gamma Title"
+t60 "$S60/docs/memory/Delta.md"              "Delta Title"
+t60 "$S60/memory/Epsilon.md"                 "Epsilon Title"
+t60 "$S60/memory/memory/Zeta.md"             "Zeta Title"
+printf 'no title here\n' > "$VK60/projects/p/concepts/Beta.md"; printf 'a note\n' > "$S60/session.md"
+for i in $(seq 1 20); do printf 'filler %s\n' "$i" > "$VK60/projects/p/concepts/filler-$i.md"; done
+printf '%s\n' '[[Alpha Title]] [[Beta]] [[Gamma Title]] [[Delta Title]]' '[[Epsilon Title]] [[Zeta Title]] [[Epsilon]]' \
+    '[[_sessions/2026-11-01/s60/session]]' > "$VK60/daily-log/d60.md"
+printf '%s\n' '#!/bin/bash' 'printf "%s\n" "$*" >> "$GREP60_LOG"' "exec $(command -v grep) \"\$@\"" > "$ROOT/gbin60/grep"
+chmod +x "$ROOT/gbin60/grep"
+V60=$(env HOME="$H" PATH="$ROOT/gbin60:$PATH" GREP60_LOG="$GL60" \
+    "$PLUGIN/skills/session-recap/scripts/validate_cross_references.sh" "$VK60/daily-log/d60.md" "$VK60" 2>&1); RC60=$?
+V60=$(printf '%s\n' "$V60" | sed "s/$(printf '\033')\[[0-9;]*m//g")
+v60(){ printf '%s\n' "$V60" | grep -c -F -- "$1"; }                  # $1=text of one output line
+chk "a title in a document resolves, whatever the file is called" "$(v60 'VALID: [[Alpha Title]] → Alpha Doc.md')" "1"
+chk "and so does one in a session's docs folder"                 "$(v60 'VALID: [[Gamma Title]] → Gamma Design.md')" "1"
+chk "and one in a folder named memory below it"                  "$(v60 'VALID: [[Delta Title]] → Delta.md')" "1"
+chk "a title that only a memory snapshot copy holds is no match" "$(v60 'BROKEN: [[Epsilon Title]]')|$(v60 'BROKEN: [[Zeta Title]]')" "1|1"
+chk "the search by file name is as it was"                       "$(v60 'VALID: [[Beta]] → Beta.md')|$(v60 'VALID: [[Epsilon]] → Epsilon.md')" "1|1"
+chk "a path is checked directly"                                 "$(v60 'VALID: [[_sessions/2026-11-01/s60/session]] → session.md')" "1"
+chk "the verdict counts them" \
+    "$RC60|$(printf '%s\n' "$V60" | grep -c -E '^Total WikiLinks: +8$|^Valid Links: +6$|^Broken Links: +2$')" "1|3"
+chk "one grep takes the files of one title search"               "$(grep -c -- '-l \^title: ' "$GL60")" "7"
+chk "and no snapshot copy is among them" \
+    "$(grep -- '-l \^title: ' "$GL60" | grep -c -F -- 's60/memory/')|$(grep -- '-l \^title: ' "$GL60" | grep -c -F -- 's60/docs/memory/Delta.md')" "0|7"
 
 # The tripwire once more, after the last case that could reach it: case 36 runs before the
 # ccfind cases and cases 48 to 51, the callers of herdr-app and hc.

@@ -5,7 +5,7 @@
 #   recap_status.sh <session_folder> <state> [recap_session_folder] \
 #                   [--project P] [--tags "a, b"] [--summary S] [--force]
 #
-# state is one of: requested running done failed exempt
+# state is one of: requested running done failed exempt deferred
 #
 # Compare-and-set, not a blind setter (ADR-0002). Every caller comes through here, so
 # a transition the table below does not allow changes nothing and exits 3. That is
@@ -25,6 +25,12 @@
 # not a limit on it. The one exception is an empty tag list, which set_frontmatter_list
 # refuses to write, since matching no canonical tag is not a decision to erase one.
 #
+# `deferred` is the status of a session that belongs to a recap group (ADR-0013): recapped with its
+# group, not at its own exit. It has four transitions. Empty and `exempt` reach it, written by the end
+# hook, or by the group command for a member that ended without its end hook. The claim of a group run,
+# or of a hand recap of that one session, moves it to `running`. And `done` returns to it only with
+# --force, for a member that kept working after its recap, as `done` returns to `requested`.
+#
 # Exit: 0 written, 2 usage or no note, 3 transition refused.
 
 set -uo pipefail
@@ -38,11 +44,12 @@ Usage: recap_status.sh <session_folder> <state> [recap_session_folder]
                        [--project P] [--tags "a, b"] [--summary S] [--force]
        recap_status.sh <session_folder> clear --force
 
-  state                requested | running | done | failed | exempt
+  state                requested | running | done | failed | exempt | deferred
   --project/--tags/--summary   the description; accepted on done and failed only
   --force              with `requested`, re-stamp a subject that is done or stuck
-                       running; with `clear`, remove the status so the subject is
-                       requested again at its next exit
+                       running; with `deferred`, send a member of a recap group back
+                       to wait for its group; with `clear`, remove the status so the
+                       subject is requested again at its next exit
 USAGE
     exit 2
 }
@@ -78,7 +85,7 @@ done
 while [ "${FOLDER%/}" != "$FOLDER" ] && [ "$FOLDER" != "/" ]; do FOLDER="${FOLDER%/}"; done
 
 case "$STATE" in
-    requested|running|done|failed|exempt|clear) ;;
+    requested|running|done|failed|exempt|deferred|clear) ;;
     *) printf 'recap_status.sh: not a state: %s\n' "$STATE" >&2; usage ;;
 esac
 
@@ -109,13 +116,15 @@ if [ "$HAVE_PROJECT$HAVE_TAGS$HAVE_SUMMARY" != "000" ]; then
     esac
 fi
 
-# --force exists for two cases, both human-invoked: re-stamping a subject whose recap is
-# done or stuck running, and clearing the status so an exit will request it again.
-# Allowing it to force any state would give every other transition a way around the table.
+# --force exists for three cases: re-stamping a subject whose recap is done or stuck running,
+# clearing the status so an exit will request it again, and sending a member of a recap group
+# back to `deferred`, which the end hook does when a member has grown since its recap and a
+# person does when a member was stamped before it had a group. Allowing it to force any state
+# would give every other transition a way around the table.
 case "$STATE" in
-    requested|clear) ;;
+    requested|deferred|clear) ;;
     *) if [ -n "$FORCE" ]; then
-           printf 'recap_status.sh: --force applies to requested or clear only\n' >&2
+           printf 'recap_status.sh: --force applies to requested, deferred or clear only\n' >&2
            usage
        fi ;;
 esac
@@ -153,8 +162,9 @@ FROM=$(read_frontmatter_prop "$MD" recap_status)
 
 allowed() {
     case "$1|$2" in
-        "|requested"|"|exempt")            return 0 ;;
-        "exempt|requested"|"exempt|running") return 0 ;;
+        "|requested"|"|exempt"|"|deferred") return 0 ;;
+        "exempt|requested"|"exempt|running"|"exempt|deferred") return 0 ;;
+        "deferred|running")                return 0 ;;
         "requested|running"|"requested|failed") return 0 ;;
         "running|done"|"running|failed")   return 0 ;;
         "failed|running")                  return 0 ;;

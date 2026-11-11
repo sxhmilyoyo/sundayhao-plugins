@@ -4,19 +4,28 @@
 #   SECOND_BRAIN_RECAP_OF=<subject> SECOND_BRAIN_RECAP_NAME=<name> \
 #   SECOND_BRAIN_PLUGIN_ROOT=<root> bash recap_child.sh <subject_session_folder>
 #
-# Started by recap_launcher.sh, never by hand: the markers above have to be on this
-# command for the recap session's own hooks to register it (ADR-0003), and the launcher
-# is what puts them there.
+#   SECOND_BRAIN_RECAP_OF=group:<key> SECOND_BRAIN_RECAP_NAME=<name> \
+#   SECOND_BRAIN_PLUGIN_ROOT=<root> bash recap_child.sh --group <key>
+#
+# Started by recap_launcher.sh, or for a recap group by recap_group.sh, never by hand: the
+# markers above have to be on this command for the recap session's own hooks to register
+# it (ADR-0003), and the launcher is what puts them there.
 #
 # Its job is to claim the subject, run the recap, and make sure the subject never sits
 # in `running` after this process is gone. It marks `failed` on the way out if the
 # recap did not reach `done`, so a closed pane or a crashed model surfaces in the
 # start-of-session notice instead of looking like a recap still in flight. A done recap
 # does not keep its session either: the exit watcher ends it (ADR-0010).
+#
+# A group recap has many subjects, the members its run claimed before it started this
+# process (ADR-0013). The job is the same for each of them, less the claim: run the one
+# recap, and fail every member that is not done when this process ends. The group's state
+# folder stands where a subject's folder does, so its recap.log is this recap's log.
 
-SUBJECT="${1:-}"
-if [ -z "$SUBJECT" ] || [ -z "${SECOND_BRAIN_PLUGIN_ROOT:-}" ]; then
-    echo "Usage: SECOND_BRAIN_RECAP_OF=... SECOND_BRAIN_PLUGIN_ROOT=... $0 <subject_folder>" >&2
+GROUP_KEY=""
+if [ "${1:-}" = "--group" ]; then GROUP_KEY="${2:-}"; SUBJECT=""; else SUBJECT="${1:-}"; fi
+if { [ -z "$SUBJECT" ] && [ -z "$GROUP_KEY" ]; } || [ -z "${SECOND_BRAIN_PLUGIN_ROOT:-}" ]; then
+    echo "Usage: SECOND_BRAIN_RECAP_OF=... SECOND_BRAIN_PLUGIN_ROOT=... $0 <subject_folder> | --group <key>" >&2
     exit 2
 fi
 while [ "${SUBJECT%/}" != "$SUBJECT" ] && [ "$SUBJECT" != "/" ]; do SUBJECT="${SUBJECT%/}"; done
@@ -31,12 +40,26 @@ if [ ! -f "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/obsidian_helpers.sh" ]; then
 fi
 source "$SECOND_BRAIN_PLUGIN_ROOT/skills/common/obsidian_helpers.sh"
 STATUS="$SECOND_BRAIN_PLUGIN_ROOT/skills/common/recap_status.sh"
-LOG="$SUBJECT/recap.log"
 
-if [ ! -f "$SUBJECT/session.md" ]; then
+# The members of a group recap are read once, here. A later run of the same group, for members
+# that ended since, writes the list anew, and this process answers for its own run's members only.
+MEMBERS=""
+if [ -n "$GROUP_KEY" ]; then
+    if ! recap_group_key_valid "$GROUP_KEY"; then
+        echo "recap_child.sh: not a recap group key: $GROUP_KEY" >&2
+        exit 2
+    fi
+    SUBJECT=$(recap_group_state_dir "$GROUP_KEY")
+    MEMBERS=$(cut -f1 "$SUBJECT/members.tsv" 2>/dev/null)
+    if [ -z "$MEMBERS" ]; then
+        echo "recap_child.sh: no run has claimed members for recap group $GROUP_KEY" >&2
+        exit 2
+    fi
+elif [ ! -f "$SUBJECT/session.md" ]; then
     echo "recap_child.sh: no session note at $SUBJECT/session.md" >&2
     exit 2
 fi
+LOG="$SUBJECT/recap.log"
 
 # Anything other than `done` when this process ends is a failure a person should see.
 # An exit 3 here is harmless: it means the subject already reached a terminal state,
@@ -47,6 +70,27 @@ post_check() {
     # busy host the PID cursor wraps in minutes, so its PID may name another process by then (a
     # thread's id signals its whole process). The job table lists the watcher only while it runs.
     [ -n "${WATCH_PID:-}" ] && jobs -rp | grep -qx "$WATCH_PID" && kill "$WATCH_PID" 2>/dev/null
+    if [ -n "$GROUP_KEY" ]; then
+        # Every member this run claimed that still reads running is failed, with the reason the
+        # notice shows. Only running: a member the recap marked done is done, and one that reads
+        # anything else was moved by somebody with the right to.
+        local st folder done_n=0 total=0
+        while IFS="$(printf '\t')" read -r st folder; do
+            [ -n "$folder" ] || continue
+            total=$((total + 1))
+            case "$st" in
+                done) done_n=$((done_n + 1)) ;;
+                running)
+                    printf '%s failed reason=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                        "its group recap ($GROUP_KEY) ended before it was marked done" >> "$folder/recap.log" 2>/dev/null
+                    "$STATUS" "$folder" failed >/dev/null 2>&1 ;;
+            esac
+        done < <(printf '%s\n' "$MEMBERS" | recap_member_statuses)
+        printf '%s exit status=%s of %s members done\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "$done_n" "$total" >> "$LOG" 2>/dev/null || true
+        echo "Group recap of $GROUP_KEY ended: $done_n of $total members done. Log: $LOG"
+        return
+    fi
     if [ "$(read_frontmatter_prop "$SUBJECT/session.md" recap_status)" != "done" ]; then
         "$STATUS" "$SUBJECT" failed >/dev/null 2>&1
     fi
@@ -59,6 +103,11 @@ post_check() {
 # EXIT alone. Adding HUP, TERM or INT runs post_check twice when a pane is closed,
 # because the signal handler returns and the shell then exits.
 trap 'post_check' EXIT
+
+# What follows down to the claim is for a recap of one subject. A group's members ended
+# before their group was declared complete, with no process left to wait for, and the run
+# that started this process has claimed them already.
+if [ -z "$GROUP_KEY" ]; then
 
 # The transcript is written asynchronously, so a recap that starts the moment the
 # subject exits can read a file the subject is still finishing. Wait for the parent to
@@ -120,8 +169,18 @@ elif [ "$CLAIM" -ne 0 ]; then
     exit 1
 fi
 
+fi  # a recap of one subject
+
 printf '%s start pane=%s name=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "${HERDR_PANE_ID:-${HC_TERMINAL_ID:-none}}" "${SECOND_BRAIN_RECAP_NAME:-unnamed}" >> "$LOG" 2>/dev/null || true
+
+# A group's run waits for this process and then settles what it left, and the group command asks
+# whether the run's session is alive. Both go by this record: the pid, and when it started, since a
+# pid alone names whatever process holds it now.
+if [ -n "$GROUP_KEY" ]; then
+    printf 'pid=%s\nstart=%s\n' "$$" "$(proc_start_time $$)" > "$SUBJECT/child.$$" 2>/dev/null \
+        && mv -f "$SUBJECT/child.$$" "$SUBJECT/child"
+fi
 
 # A reused pane brings no `--cwd`. The split passed the vault, and that is what keeps the
 # work repo's own project settings and instructions out of the recap's context — the reason
@@ -146,7 +205,8 @@ case "$RECAP_HOST" in
     *)         WATCH_TERMINAL="" ;;
 esac
 if [ -n "$WATCH_TERMINAL" ]; then
-    bash "$SECOND_BRAIN_PLUGIN_ROOT/hooks/scripts/recap_exit_watch.sh" \
+    # For a group the watcher is told so, and ends the session once every member is done.
+    bash "$SECOND_BRAIN_PLUGIN_ROOT/hooks/scripts/recap_exit_watch.sh" ${GROUP_KEY:+--group} \
         "$SUBJECT" "$WATCH_TERMINAL" "$$" < /dev/null > /dev/null 2>&1 &
     WATCH_PID=$!
 fi
@@ -166,8 +226,10 @@ fi
 [ "$RECAP_HOST" = herdr-app ] && export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false
 SETTINGS=()
 [ "$RECAP_HOST" = herdr-app ] && SETTINGS=(--settings '{"enabledPlugins":{"debrief@sundayhao-plugins":false}}')
+PROMPT="/second-brain:session-recap $SUBJECT"
+[ -z "$GROUP_KEY" ] || PROMPT="/second-brain:session-recap --group $GROUP_KEY"
 if [ -n "${SECOND_BRAIN_RECAP_NAME:-}" ]; then
-    claude "${SETTINGS[@]}" -n "$SECOND_BRAIN_RECAP_NAME" "/second-brain:session-recap $SUBJECT"
+    claude "${SETTINGS[@]}" -n "$SECOND_BRAIN_RECAP_NAME" "$PROMPT"
 else
-    claude "${SETTINGS[@]}" "/second-brain:session-recap $SUBJECT"
+    claude "${SETTINGS[@]}" "$PROMPT"
 fi

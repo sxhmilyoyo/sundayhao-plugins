@@ -105,7 +105,8 @@ _Avoid_: separate session, child session, recap child, background recap
 
 **Recap**:
 The knowledge-bank documents distilled from one subject session: its daily log, and any concepts,
-components, practices and reflections drawn from it.
+components, practices and reflections drawn from it. A group recap distils one such set from a whole
+recap group.
 _Avoid_: summary, digest, write-up, session notes
 
 **Subject session**:
@@ -127,3 +128,20 @@ A session that is deliberately never recapped: a recap session itself, a session
 knowledge worth distilling, or a delegated session its launching session declared exempt. Exemption is
 recorded, so an exempt session is never mistaken for a missed one.
 _Avoid_: skipped session, trivial session, ignored session, noise
+
+**Deferred session**:
+A session declared at launch to belong to a recap group: it is not recapped when it exits, and is
+recapped with its group once the group is declared complete. Deferral is recorded, so a deferred
+session is never mistaken for an exempt one or a missed one.
+_Avoid_: exempt session, postponed session, queued session, pending recap
+
+**Recap group**:
+The sessions declared at launch to be recapped together as one piece of work, under one key. Whatever
+launched them declares the group complete; nothing infers it.
+_Avoid_: batch, cohort, bundle, dispatch
+
+**Group recap**:
+The recap of a recap group: one set of documents distilled from all of its sessions together, while
+each session's note still gets its own description and recap status. Distinct from a batch, which
+gives every subject session a recap of its own.
+_Avoid_: batch recap, dispatch recap, combined recap

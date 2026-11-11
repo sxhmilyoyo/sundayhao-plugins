@@ -5,6 +5,44 @@ All notable changes to this skill will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-11
+
+### Added
+- **Group mode**: `/second-brain:session-recap --group <key>` recaps a recap group, the sessions a launcher
+  declared at launch to be one piece of work, as one set of documents (ADR-0013; plugin 2.26.0). The session
+  is started by the group command, `recap-group <key> --complete-at <UTC time>`, with the members already
+  claimed and one code-made digest written for each. The new section "Group Recap" says what differs from a
+  recap of one subject: the gate compares the session's `recap_of` with `group:<key>`; the subjects are the
+  rows of `members.tsv` in the group's state folder and no others; the recap reads digests and opens a
+  transcript only where a digest shows an error, rework or an ask, and above about 30 members hands chunks of
+  digests to subagents; the phases run once for the group; every document carries `recap-group: <key>`, which
+  is what a catch-up run's inventory finds; the daily log is dated by the day the group was declared complete,
+  and named for the group and its work, never for a count or a list of its members, because a catch-up adds
+  members and keeps the file name;
+  its entry names, on one `Left out:` line, the members that the run's `left-out.tsv` lists as left out
+  because their transcripts are missing or cannot be read, each with its reason, and a catch-up rewrites that
+  line; and Phase 5.5 is one `done` call for each member, with that member's own project, tags and summary.
+- `parse_transcript.sh debriefs` prints a session's own Debrief blocks, from assistant text only, for the
+  digests. It is not part of `all`.
+
+### Changed
+- The rule against one daily log for many sessions now names the batch it holds for; a group recap is the
+  one case where many sessions share one set of documents.
+- The batch triage table has a row for `deferred`: such a session belongs to a recap group and is skipped,
+  as `exempt` is. Phase 1.0's claim table lets a registered recap session claim a `deferred` subject, which is
+  how a person recaps one member alone.
+- **The gate's link check finds a title with one `grep` for many files, and leaves the memory snapshot
+  copies out of that search** (`validate_cross_references.sh`). The search started one `grep` for each
+  Markdown file of the vault, for each link. In a vault of 163,817 Markdown files, 155,578 of them snapshot
+  copies under `_sessions/<date>/<id>/memory`, that took 64 and 87 minutes of the two recaps of one group
+  (2026-11-11). No snapshot copy in that vault holds a line that begins `title:`, counted over all of them,
+  so no result changes there; a title that only a snapshot copy holds is no longer a match. A folder named
+  `memory` anywhere else is still searched. The search by file name, and the suggestions for a broken link,
+  which start one `basename` for each file, are as they were. Measured on two real daily logs of that
+  vault, before and after, read-only, with the same output byte for byte and the same exit code: 1296 s
+  against 3.2 s for a log of 8 links that passes, and 1553 s against 121 s for a log of 9 links with one
+  broken, where the suggestions search is what remains.
+
 ## [3.6.4] - 2026-11-04
 
 ### Changed

@@ -651,6 +651,118 @@ hc_terminal_state() {
     return 0
 }
 
+# ── Recap groups (ADR-0013) ──────────────────────────────────────────────────────
+# Is this a recap group's key, as a launcher declares one in SECOND_BRAIN_RECAP_GROUP? Letters, digits,
+# dot, underscore and hyphen, at most 64 characters. A key is compared for equality and never parsed;
+# the rule is there because the key also names the group's state folder and its recap session. `.` and
+# `..` pass the character rule and are refused all the same, since as a folder name each is another
+# folder. The match runs in the C locale: elsewhere a range such as a-z takes in accented letters.
+# Args: $1=candidate
+# Returns: 0 when it is a key
+recap_group_key_valid() {
+    local LC_ALL=C
+    case "${1:-}" in ''|.|..|*[!A-Za-z0-9._-]*) return 1 ;; esac
+    [ "${#1}" -le 64 ]
+}
+
+# The folder where the group command keeps one group's state: its lock, the record of its run, the
+# digests, the members a run claimed, and its log. Under $HOME and nowhere else. A tick in a crontab
+# and a person at a shell must agree on it, and XDG_STATE_HOME is set for one and not for the other.
+# Args: $1=key
+recap_group_state_dir() { printf '%s/.local/state/second-brain/groups/%s' "$HOME" "$1"; }
+
+# The name of a group's recap session and of the terminal it runs in: `recap-` and the key in lower
+# case, cut to the terminal host's 32 characters by the rule the launcher applies to every name.
+# Args: $1=key
+recap_group_session_name() {
+    printf 'recap-%s' "$1" | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9_-]+/-/g' | cut -c1-32 | sed -E 's/-+$//'
+}
+
+# One value of a key=value state file, such as a group's manifest or the record of its run.
+# Args: $1=file, $2=key
+# Returns: the value on stdout; empty when the file or the key is missing
+state_value() {
+    local k v
+    [ -f "$1" ] || return 0
+    while IFS='=' read -r k v; do
+        [ "$k" = "$2" ] && { printf '%s' "$v"; return 0; }
+    done < "$1"
+    return 0
+}
+
+# The recap status of each session folder named on stdin, one per line: `<status><TAB><folder>` in the
+# order given, `-` for a note with no status or no note at all. One awk for the whole list, because a
+# group has hundreds of members and a reader per member would cost three processes each.
+recap_member_statuses() {
+    awk '{
+        f = $0 "/session.md"; st = ""; fm = 0
+        while ((getline line < f) > 0) {
+            if (line == "---") { if (++fm == 2) break; continue }
+            if (fm == 1 && line ~ /^recap_status:/) {
+                st = line; sub(/^recap_status:[ \t]*/, "", st); gsub(/^"|"$/, "", st)
+            }
+        }
+        close(f)
+        print (st == "" ? "-" : st) "\t" $0
+    }'
+}
+
+# When a process started, as its stat line gives it: field 22, in clock ticks since boot. Claude Code's
+# session registry records the same number as `procStart`, and the group command records it for its own
+# run, since a pid alone names whatever process holds it now. Empty where there is no /proc, as on
+# macOS, or no such process. SECOND_BRAIN_PROC names another folder to read, for the regression suite.
+# Args: $1=pid
+proc_start_time() {
+    local stat
+    { IFS= read -r stat < "${SECOND_BRAIN_PROC:-/proc}/$1/stat"; } 2>/dev/null || return 0
+    # The command name sits in parentheses and may itself hold blanks and parentheses, so the fields
+    # are counted from the last closing one: state, then eighteen more, then the start.
+    set -- ${stat##*) }
+    printf '%s' "${20:-}"
+    return 0
+}
+
+# Does this process run, and is it the one that started then? A zombie does not run. With a start that
+# is not a number there is nothing to compare, and where there is no /proc the start cannot be read, so
+# in both cases a live pid is taken at its word: the mistake that leaves possible is to wait for a
+# process that has gone, never to treat a live one as gone.
+# Args: $1=pid, $2=start as proc_start_time gives it (optional)
+# Returns: 0 when it runs
+process_runs() {
+    local proc="${SECOND_BRAIN_PROC:-/proc}" pid="${1:-}" want="${2:-}" stat
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    if [ ! -d "$proc" ]; then
+        kill -0 "$pid" 2>/dev/null
+        return
+    fi
+    { IFS= read -r stat < "$proc/$pid/stat"; } 2>/dev/null || return 1
+    set -- ${stat##*) }
+    [ "${1:-}" != "Z" ] || return 1
+    case "$want" in ''|*[!0-9]*) return 0 ;; esac
+    [ "${20:-}" = "$want" ]
+}
+
+# Where Claude Code keeps a session's transcript, for a note that does not say. The end hook writes
+# the pointer, so a session that ended without its end hook has none. Claude Code files a transcript
+# under the session's cwd with every character that is not a letter or a digit turned into a hyphen
+# (measured 2026-11-11: 32 of 32 live sessions). That rule is not documented, so when it finds nothing
+# the id is looked for under every project folder: a session id names one transcript.
+# Args: $1=cwd, $2=session id
+# Returns: the path on stdout; empty when there is no transcript
+session_transcript_path() {
+    local cwd="${1:-}" id="${2:-}" root="$HOME/.claude/projects" f
+    [ -n "$id" ] || return 0
+    if [ -n "$cwd" ]; then
+        f="$root/$(printf '%s' "$cwd" | sed 's|[^A-Za-z0-9]|-|g')/$id.jsonl"
+        [ -f "$f" ] && { printf '%s' "$f"; return 0; }
+    fi
+    for f in "$root"/*/"$id.jsonl"; do
+        [ -f "$f" ] && { printf '%s' "$f"; return 0; }
+    done
+    return 0
+}
+
 # Resolve an existing session folder. Never creates anything, never guesses a
 # date: returns empty when the session has no folder yet, so callers decide.
 # Args: $1=kb_path, $2=session_id
@@ -871,6 +983,14 @@ export -f terminal_host
 export -f herdr_bin
 export -f hc_bin
 export -f hc_terminal_state
+export -f recap_group_key_valid
+export -f recap_group_state_dir
+export -f recap_group_session_name
+export -f state_value
+export -f recap_member_statuses
+export -f proc_start_time
+export -f process_runs
+export -f session_transcript_path
 export -f resolve_session_folder
 export -f transcript_forked_from
 export -f rebuild_session_md

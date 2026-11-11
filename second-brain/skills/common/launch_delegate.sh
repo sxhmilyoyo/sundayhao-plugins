@@ -82,19 +82,29 @@ fi
 # The command travels as one string the shell runs, so the marker stays inline and the
 # worker gets the core's environment, not this session's. A name is unique among live
 # terminals; a taken one is retried once with a suffix.
+#
+# The core's environment is not this session's in one way that matters: its PATH may hold
+# no claude. Measured on one host on 2026-11-11, a worker printed "claude: NOT FOUND",
+# since the core had been restarted from a login whose PATH lacked claude's folder. So this
+# session's PATH travels inline with the marker, and claude is started by the path that
+# PATH gives, as it stands and unresolved: where claude is a link to a launcher that picks
+# the version to run, the link is what has to be started, not what it points at today.
+# With no claude on this PATH the bare name is kept, which is what was started before.
 if [ "$HOST" = "herdr-app" ]; then
     HC_BIN=$(hc_bin)
     APP_PROMPT="$PROMPT
 
 Report with hc send $HC_TERMINAL_ID when done or stuck."
-    APP_CMD=$(printf 'SECOND_BRAIN_DELEGATED_BY=%q SECOND_BRAIN_DELEGATED_BY_NAME=%q claude -n %q %q' \
-        "$LAUNCHER_ID" "$LAUNCHER_NAME" "$DELEGATE_NAME" "$APP_PROMPT")
+    CLAUDE_BIN=$(command -v claude 2>/dev/null) || CLAUDE_BIN=""
+    [ -n "$CLAUDE_BIN" ] || CLAUDE_BIN=claude
+    APP_CMD=$(printf 'PATH=%q SECOND_BRAIN_DELEGATED_BY=%q SECOND_BRAIN_DELEGATED_BY_NAME=%q %q -n %q %q' \
+        "$PATH" "$LAUNCHER_ID" "$LAUNCHER_NAME" "$CLAUDE_BIN" "$DELEGATE_NAME" "$APP_PROMPT")
     WORKER=""
     RUN_JSON=""
     RUN_ERR="${TMPDIR:-/tmp}/launch-delegate-$$.err"
     for TRY in "$DELEGATE_NAME" "$(printf '%s' "$DELEGATE_NAME" | cut -c1-30)-2"; do
-        APP_CMD=$(printf 'SECOND_BRAIN_DELEGATED_BY=%q SECOND_BRAIN_DELEGATED_BY_NAME=%q claude -n %q %q' \
-            "$LAUNCHER_ID" "$LAUNCHER_NAME" "$TRY" "$APP_PROMPT")
+        APP_CMD=$(printf 'PATH=%q SECOND_BRAIN_DELEGATED_BY=%q SECOND_BRAIN_DELEGATED_BY_NAME=%q %q -n %q %q' \
+            "$PATH" "$LAUNCHER_ID" "$LAUNCHER_NAME" "$CLAUDE_BIN" "$TRY" "$APP_PROMPT")
         RUN_JSON=$("$HC_BIN" run --json --bg --outlive-parent --name "$TRY" --cwd "$PWD" \
             -- "$APP_CMD" 2>"$RUN_ERR")
         WORKER=$(printf '%s' "$RUN_JSON" | jq -r '.address // empty' 2>/dev/null)

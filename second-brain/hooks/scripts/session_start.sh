@@ -278,6 +278,12 @@ if [ "$SOURCE" = "startup" ]; then
     RECAP_OF="${SECOND_BRAIN_RECAP_OF:-}"
     while [ "${RECAP_OF%/}" != "$RECAP_OF" ] && [ "$RECAP_OF" != "/" ]; do RECAP_OF="${RECAP_OF%/}"; done
 fi
+# A group's recap session has no one subject folder to name. Its marker names the group instead, as
+# `group:<key>` (ADR-0013), and each reader of RECAP_OF below that wants a folder asks this first.
+RECAP_OF_GROUP=""
+case "$RECAP_OF" in
+    group:*) recap_group_key_valid "${RECAP_OF#group:}" && RECAP_OF_GROUP="${RECAP_OF#group:}" ;;
+esac
 
 # A launcher can declare the session it starts exempt from the automatic recap, with
 # SECOND_BRAIN_RECAP_EXEMPT set on the launched command (ADR-0009): a dispatcher that ends
@@ -287,6 +293,34 @@ fi
 RECAP_EXEMPT=""
 if [ "$SOURCE" = "startup" ] && [ -n "${SECOND_BRAIN_RECAP_EXEMPT:-}" ]; then
     RECAP_EXEMPT="launcher"
+fi
+
+# Or a launcher can declare that the session belongs to a recap group, with
+# SECOND_BRAIN_RECAP_GROUP=<key> on the launched command (ADR-0013). The session is then recapped with
+# its group, once whatever launched it says the group is complete, and not at its own exit. Honoured
+# on a genuine startup only, for the reasons above, and only when the value is a key: the key names a
+# state folder and a session, so any other value is ignored, never repaired. session_end.sh reads
+# `recap_group` off the note at every exit, never this variable.
+RECAP_GROUP=""
+if [ "$SOURCE" = "startup" ] && recap_group_key_valid "${SECOND_BRAIN_RECAP_GROUP:-}"; then
+    RECAP_GROUP="$SECOND_BRAIN_RECAP_GROUP"
+fi
+
+# Whatever declares a group complete calls the group command from outside this plugin, and this
+# plugin's install folder is versioned. So a genuine startup keeps one stable path pointing at the
+# command of the plugin copy that runs this hook (ADR-0013). Only a startup: a /clear runs the hooks
+# of the copy its session started under, which may be an older one. A link and not a wrapper, so a
+# plugin copy that is removed takes the path with it, and a caller that finds no path makes no call.
+# `-ef` follows the link, so a path that is already current, the common case, costs no process.
+if [ "$SOURCE" = "startup" ]; then
+    GROUP_BIN="${PLUGIN_CONFIG_FILE%/*}/bin/recap-group"
+    GROUP_CMD="$PLUGIN_ROOT/hooks/scripts/recap_group.sh"
+    if [ -f "$GROUP_CMD" ] && ! [ "$GROUP_BIN" -ef "$GROUP_CMD" ]; then
+        mkdir -p "${GROUP_BIN%/*}" 2>/dev/null \
+            && ln -s "$GROUP_CMD" "$GROUP_BIN.$$" 2>/dev/null \
+            && mv -f "$GROUP_BIN.$$" "$GROUP_BIN" 2>/dev/null
+        rm -f "$GROUP_BIN.$$" 2>/dev/null
+    fi
 fi
 
 # Resolved here rather than inside the note-creation branch below, because the
@@ -354,7 +388,12 @@ if [ ! -f "$SESSION_MD" ]; then
     # no domain, while the work being described belongs wherever the subject filed it
     # (ADR-0004). Validated, so a subject holding a legacy basename yields empty here
     # rather than passing one on.
-    if [ -n "$RECAP_OF" ]; then
+    # A group's recap session takes the domain its run recorded for the group, the one most
+    # members resolve to, validated the same way.
+    if [ -n "$RECAP_OF_GROUP" ]; then
+        PROJECT=$(validate_project "$(state_value \
+            "$(recap_group_state_dir "$RECAP_OF_GROUP")/manifest" project)" "$KB_PATH")
+    elif [ -n "$RECAP_OF" ]; then
         PROJECT=$(validate_project "$(read_frontmatter_prop \
             "$RECAP_OF/session.md" "project")" "$KB_PATH")
     fi
@@ -381,6 +420,10 @@ if [ ! -f "$SESSION_MD" ]; then
     # Likewise written only for a session its launcher declared exempt, so an ordinary
     # note gains no empty property and the end hook can act on presence alone.
     [ -n "$RECAP_EXEMPT" ] && RECAP_YAML="${RECAP_YAML}recap_exempt: \"$RECAP_EXEMPT\"
+"
+    # And only for a session declared to belong to a recap group. The key needs no escaping: it was
+    # checked above to hold nothing a YAML scalar could trip on.
+    [ -n "$RECAP_GROUP" ] && RECAP_YAML="${RECAP_YAML}recap_group: \"$RECAP_GROUP\"
 "
 
     # Create session.md with full frontmatter in one atomic filesystem write.
@@ -430,6 +473,11 @@ if [ -n "$RECAP_EXEMPT" ] \
    && [ -z "$(read_frontmatter_prop "$SESSION_MD" "recap_exempt")" ]; then
     set_frontmatter_prop "$SESSION_MD" "recap_exempt" "$RECAP_EXEMPT"
 fi
+# And the group. A note keeps the group it already has: a session belongs to one.
+if [ -n "$RECAP_GROUP" ] \
+   && [ -z "$(read_frontmatter_prop "$SESSION_MD" "recap_group")" ]; then
+    set_frontmatter_prop "$SESSION_MD" "recap_group" "$RECAP_GROUP"
+fi
 
 # A delegate or a recap whose launcher passed no name is named here, which is its only
 # chance: no later event carries a name for a session that never had one. The launcher
@@ -439,6 +487,8 @@ if [ -z "$SESSION_TITLE" ] \
    && [ -z "$(read_frontmatter_prop "$SESSION_MD" "session_name")" ]; then
     if [ -n "$DELEGATED_BY" ]; then
         EMIT_TITLE="delegate-${DELEGATED_BY_NAME:-${DELEGATED_BY:0:8}}"
+    elif [ -n "$RECAP_OF_GROUP" ]; then
+        EMIT_TITLE=$(recap_group_session_name "$RECAP_OF_GROUP")
     elif [ -n "$RECAP_OF" ]; then
         EMIT_TITLE="recap-$(basename "$RECAP_OF" | cut -c1-8)"
     fi

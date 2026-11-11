@@ -96,6 +96,9 @@ TOTAL_LINKS=$(echo "$WIKILINKS" | wc -l | tr -d ' ')
 echo "Found $TOTAL_LINKS unique WikiLinks to validate"
 echo ""
 
+# The vault's path as find's -path reads it: a pattern, so its own *, ?, [ and \ are escaped.
+KB_GLOB=$(printf '%s' "${KB_PATH%/}" | sed 's/[][*?\\]/\\&/g')
+
 # Function to find file by title
 find_file_by_title() {
     local title="$1"
@@ -109,8 +112,13 @@ find_file_by_title() {
         return 0
     fi
 
-    # Search for markdown files with matching title in frontmatter
-    search_results=$(find "$KB_PATH" -type f -name "*.md" -exec grep -l "^title: $title$" {} \; 2>/dev/null || true)
+    # Search for markdown files with matching title in frontmatter. The memory snapshot
+    # copies that the end hook keeps under _sessions/<date>/<id>/memory are left out: they
+    # are copies of memory notes, which carry no title, and a real vault held 155,578 of
+    # them beside 8,239 other Markdown files (2026-11-11). One grep takes many files: with
+    # one grep for each file, each link cost two to three minutes there.
+    search_results=$(find "$KB_PATH" -type d -path "$KB_GLOB/_sessions/*/*/memory" ! -path "$KB_GLOB/_sessions/*/*/*/memory" -prune \
+        -o -type f -name "*.md" -exec grep -l "^title: $title$" {} + 2>/dev/null || true)
 
     if [ -n "$search_results" ]; then
         echo "$search_results"

@@ -55,9 +55,26 @@ description (`project`, `tags`, `summary`) and final `recap_status`.
 
 ## Recap session
 
-A dedicated session, started by the launcher, that recaps exactly one [[#Subject]] (or a
-batch of them). Registered by `recap_of` on its own note; never recapped itself. Ends itself
+A dedicated session, started by the launcher, that recaps exactly one [[#Subject]], a
+batch of them, or one [[#Recap group]]. Registered by `recap_of` on its own note; never recapped itself. Ends itself
 once its recap is done, unless a person has stepped in.
+
+## Recap group
+
+The sessions declared at launch to be recapped together as one piece of work, under one key.
+Whatever launched them declares the group complete; nothing infers it.
+
+## Group recap
+
+The recap of a [[#Recap group]]: one set of documents distilled from all of its sessions
+together, each of them a [[#Subject]] whose own note still receives its description and recap
+status. Not a batch, which gives every subject a recap of its own.
+
+## Deferred session
+
+A session that belongs to a [[#Recap group]]: not recapped when it exits, recapped with its
+group once the group is declared complete. Recorded as deferred, so it is never mistaken for
+an exempt session or a missed one.
 
 ## Terminal host
 

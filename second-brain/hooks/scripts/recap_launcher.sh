@@ -221,12 +221,20 @@ if [ "$HOST" = "herdr-app" ]; then
     # gets the core's environment and nothing of ours. A name is unique among live
     # terminals; a taken one is retried once with a suffix, since the session is named by
     # -n either way.
+    #
+    # Nothing of ours but the PATH, which travels inline ahead of the markers. The core's
+    # PATH may hold no claude: measured on one host on 2026-11-11, a worker printed
+    # "claude: NOT FOUND", since the core had been restarted from a login whose PATH
+    # lacked claude's folder. The child starts claude by name, so with this launcher's PATH
+    # it finds the claude this launcher would. Only the worker needs it: a command typed
+    # into a pane, or printed for a person, runs in a shell that has a PATH of its own.
+    WORKER_CMD=$(printf 'PATH=%q %s' "$PATH" "$CMD")
     WORKER=""
     RUN_JSON=""
     RUN_ERR="${TMPDIR:-/tmp}/recap-launcher-$$.err"
     for TRY in "$NAME" "$(printf '%s' "$NAME" | cut -c1-30)-2"; do
         RUN_JSON=$("$HC_BIN" run --json --bg --no-notify --outlive-parent --name "$TRY" \
-            --cwd "$KB_PATH" -- "$CMD" 2>"$RUN_ERR")
+            --cwd "$KB_PATH" -- "$WORKER_CMD" 2>"$RUN_ERR")
         WORKER=$(printf '%s' "$RUN_JSON" | jq -r '.address // empty' 2>/dev/null)
         [ -n "$WORKER" ] && break
         printf '%s %s' "$RUN_JSON" "$(cat "$RUN_ERR" 2>/dev/null)" | grep -q name_taken || break

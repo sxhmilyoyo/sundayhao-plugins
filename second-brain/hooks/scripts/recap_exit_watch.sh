@@ -2,9 +2,12 @@
 # recap_exit_watch.sh - end a recap session once its recap is done.
 #
 #   recap_exit_watch.sh <subject_session_folder> <terminal> <recap_child_pid>
+#   recap_exit_watch.sh --group <group_state_folder> <terminal> <recap_child_pid>
 #
 # <terminal> is the Herdr TUI pane id or the Herdr app's hc terminal id, whichever host
 # owns the recap's terminal; the host is read from the environment (terminal_host).
+# With --group the recap is a group's (ADR-0013): done means every member its run claimed
+# is done, and the log is the recap.log of the group's state folder.
 # Started in the background by recap_child.sh, and only under a terminal host, never by hand. A recap
 # session is interactive so a person can watch it and step in, and ADR-0007's one question is
 # answered there, so nothing ended it when the skill wrote `done`: a finished recap held its
@@ -24,11 +27,13 @@
 #
 # Exit: 0 always, once running; 2 usage.
 
+GROUP=""
+if [ "${1:-}" = "--group" ]; then GROUP=1; shift; fi
 SUBJECT="${1:-}"
 PANE="${2:-}"
 CHILD_PID="${3:-}"
 if [ -z "$SUBJECT" ] || [ -z "$PANE" ] || [ -z "$CHILD_PID" ]; then
-    echo "Usage: $0 <subject_folder> <terminal> <recap_child_pid>" >&2
+    echo "Usage: $0 [--group] <subject_folder> <terminal> <recap_child_pid>" >&2
     exit 2
 fi
 
@@ -69,7 +74,19 @@ bg() {
     return "$rc"
 }
 child_alive() { kill -0 "$CHILD_PID" 2>/dev/null; }
-status() { read_frontmatter_prop "$SUBJECT/session.md" recap_status; }
+# The one word every step below waits for is `done`. For a group it is said only when every member
+# the run claimed reads done; until then the answer is how far the recap is. The members are read
+# once: a later run of the same group writes its own list, and this watcher watches its own run's.
+if [ -n "$GROUP" ]; then
+    MEMBERS=$(cut -f1 "$SUBJECT/members.tsv" 2>/dev/null)
+    status() {
+        printf '%s\n' "$MEMBERS" | recap_member_statuses | awk -F'\t' '
+            $1 == "done" { d++ }
+            END { if (NR > 0 && d == NR) print "done"; else printf "%d of %d members done\n", d, NR }'
+    }
+else
+    status() { read_frontmatter_prop "$SUBJECT/session.md" recap_status; }
+fi
 herdr_error() { jq -r '.error.code // "no answer"' "$OUT" 2>/dev/null || echo "no answer"; }
 hc_error() { jq -r '.error.kind // .error.message // "no answer"' "$OUT" 2>/dev/null || echo "no answer"; }
 hc_state() { "$HC_BIN" get "$PANE" --json 2>/dev/null | jq -r '.status.state // "none"' 2>/dev/null || echo none; }
