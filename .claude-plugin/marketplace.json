@@ -25,7 +25,7 @@
       "name": "debrief",
       "source": "./debrief",
       "description": "A ▤ Debrief block closes substantial turns; a band above the prompt draws the latest one as a card with Copy and Pin, and a \"me, on your word\" step is a draft prompt. Function-hook mod: hot-reloads, needs no shell.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "keywords": [
         "debrief",
         "mod",

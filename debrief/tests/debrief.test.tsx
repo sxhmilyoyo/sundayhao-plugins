@@ -38,12 +38,14 @@ const COMPOSE = {
 }
 
 /** What the engine's core would answer beneath the plugin: the kit answers only $.state. */
-function core(on: On, { ghostRefusals = 0 } = {}) {
+function core(on: On, { ghostRefusals = 0, env = {} as Record<string, string> | null } = {}) {
   const suggested: string[] = []
   const filled: string[] = []
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const clock = mock.clock(on, { now: 1760000000000 })
+  if (env) mock.env(on, env)
+  else on('env.get', () => ({ deny: 'the environment is withheld' }))
   on('prompt.compose', () => ({ sections: [{ id: 'system', text: 'core', scope: 'shared' as const }] }))
   on('prompt.suggest', (_$, e) => {
     suggested.push(e.text)
@@ -164,6 +166,23 @@ describe('ghost text', () => {
     expect(suggested).toEqual([DRAFT])
     await clock.advance(400)
     expect(suggested).toEqual([DRAFT, DRAFT])
+  })
+
+  test('offers nothing in a herdr-core terminal, the retry included; the row still drafts', async ($, on) => {
+    const { clock, suggested, filled } = core(on, { env: { HC_TERMINAL_ID: 't7' } })
+    await completed($, ANSWER)
+    await clock.advance(400)
+    expect(suggested).toEqual([])
+    const ui = await $.ui.mount({ plugin: 'debrief', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    await ui.press({ key: 'me-1' })
+    expect(filled).toEqual([DRAFT])
+  })
+
+  test('offers nothing when the environment cannot be read', async ($, on) => {
+    const { clock, suggested } = core(on, { env: null })
+    await completed($, ANSWER)
+    await clock.advance(400)
+    expect(suggested).toEqual([])
   })
 })
 

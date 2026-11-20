@@ -117,8 +117,13 @@ function fill($: EngineInterface, text: string): void {
   )
 }
 
-/** Offers `text` as the prompt box's ghost text, once more a moment later when the box could not show it yet. */
+/**
+ * Offers `text` as the prompt box's ghost text, once more a moment later when the box could not show it yet. Never in
+ * a herdr-core terminal: herdr-core's read gives its screen as plain text, where ghost text looks like a draft the
+ * person typed. An environment that cannot be read counts as one.
+ */
 async function ghost($: EngineInterface, text: string): Promise<void> {
+  if (await $.env.get('HC_TERMINAL_ID').catch(() => true)) return
   const r = await $.prompt.suggest({ text }).catch(() => ({ isShown: false }))
   if (!r.isShown) $.clock.after(GHOST_RETRY_MS, () => void $.prompt.suggest({ text }).catch(() => undefined))
 }

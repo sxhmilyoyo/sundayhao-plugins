@@ -1,6 +1,6 @@
 {
   "name": "debrief",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A debrief block closes substantial turns; the band above the prompt draws the latest one as a card, with Copy and Pin, and a \"me, on your word\" step is a draft prompt.",
   "author": {
     "name": "sundayhao"
