@@ -109,10 +109,11 @@ retired in favour of this term. The verify skill chooses one before a claim is m
 
 ## Decode
 
-Re-explaining a stretch of agent work to the person supervising it, grounded in that
-session's own evidence rather than the general case. The wdym skill performs decodes. A
-decode happens on request; the [[#Comprehension register]] applies to every response
-without one.
+Re-explaining a stretch of agent work to the person supervising it, from zero: for a reader
+who is new to the work and to the session. A decode is anchored in that session's own
+evidence, and reads the background that the reader needs from its source. The wdym skill
+performs decodes. A decode happens on request; the [[#Comprehension register]] applies to
+every response without one.
 
 ## Agent output
 
@@ -142,10 +143,10 @@ folds into the [[#Comprehension profile]]; it records, it never calibrates by it
 ## Interrogation ladder
 
 The escalation a supervising person climbs when probing agent work: what changed → where
-does it come from → what is it → why this way → prove it. A [[#Decode]] answers the rungs
-that apply and never leaves the next one unaddressed. The last rung asks what verification
-already happened; choosing a [[#Verification approach]] before the claim is the verify
-skill's job, not a decode's. The person climbs the ladder; the agent delivers a [[#Debrief]].
+does it come from → what is it → why this way → prove it. A [[#Decode]] answers the rung
+that the person asks. The last rung asks what verification already happened; choosing a
+[[#Verification approach]] before the claim is the verify skill's job, not a decode's. The
+person climbs the ladder; the agent delivers a [[#Debrief]].
 
 ## Debrief
 

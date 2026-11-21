@@ -7,6 +7,21 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.27.0] - 2026-11-21
+
+### Changed
+- **`wdym` writes every decode from zero** (wdym 2.0.0). A decode used to assume that the person already held the
+  names of the session's work. The skill now tells the agent to write for a new hire on the person's team. The
+  answer gives the point first in everyday words and explains each name where it first appears. It gives the reason
+  for the rule the point rests on, shows the whole table when the subject is one case of a rule set, and says what
+  it means for the person. A decision that the person set aside to ask is put to them again after the answer. The
+  agent reads what the answer needs from its source and cites it. The answer is sized to the ask, with a word limit
+  for each kind of ask. Before it sends the answer, the agent re-reads it as that reader. The ladder stays for
+  `wdym debrief` and no longer drives a decode. A claim carries one of four marks, a claim about a set is limited
+  to the part that was read, and a status claim carries its read time. An ask from zero that names no other
+  audience belongs to `wdym`, and so does a persona that the person takes on for themself (GLOSSARY.md: Decode,
+  Interrogation ladder). See `skills/wdym/CHANGELOG.md`.
+
 ## [2.26.0] - 2026-11-11
 
 ### Added

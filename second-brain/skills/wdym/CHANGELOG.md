@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.0.0] - 2026-11-21
+
+### Changed
+- A decode is written from zero. A new section, From zero, tells the agent to write for a
+  new hire on the person's team: an engineer at the person's own level who knows the daily
+  stack and nothing of the project or of the session. The answer opens with the point in
+  everyday words, uses only the names the point needs and explains each one where it first
+  appears. It gives the reason for the rule the point rests on, shows the whole table when
+  the subject is one case of a rule set, and says what it means for the person. When the
+  person set a decision aside to ask, the agent puts that decision to the person again
+  after the answer. A follow-up gets the direct answer, one table and the reason. Before it
+  sends the answer, the agent re-reads it as the new hire.
+- A name counts as explained only when the answer just before explained it, or when the
+  person points back to the answer that did. A name that the person repeats or quotes is
+  still new.
+- The answer is sized to the ask. Rejected alternatives, proof tables and side findings
+  stay out unless the person asks why this way or asks for proof. Calibration gives a word
+  limit for a follow-up, for any other decode of one phrase, answer, change or decision,
+  and for a whole topic from zero.
+- A decode reads what the answer needs from its source and cites it: what the session does
+  not hold, and the evidence behind an earlier claim that the person doubts or builds on. A
+  new check runs only in the session's scratch directory, and the answer says so.
+- The ladder no longer drives a decode. Debrief mode walks all five rungs; a decode answers
+  the rung that the person asks.
+- Verification posture: four marks (verified, with what was read and when; reported, with
+  who said it; inferred; not read). A claim about a set is limited to the part that was
+  read. A status claim carries its read time, or `as of <time>, not re-read`. A correction
+  comes right after the point. The claim the point rests on gets its full location and the
+  quoted lines.
+- Calibration: one brief analogy at most, after the point. The first answer on a topic
+  traces one real case with its actual values; a change is traced on the same case before
+  and after; a built example runs through the real code and says which values are made up.
+- The profile overrides the Calibration defaults only.
+- The description has one trigger for each kind of ask. An ask from zero that names no
+  other audience belongs to this skill, and a persona that the person takes on for themself
+  is still the person.
+- Format escalation: a table or a text tree belongs to rung 1.
+
 ## [1.0.2] - 2026-10-19
 
 ### Changed
