@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.0.1] - 2026-11-22
+
+### Fixed
+- A follow-up still ends with a decision that the person set aside. "Add no other part"
+  could be read to leave that decision out.
+- "Run a built example through the real code" could be read as an order to build one. The
+  sentence now starts "When you build an example".
+- A follow-up that asks about one phrase keeps the follow-up word limit. Such an ask also
+  fits the next size, a decode of one phrase, and the agent sometimes sized it as one.
+- The placeholder of `as of <time>, not re-read` is in a code span, so that a rendered page
+  shows it.
+
 ## [2.0.0] - 2026-11-21
 
 ### Changed

@@ -7,6 +7,15 @@ For skill-specific changes, see the CHANGELOG.md in each skill's directory.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.27.1] - 2026-11-22
+
+### Fixed
+- **`wdym`: three wordings that could be read two ways, and one placeholder that did not render** (wdym 2.0.1). A
+  follow-up still ends with a decision that the person set aside. A follow-up that asks about one phrase keeps the
+  follow-up word limit. The sentence on a built example starts "When you build an example", so that it no longer
+  reads as an order to build one. The placeholder of `as of <time>, not re-read` is in a code span. See
+  `skills/wdym/CHANGELOG.md`.
+
 ## [2.27.0] - 2026-11-21
 
 ### Changed

@@ -59,11 +59,13 @@ that the person asks about. When unsure, explain it again.
 
 A follow-up is a confirmation or a narrow question about the answer just before. Answer it
 with the direct answer first (yes, no or partly to a confirmation), then one table, then
-the reason. Add no other part.
+the reason. Add no other part. A decision that the person set aside still follows the
+answer.
 
-Size the answer to the ask, within the limits that Calibration gives. Leave out rejected
-alternatives, proof tables and side findings unless the person asks why this way or asks
-for proof. Keep the proof of the point. Send the shortest answer that passes the check below.
+Size the answer to the ask, within the limits that Calibration gives. A follow-up that asks
+about one phrase keeps the follow-up limit. Leave out rejected alternatives, proof tables and
+side findings unless the person asks why this way or asks for proof. Keep the proof of the
+point. Send the shortest answer that passes the check below.
 
 Before you send, re-read the answer as the new hire. Done when the opening states the point,
 no name comes before its explanation, every claim carries a mark, and each line above is met
@@ -77,9 +79,9 @@ or does not apply.
   measurably drops facts.
 - One brief analogy at most, after the point. In the first answer on a topic, trace one real
   case from this session with its actual values and its file, log line, or command. For a
-  change, trace the old path and the new path on the same case. Run a built example through
-  the real code, and say which values you made up. An analogy without the real case is a
-  non-answer.
+  change, trace the old path and the new path on the same case. When you build an example,
+  run it through the real code, and say which values you made up. An analogy without the
+  real case is a non-answer.
 - Anything with layers, roles, or directions gets a 2-axis table or a decision tree, not prose.
 - Size: a follow-up in under 400 words, any other decode of one phrase, answer, change or
   decision in under 1,000, a whole topic from zero in under 1,600.
@@ -124,7 +126,7 @@ Clarity must not outrun truth: a wrong claim in a clean diagram is MORE convinci
   "none" or "never".
 - Give each status claim (what merged, what runs where, who answered) its read time. Read it
   again when the point rests on it and its last read is from an earlier day. Otherwise write
-  "as of <time>, not re-read". A rule about what should happen is not a read of what did.
+  `as of <time>, not re-read`. A rule about what should happen is not a read of what did.
 - When a new read contradicts or updates an earlier answer, say so right after the point.
 - If a verification gap exists, say so plainly — the "prove it" rung exists because gaps hide.
 
